@@ -32,11 +32,11 @@ final class Salud {
         }
     }
 
-    /// Los últimos 30 días, un dato por día (lo que guardó cualquier fuente: QRing, el reloj, el iPhone…):
+    /// El último año, un dato por día (lo que guardó cualquier fuente: QRing, el reloj, el iPhone…):
     /// { permiso, historial: [{ d: "2026-10-28", pasos, ritmo, ritmoMin, reposo, hrv, oxigeno, sueno }] }
     private func historial(_ fin: @escaping ([String: Any]) -> Void) {
         let cal = Calendar.current, ahora = Date(), hoy = cal.startOfDay(for: ahora)
-        let desde = cal.date(byAdding: .day, value: -29, to: hoy) ?? hoy
+        let desde = cal.date(byAdding: .day, value: -364, to: hoy) ?? hoy
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX")
         let g = DispatchGroup(), cerrojo = NSLock()
         var dias: [String: [String: Any]] = [:]

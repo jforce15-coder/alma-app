@@ -37,6 +37,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             anillo(d)
         case "voz":
             voz(d)
+        case "health":   // Health es nativo (Health/SaludVista.swift): se abre encima de la página
+            NotificationCenter.default.post(name: .abrirSalud, object: nil)
         case "salud":
             Salud.shared.manejar(d["que"] as? String ?? "leer") { [weak self] datos in self?.responder("AlmaSalud.datos", [datos]) }
         default: break

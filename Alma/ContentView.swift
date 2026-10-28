@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import WebKit
 
@@ -6,6 +7,7 @@ struct ContentView: View {
     @EnvironmentObject var nav: Navegador
     @State private var almaAbierta = false
     @State private var barraEnInicio = false
+    @State private var salud = false
 
     /// En el inicio la página ocupa toda la pantalla; deslizar desde arriba muestra la barra.
     private var limpio: Bool { nav.enInicio && !barraEnInicio }
@@ -35,6 +37,8 @@ struct ContentView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: limpio)
         .onChange(of: nav.enInicio) { _, en in if !en { barraEnInicio = false } }
         .background(Color.almaFondo)
+        .fullScreenCover(isPresented: $salud) { SaludVista() }
+        .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in salud = true }
         .sheet(isPresented: $almaAbierta) {
             PanelAlma(titulo: nav.titulo, desde: nav.direccion)
                 .presentationDetents([.medium, .large])
