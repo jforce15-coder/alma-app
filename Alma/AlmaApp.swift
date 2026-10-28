@@ -6,6 +6,11 @@ import SwiftUI
 struct AlmaApp: App {
     @StateObject private var navegador = Navegador()
 
+    init() {
+        // Con un anillo ya conectado antes, se retoma la conexión desde el arranque (también si iOS despierta la app por él).
+        if Anillo.hayGuardado { _ = Anillo.shared }
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
