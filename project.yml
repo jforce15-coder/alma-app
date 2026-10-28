@@ -45,6 +45,11 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
+        # Las letras de Alma (Health nativo): Cormorant Garamond y Montserrat, dentro de la app
+        UIAppFonts:
+          - CormorantGaramond.ttf
+          - CormorantGaramond-Italic.ttf
+          - Montserrat.ttf
         ITSAppUsesNonExemptEncryption: false
         UILaunchScreen:
           UIColorName: Fondo

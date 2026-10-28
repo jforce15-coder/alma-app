@@ -233,6 +233,14 @@ final class Anillo: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         }
     }
 
-    private func emitir(_ e: [String: Any]) { alEvento?(e) }
+    private func emitir(_ e: [String: Any]) {
+        alEvento?(e)
+        NotificationCenter.default.post(name: .almaAnillo, object: nil, userInfo: e)   // Health nativo también escucha
+    }
     private func emitirEstado() { var e = estado; e["tipo"] = "estado"; emitir(e) }
+}
+
+extension Notification.Name {
+    static let almaAnillo = Notification.Name("alma.anillo.evento")
+    static let abrirSalud = Notification.Name("alma.salud.abrir")
 }
