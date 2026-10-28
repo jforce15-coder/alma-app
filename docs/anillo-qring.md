@@ -24,7 +24,7 @@ Inicio de Health: tarjetas (Activity, Sleep, Heart Rate, Sport Record, Body temp
   - **Music**: toque = pausa/reproducir; deslizar = canción anterior/siguiente.
   - **Short Video** (el que se usa hoy): toque = pausa; deslizar = video anterior/siguiente; doble toque = like.
   - **EBook**: deslizar = página anterior/siguiente.
-  - **Tasbih**: cada toque suma uno al contador **de la app** → el toque viaja por Bluetooth a la app. Es el candidato para que Alma reciba los toques.
+  - **Tasbih**: contador de toques. **No lo usamos** (decisión de Juan): Alma no lo ofrece.
   - **Take Photo**: abre la cámara; mantener = foto.
   - **Turn off**.
 - Take Pictures, Touch Guide (6 pasos), Find device.
@@ -34,6 +34,6 @@ Inicio de Health: tarjetas (Activity, Sleep, Heart Rate, Sport Record, Body temp
 
 ## Para los toques con el teléfono bloqueado
 
-1. **Tasbih**: si el anillo manda cada toque por el canal de datos, la app de Alma (conectada en segundo plano) lo oye aunque el teléfono esté bloqueado. Hay que descubrir el comando que activa ese modo y el paquete que llega por toque (prueba de toques en Health).
-2. **Music**: el anillo actúa como control multimedia; iOS manda «reproducir/pausa» a la app que tiene el audio aun bloqueado. Alma tendría que quedar como la app de audio activa.
+1. **Music**: el anillo actúa como control multimedia; iOS manda «reproducir/pausa» a la app que tiene el audio aun bloqueado. Alma queda como la app de audio activa y el toque la llama.
+2. **Avisos por Bluetooth**: la prueba de toques en Health muestra si el anillo manda algo por su canal de datos al tocarlo (en el modo que tenga puesto); si lo hace, Alma lo oye aunque el teléfono esté bloqueado.
 3. Respaldo: Siri, botón de Acción, control en la pantalla de bloqueo.
