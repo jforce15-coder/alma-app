@@ -56,10 +56,11 @@ final class Navegador: NSObject, ObservableObject {
         return h == "spacioam.com" || h.hasSuffix(".spacioam.com")
     }
 
-    /// ¿Está en el inicio (Alma al centro)? Ahí la pantalla va limpia, sin barra.
+    /// Pantallas propias de la app (el inicio con Alma y Health): van a pantalla completa, sin barra.
+    static let pantallasCompletas = ["/alma/inicio.html", "/health/", "/health/index.html"]
     var enInicio: Bool {
         guard let u = URL(string: direccion) else { return true }
-        return u.host?.lowercased() == Navegador.inicio.host && u.path == Navegador.inicio.path
+        return u.host?.lowercased() == Navegador.inicio.host && Navegador.pantallasCompletas.contains(u.path)
     }
 
     /// Lo que se escribe en la barra: una dirección o una búsqueda en Google.
