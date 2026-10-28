@@ -8,6 +8,13 @@ struct ContentView: View {
     @State private var almaAbierta = false
     @State private var barraEnInicio = false
     @State private var salud = false
+    @ObservedObject private var voz = VozNativa.shared
+    @State private var llamadaOculta = false
+    /// La conversación del modo anillo sigue en pantalla al abrir la app (y se puede terminar aquí).
+    private var llamada: Binding<Bool> {
+        Binding(get: { (voz.estado == .hablando || voz.estado == .conectando) && !llamadaOculta },
+                set: { if !$0 { llamadaOculta = true } })
+    }
 
     /// En el inicio la página ocupa toda la pantalla; deslizar desde arriba muestra la barra.
     private var limpio: Bool { nav.enInicio && !barraEnInicio }
@@ -38,7 +45,10 @@ struct ContentView: View {
         .onChange(of: nav.enInicio) { _, en in if !en { barraEnInicio = false } }
         .background(Color.almaFondo)
         .fullScreenCover(isPresented: $salud) { SaludVista() }
-        .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in salud = true }
+        .background { Color.clear.fullScreenCover(isPresented: llamada) { LlamadaVista(voz: voz) { llamadaOculta = true } } }
+        .onChange(of: voz.estado) { _, e in if e == .apagada || e == .lista { llamadaOculta = false } }
+        .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in Portal.shared.pasar { salud = true } }
+        .onAppear { Portal.shared.instalar() }
         .sheet(isPresented: $almaAbierta) {
             PanelAlma(titulo: nav.titulo, desde: nav.direccion)
                 .presentationDetents([.medium, .large])

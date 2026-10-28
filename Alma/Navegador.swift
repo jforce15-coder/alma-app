@@ -52,7 +52,8 @@ final class Navegador: NSObject, ObservableObject {
 
     /// ¿La página es de Spacio AM? Esas ya traen a Alma (la roca), así que la burbuja de la app se esconde.
     var esSpacio: Bool {
-        guard let h = URL(string: direccion)?.host?.lowercased() else { return false }
+        // Mientras la app abre (todavía sin dirección) se asume Spacio AM: así la burbuja no aparece un instante sola.
+        guard let h = URL(string: direccion)?.host?.lowercased() else { return true }
         return h == "spacioam.com" || h.hasSuffix(".spacioam.com")
     }
 
@@ -100,6 +101,12 @@ extension Navegador: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         Navegador.decidir(navigationAction, decisionHandler)
     }
+
+    // El portal de Alma entre páginas: cubre al empezar a cargar y descubre al terminar (o si falla).
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { Portal.shared.cubrir() }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { Portal.shared.descubrir() }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { Portal.shared.descubrir() }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { Portal.shared.descubrir() }
 
     /// tel:, mailto:, whatsapp:, maps… se abren con la app del teléfono; lo web se queda aquí.
     static func decidir(_ accion: WKNavigationAction, _ decision: @escaping (WKNavigationActionPolicy) -> Void) {
