@@ -92,11 +92,25 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         if silencio == nil, let wav = VozNativa.wavSilencio() { silencio = try? AVAudioPlayer(data: wav); silencio?.numberOfLoops = -1; silencio?.volume = 0.01 }
         silencio?.play()
         estado = .lista
-        infoBloqueo("Toca dos veces tu anillo para hablar")
+        encenderMicrofono()
+    }
+
+    /// iOS no deja *empezar* a usar el micrófono con el teléfono bloqueado; sí deja seguir usándolo.
+    /// Por eso, con «Alma con el anillo», el micrófono queda abierto desde que la app está a la vista (no se manda nada
+    /// hasta el doble toque) y sigue listo al bloquear.
+    private func encenderMicrofono() {
+        if engine.isRunning { infoBloqueo("Toca dos veces tu anillo para hablar"); return }
+        guard UIApplication.shared.applicationState != .background else {
+            paso("Esperando a que abras Alma para dejar el micrófono listo")
+            infoBloqueo("Abre Alma una vez para dejarla lista"); return
+        }
+        do { try prepararMotor(); paso("Micrófono listo para el anillo"); infoBloqueo("Toca dos veces tu anillo para hablar") }
+        catch { paso("No pude dejar listo el micrófono (\((error as NSError).code))"); infoBloqueo("Abre Alma para dejarla lista") }
     }
 
     private func apagar() {
         silencio?.stop()
+        engine.inputNode.removeTap(onBus: 0); player.stop(); if engine.isRunning { engine.stop() }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         estado = .apagada
@@ -108,6 +122,16 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
             guard let self, let t = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt, t == AVAudioSession.InterruptionType.began.rawValue else { return }
             if self.estado == .hablando || self.estado == .conectando { self.fallo("Otra app o una llamada tomó el audio.") }
+        }
+        // Al abrir la app (o al volver a ella) el micrófono queda listo otra vez.
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.modoAnillo, self.estado == .lista || self.estado == .apagada else { return }
+            self.quedarLista()
+        }
+        // Si iOS reinicia el audio (cambio de audífonos, por ejemplo), se vuelve a encender.
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            guard let self, self.modoAnillo, !self.engine.isRunning else { return }
+            try? self.prepararMotor()
         }
         let c = MPRemoteCommandCenter.shared()
         // El anillo (modo Music) llega como reproducir/pausar. Un doble toque puede llegar como dos avisos: se cuentan como uno.
@@ -157,14 +181,17 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         do {
             let s = AVAudioSession.sharedInstance()
             guard s.recordPermission == .granted else { fallo("Falta el permiso del micrófono: Ajustes del iPhone → Alma → Micrófono."); return }
-            paso("Abriendo el audio")
-            try s.setCategory(.playAndRecord, mode: .voiceChat, options: VozNativa.opciones)
-            try s.setActive(true)
-            paso("Abriendo el micrófono")
-            try prepararMotor()
+            if !engine.isRunning {
+                guard UIApplication.shared.applicationState != .background else {
+                    fallo("Abre Alma una vez para dejar el micrófono listo; después funciona bloqueado."); return
+                }
+                paso("Abriendo el micrófono")
+                try s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
+                try s.setActive(true)
+                try prepararMotor()
+            }
             paso("Micrófono abierto · conectando la voz")
         } catch { fallo("No pude abrir el micrófono (\((error as NSError).code))."); return }
-        silencio?.stop()
         let firmada = (ficha["signed_url"] as? String).flatMap { URL(string: $0) }
         guard let u = firmada ?? URL(string: "wss://api.elevenlabs.io/v1/convai/conversation?agent_id=\(agente)") else { return }
         var pedido = URLRequest(url: u); pedido.setValue("https://hub.spacioam.com", forHTTPHeaderField: "Origin")
@@ -300,9 +327,9 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
         sesionURL?.invalidateAndCancel(); sesionURL = nil
-        engine.inputNode.removeTap(onBus: 0)
         player.stop()
-        if engine.isRunning { engine.stop() }
+        if modoAnillo { player.play() }   // el micrófono sigue listo para el próximo doble toque
+        else { engine.inputNode.removeTap(onBus: 0); if engine.isRunning { engine.stop() } }
         if habia { AudioServicesPlaySystemSound(1114) }
         estado = .apagada
         if modoAnillo { quedarLista() } else { apagar() }
