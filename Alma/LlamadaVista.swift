@@ -18,7 +18,10 @@ struct LlamadaVista: View {
     var body: some View {
         ZStack {
             // el mismo atardecer del inicio de Alma
-            LinearGradient(colors: [Color(red: 0.36, green: 0.42, blue: 0.53), Color(red: 0.55, green: 0.55, blue: 0.62), Color(red: 0.91, green: 0.69, blue: 0.61)],
+            LinearGradient(stops: [.init(color: Color(red: 0.36, green: 0.42, blue: 0.53), location: 0),
+                                   .init(color: Color(red: 0.62, green: 0.57, blue: 0.62), location: 0.32),
+                                   .init(color: Color(red: 0.95, green: 0.70, blue: 0.58), location: 0.62),
+                                   .init(color: Color(red: 0.98, green: 0.65, blue: 0.50), location: 1)],
                            startPoint: .top, endPoint: .bottom).ignoresSafeArea()
             VStack(spacing: 0) {
                 HStack {
