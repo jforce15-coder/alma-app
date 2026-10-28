@@ -31,6 +31,7 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
     private var ultimoToque = Date.distantPast
     private var motorListo = false
     private var formatoMono: AVAudioFormat?
+    private var sinEco = false   // si la cancelación de eco falló una vez, ya no se intenta
     private var sono = false
 
     // MARK: - Lo que pide la página
@@ -211,12 +212,22 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         escuchar()
     }
 
+    /// Abre el micrófono. Primero con cancelación de eco; si iOS la rechaza (error «what»), sin ella: así Alma igual escucha.
     private func prepararMotor() throws {
-        if !motorListo {
-            engine.attach(player)
-            try engine.inputNode.setVoiceProcessingEnabled(true)   // quita el eco de la voz de Alma del micrófono
-            motorListo = true
+        if !motorListo { engine.attach(player); motorListo = true }
+        if !sinEco {
+            do { try armarMotor(eco: true); return }
+            catch {
+                paso("La cancelación de eco falló (\((error as NSError).code)); abro el micrófono sin ella")
+                engine.inputNode.removeTap(onBus: 0); engine.stop(); engine.reset()
+                sinEco = true
+            }
         }
+        try armarMotor(eco: false)
+    }
+
+    private func armarMotor(eco: Bool) throws {
+        if engine.inputNode.isVoiceProcessingEnabled != eco { try engine.inputNode.setVoiceProcessingEnabled(eco) }
         engine.connect(player, to: engine.mainMixerNode, format: formatoSalida)
         let fIn = engine.inputNode.outputFormat(forBus: 0)
         guard fIn.sampleRate > 0, fIn.channelCount > 0, let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: fIn.sampleRate, channels: 1, interleaved: false) else {
@@ -226,7 +237,7 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         convertidor = AVAudioConverter(from: mono, to: formatoEntrada)
         engine.inputNode.removeTap(onBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: fIn) { [weak self] buf, _ in self?.microfono(buf) }
-        if !engine.isRunning { try engine.start() }
+        if !engine.isRunning { engine.prepare(); try engine.start() }
         player.play()
     }
 
