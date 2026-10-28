@@ -1,0 +1,77 @@
+# Compila la app de Alma en una Mac de GitHub y la sube a TestFlight.
+#   · En cada PR: compila sin firmar (revisa que el código compile antes del Merge).
+#   · Al dar Merge a main (o a mano): firma con la llave de App Store Connect y sube la versión a TestFlight.
+# Secretos (Settings → Secrets and variables → Actions):
+#   ASC_KEY_ID     Key ID de la llave de App Store Connect
+#   ASC_ISSUER_ID  Issuer ID
+#   ASC_KEY_P8     contenido completo del archivo AuthKey_XXXX.p8 (con BEGIN/END)
+
+name: TestFlight
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: testflight-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      SUBIR: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode más reciente de la Mac
+        run: |
+          X="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          sudo xcode-select -s "$X"
+          xcodebuild -version
+
+      - name: Generar el proyecto (XcodeGen)
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Compilar sin firmar (PR)
+        if: env.SUBIR != 'true'
+        run: |
+          set -o pipefail
+          xcodebuild -project Alma.xcodeproj -scheme Alma -configuration Release \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build | tail -40
+
+      - name: Llave de App Store Connect
+        if: env.SUBIR == 'true'
+        env:
+          P8: ${{ secrets.ASC_KEY_P8 }}
+          KID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          if [ -z "$P8" ] || [ -z "$KID" ]; then echo "::error::Faltan los secretos ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_P8."; exit 1; fi
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s\n' "$P8" > "$RUNNER_TEMP/asc/AuthKey_$KID.p8"
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/asc/AuthKey_$KID.p8" >> "$GITHUB_ENV"
+
+      - name: Archivar y subir a TestFlight
+        if: env.SUBIR == 'true'
+        env:
+          KID: ${{ secrets.ASC_KEY_ID }}
+          ISS: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          AUTH="-allowProvisioningUpdates -authenticationKeyPath $ASC_KEY_PATH -authenticationKeyID $KID -authenticationKeyIssuerID $ISS"
+          xcodebuild -project Alma.xcodeproj -scheme Alma -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath build/Alma.xcarchive archive \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} $AUTH | tail -60
+          xcodebuild -exportArchive -archivePath build/Alma.xcarchive -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export $AUTH | tail -60
+          echo "Versión 1.0 (${{ github.run_number }}) enviada a TestFlight. Apple la procesa en 5–15 min." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Borrar la llave
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"
