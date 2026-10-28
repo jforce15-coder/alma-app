@@ -4,7 +4,8 @@ import WebKit
 /// El visor principal: un WKWebView con la misma sesión que Safari guardaría (data store por defecto),
 /// así el login de Spacio AM y de GitHub se queda entre una apertura y otra.
 final class Navegador: NSObject, ObservableObject {
-    static let inicio = URL(string: "https://hub.spacioam.com/")!
+    /// Inicio de la app: Alma grande al centro sobre el atardecer (hub.spacioam.com/alma/inicio.html).
+    static let inicio = URL(string: "https://hub.spacioam.com/alma/inicio.html")!
 
     let web: WKWebView
     @Published var direccion = ""
@@ -49,6 +50,12 @@ final class Navegador: NSObject, ObservableObject {
     var esSpacio: Bool {
         guard let h = URL(string: direccion)?.host?.lowercased() else { return false }
         return h == "spacioam.com" || h.hasSuffix(".spacioam.com")
+    }
+
+    /// ¿Está en el inicio (Alma al centro)? Ahí la pantalla va limpia, sin barra.
+    var enInicio: Bool {
+        guard let u = URL(string: direccion) else { return true }
+        return u.host?.lowercased() == Navegador.inicio.host && u.path == Navegador.inicio.path
     }
 
     /// Lo que se escribe en la barra: una dirección o una búsqueda en Google.
