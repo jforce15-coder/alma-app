@@ -149,7 +149,7 @@ struct BurbujaAlma: View {
         Button(action: accion) {
             ZStack {
                 // halo de Alma
-                Circle().fill(Color.almaCoral.opacity(0.28)).frame(width: 74, height: 74).blur(radius: 12)
+                Circle().fill(Color(red: 0.98, green: 0.68, blue: 0.54).opacity(0.5)).frame(width: 84, height: 84).blur(radius: 14)
                 // la roca: blanca, con volumen y un borde coral fino (como el ícono)
                 Circle()
                     .fill(RadialGradient(colors: [Color(red: 0.98, green: 0.976, blue: 0.97), Color(red: 0.94, green: 0.93, blue: 0.92)], center: UnitPoint(x: 0.4, y: 0.35), startRadius: 2, endRadius: 40))
