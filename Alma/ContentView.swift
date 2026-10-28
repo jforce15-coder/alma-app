@@ -95,16 +95,21 @@ struct Boton: View {
     }
 }
 
-/// La roca de Alma: coral con su destello, como en las apps de Spacio AM.
+/// La roca de Alma: blanca y limpia, con su halo coral (igual que el ícono de la app).
 struct BurbujaAlma: View {
     let accion: () -> Void
     var body: some View {
         Button(action: accion) {
             ZStack {
-                Circle().fill(Color.almaCoral).frame(width: 62, height: 62)
-                    .shadow(color: Color.almaCoral.opacity(0.45), radius: 14, y: 6)
-                Circle().fill(Color.almaFondo).frame(width: 52, height: 52)
-                Image(systemName: "sparkle").font(.system(size: 20, weight: .semibold)).foregroundStyle(Color.almaCoral)
+                // halo de Alma
+                Circle().fill(Color.almaCoral.opacity(0.28)).frame(width: 74, height: 74).blur(radius: 12)
+                // la roca: blanca, con volumen y un borde coral fino (como el ícono)
+                Circle()
+                    .fill(RadialGradient(colors: [Color(white: 0.98), Color(red: 0.91, green: 0.90, blue: 0.88)], center: UnitPoint(x: 0.38, y: 0.32), startRadius: 2, endRadius: 40))
+                    .overlay(Circle().stroke(Color.almaCoral.opacity(0.55), lineWidth: 2))
+                    .frame(width: 58, height: 58)
+                    .shadow(color: Color.almaCoral.opacity(0.25), radius: 10, y: 5)
+                Image(systemName: "sparkle").font(.system(size: 15, weight: .medium)).foregroundStyle(Color.almaCoral.opacity(0.5))
             }
         }
         .buttonStyle(.plain)
