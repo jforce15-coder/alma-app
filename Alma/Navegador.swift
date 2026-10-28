@@ -102,12 +102,6 @@ extension Navegador: WKNavigationDelegate {
         Navegador.decidir(navigationAction, decisionHandler)
     }
 
-    // El portal de Alma entre páginas: cubre al empezar a cargar y descubre al terminar (o si falla).
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { Portal.shared.cubrir() }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { Portal.shared.descubrir() }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { Portal.shared.descubrir() }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { Portal.shared.descubrir() }
-
     /// tel:, mailto:, whatsapp:, maps… se abren con la app del teléfono; lo web se queda aquí.
     static func decidir(_ accion: WKNavigationAction, _ decision: @escaping (WKNavigationActionPolicy) -> Void) {
         if let u = accion.request.url, let s = u.scheme?.lowercased(),

@@ -1,8 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// La animación de Alma entre pantallas, regla de toda la app: la roca crece desde el centro hasta cubrir la pantalla,
-/// detrás se cambia de pantalla (Health, una página, Respira…) y la roca se encoge para mostrar la nueva.
+/// La animación de Alma entre pantallas nativas (Health, Respira, la conexión del anillo): la roca crece desde el centro
+/// hasta cubrir la pantalla, detrás se cambia de pantalla y la roca se encoge para mostrar la nueva.
+/// Las páginas del Hub (el inicio) ya traen su propia animación de Alma: aquí no se duplica.
+/// Fuera del cambio, la ventana queda oculta: no se ve nada.
 /// Vive en su propia ventana, por encima de todo (también de las pantallas completas), y no deja tocar mientras pasa.
 final class Portal: ObservableObject {
     static let shared = Portal()
@@ -23,7 +25,7 @@ final class Portal: ObservableObject {
         raiz.view.backgroundColor = .clear
         v.rootViewController = raiz
         v.isUserInteractionEnabled = false
-        v.isHidden = false
+        v.isHidden = true
         ventana = v
     }
 
@@ -41,6 +43,7 @@ final class Portal: ObservableObject {
         instalar()
         pendiente?.cancel()
         guard !cubierto else { return }
+        ventana?.isHidden = false
         ventana?.isUserInteractionEnabled = true
         cubiertoDesde = Date()
         withAnimation(.timingCurve(0.65, 0, 0.35, 1, duration: Portal.entrada)) { cubierto = true }
@@ -56,7 +59,7 @@ final class Portal: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + falta) {
             guard self.cubierto else { return }
             withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: Portal.salida)) { self.cubierto = false }
-            DispatchQueue.main.asyncAfter(deadline: .now() + Portal.salida) { if !self.cubierto { self.ventana?.isUserInteractionEnabled = false } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Portal.salida + 0.05) { if !self.cubierto { self.ventana?.isUserInteractionEnabled = false; self.ventana?.isHidden = true } }
         }
     }
 }
@@ -70,14 +73,14 @@ struct PortalVista: View {
             ZStack {
                 // el halo coral de Alma, que llega primero
                 Circle().fill(Color.almaCoral.opacity(0.35)).frame(width: lado, height: lado).blur(radius: 60)
-                    .scaleEffect(portal.cubierto ? 1.1 : 0.05)
+                    .scaleEffect(portal.cubierto ? 1.1 : 0.001).opacity(portal.cubierto ? 1 : 0)
                 // la roca: blanca y cálida, con su luz arriba a la izquierda
                 Circle()
                     .fill(RadialGradient(colors: [Color(red: 1, green: 0.99, blue: 0.98), Color(red: 0.99, green: 0.95, blue: 0.93),
                                                   Color(red: 0.98, green: 0.9, blue: 0.86)],
                                          center: UnitPoint(x: 0.4, y: 0.35), startRadius: 0, endRadius: lado * 0.6))
                     .frame(width: lado, height: lado)
-                    .scaleEffect(portal.cubierto ? 1 : 0.001)
+                    .scaleEffect(portal.cubierto ? 1 : 0.001).opacity(portal.cubierto ? 1 : 0)
                 // el destello, que aparece en el centro cuando ya cubrió
                 Image(systemName: "sparkle").font(.system(size: 30)).foregroundStyle(Color(red: 0.79, green: 0.76, blue: 0.72))
                     .opacity(portal.cubierto ? 1 : 0).scaleEffect(portal.cubierto ? 1 : 0.6)
