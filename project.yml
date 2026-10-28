@@ -70,6 +70,7 @@ targets:
         # El anillo sigue conectado con el teléfono bloqueado.
         UIBackgroundModes:
           - bluetooth-central
+          - audio
         NSCameraUsageDescription: Algunas páginas (Epi, Hola) usan la cámara para tomar fotos de los reportes y documentos.
         NSPhotoLibraryUsageDescription: Para subir fotos o documentos a las páginas que lo piden.
         NSLocationWhenInUseUsageDescription: Algunas páginas usan tu ubicación, por ejemplo para las rutas del equipo.

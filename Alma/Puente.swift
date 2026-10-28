@@ -35,6 +35,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             Llavero.borrar()
         case "anillo":
             anillo(d)
+        case "voz":
+            voz(d)
         case "salud":
             Salud.shared.manejar(d["que"] as? String ?? "leer") { [weak self] datos in self?.responder("AlmaSalud.datos", [datos]) }
         default: break
@@ -54,6 +56,21 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         case "registro": responder("AlmaAnillo.registro", [a.tomarRegistro()])
         default: var e = a.estado; e["tipo"] = "estado"; responder("AlmaAnillo.evento", [e])
         }
+    }
+
+    /// Alma con el teléfono bloqueado (VozNativa.swift): { accion: "voz", que: "configurar" | "anillo" | "alternar" | "estado", … }
+    /// Lo que pasa (estado, lo que dices, lo que responde Alma) va a la página como AlmaVoz.evento({ tipo, … }).
+    private func voz(_ d: [String: Any]) {
+        let v = VozNativa.shared
+        v.alEvento = { [weak self] e in self?.responder("AlmaVoz.evento", [e]) }
+        switch d["que"] as? String ?? "" {
+        case "configurar":
+            if let u = d["url"] as? String, let t = d["token"] as? String, let s = d["sesion"] as? String { v.configurar(url: u, token: t, sesion: s) }
+        case "anillo": v.ponerModoAnillo((d["on"] as? Bool) ?? false)
+        case "alternar": v.alternar()
+        default: break
+        }
+        responder("AlmaVoz.evento", [v.resumen])
     }
 
     /// Google no deja entrar dentro de un visor: la hoja segura de Safari va directo a elegir la cuenta de Google.
