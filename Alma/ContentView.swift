@@ -105,11 +105,15 @@ struct BurbujaAlma: View {
                 Circle().fill(Color.almaCoral.opacity(0.28)).frame(width: 74, height: 74).blur(radius: 12)
                 // la roca: blanca, con volumen y un borde coral fino (como el ícono)
                 Circle()
-                    .fill(RadialGradient(colors: [Color(white: 0.98), Color(red: 0.91, green: 0.90, blue: 0.88)], center: UnitPoint(x: 0.38, y: 0.32), startRadius: 2, endRadius: 40))
+                    .fill(RadialGradient(colors: [Color(red: 0.98, green: 0.976, blue: 0.97), Color(red: 0.94, green: 0.93, blue: 0.92)], center: UnitPoint(x: 0.4, y: 0.35), startRadius: 2, endRadius: 40))
                     .overlay(Circle().stroke(Color.almaCoral.opacity(0.55), lineWidth: 2))
                     .frame(width: 58, height: 58)
                     .shadow(color: Color.almaCoral.opacity(0.25), radius: 10, y: 5)
-                Image(systemName: "sparkle").font(.system(size: 15, weight: .medium)).foregroundStyle(Color.almaCoral.opacity(0.5))
+                // destello grabado, como el del botón roca: gris cálido, luz abajo a la derecha y sombra arriba
+                Image(systemName: "sparkle").font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(Color(red: 0xC9 / 255, green: 0xC1 / 255, blue: 0xB8 / 255))
+                    .shadow(color: .white, radius: 0, x: 0.8, y: 1)
+                    .shadow(color: Color.black.opacity(0.12), radius: 0.5, x: -0.6, y: -0.6)
             }
         }
         .buttonStyle(.plain)
