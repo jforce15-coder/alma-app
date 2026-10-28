@@ -5,13 +5,23 @@ import WebKit
 struct ContentView: View {
     @EnvironmentObject var nav: Navegador
     @State private var almaAbierta = false
+    @State private var barraEnInicio = false
+
+    /// En el inicio la página ocupa toda la pantalla; deslizar desde arriba muestra la barra.
+    private var limpio: Bool { nav.enInicio && !barraEnInicio }
 
     var body: some View {
         VStack(spacing: 0) {
-            BarraDireccion()
+            if !limpio { BarraDireccion().transition(.move(edge: .top).combined(with: .opacity)) }
             ZStack(alignment: .bottomTrailing) {
                 WebVista(web: nav.web)
-                    .ignoresSafeArea(edges: .bottom)
+                    .ignoresSafeArea(edges: limpio ? .all : .bottom)
+                if limpio {
+                    // franja invisible arriba: deslizar hacia abajo trae la barra para escribir una dirección
+                    Color.clear.contentShape(Rectangle()).frame(maxWidth: .infinity).frame(height: 28)
+                        .gesture(DragGesture(minimumDistance: 12).onEnded { g in if g.translation.height > 30 { barraEnInicio = true } })
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
                 // En las páginas de Spacio AM, Alma ya vive en la roca de la página: no se duplica.
                 if !nav.esSpacio {
                     BurbujaAlma { almaAbierta = true }
@@ -22,6 +32,8 @@ struct ContentView: View {
             }
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: nav.esSpacio)
         }
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: limpio)
+        .onChange(of: nav.enInicio) { _, en in if !en { barraEnInicio = false } }
         .background(Color.almaFondo)
         .sheet(isPresented: $almaAbierta) {
             PanelAlma(titulo: nav.titulo, desde: nav.direccion)
