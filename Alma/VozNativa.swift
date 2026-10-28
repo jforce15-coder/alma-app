@@ -31,7 +31,10 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
     private var ultimoToque = Date.distantPast
     private var motorListo = false
     private var formatoMono: AVAudioFormat?
-    private var sinEco = false   // si la cancelación de eco falló una vez, ya no se intenta
+    private var sinEco = false
+    private var vozEnviada = 0.0          // segundos de tu voz mandados a Alma en este tramo
+    private var ultimaVoz = Date.distantPast
+    private var vigia: Timer?   // si la cancelación de eco falló una vez, ya no se intenta
     private var sono = false
 
     // MARK: - Lo que pide la página
@@ -131,8 +134,14 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         }
         // Si iOS reinicia el audio (cambio de audífonos, por ejemplo), se vuelve a encender.
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
-            guard let self, self.modoAnillo, !self.engine.isRunning else { return }
-            try? self.prepararMotor()
+            guard let self, self.modoAnillo else { return }
+            self.paso("iOS reacomodó el audio" + (self.engine.isRunning ? "" : " y apagó el micrófono"))
+            self.revivirMicrofono()
+        }
+        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] n in
+            guard let self, self.estado == .hablando, let r = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt else { return }
+            let salida = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? "?"
+            self.paso("Cambió la salida de audio (motivo \(r)) → \(salida)")
         }
         let c = MPRemoteCommandCenter.shared()
         // El anillo (modo Music) llega como reproducir/pausar. Un doble toque puede llegar como dos avisos: se cuentan como uno.
@@ -255,7 +264,8 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         }
         guard out.frameLength > 0, let p = out.int16ChannelData else { return }
         let datos = Data(bytes: p[0], count: Int(out.frameLength) * 2)
-        DispatchQueue.main.async { self.mandar(["user_audio_chunk": datos.base64EncodedString()]) }
+        let seg = Double(out.frameLength) / 16000
+        DispatchQueue.main.async { self.vozEnviada += seg; self.ultimaVoz = Date(); self.mandar(["user_audio_chunk": datos.base64EncodedString()]) }
     }
 
     private func escuchar() {
@@ -286,6 +296,7 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
                 formatoSalida = nuevo; player.stop(); engine.disconnectNodeOutput(player); engine.connect(player, to: engine.mainMixerNode, format: nuevo); player.play()
             }
             estado = .hablando
+            vigilar()
             paso("Alma conectada · te escucha")
             infoBloqueo("Te escucho · dos toques para pausar")
             if let id = ev["conversation_id"] as? String { vincular(id) }
@@ -332,7 +343,32 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         URLSession.shared.dataTask(with: r).resume()
     }
 
+    /// Mientras hablan: cada 10 s anota cuánta voz llegó; si el micrófono calla más de 3 s, lo vuelve a abrir.
+    private func vigilar() {
+        vigia?.invalidate(); vozEnviada = 0; ultimaVoz = Date()
+        var tramo = 0
+        vigia = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] t in
+            guard let self, self.estado == .hablando else { t.invalidate(); return }
+            tramo += 1
+            if Date().timeIntervalSince(self.ultimaVoz) > 3 {
+                self.paso("El micrófono dejó de mandar voz (motor " + (self.engine.isRunning ? "encendido" : "apagado") + ")")
+                self.ultimaVoz = Date()
+                self.revivirMicrofono()
+            }
+            if tramo % 10 == 0 { self.paso(String(format: "Voz enviada: %.1f s en 10 s", self.vozEnviada)); self.vozEnviada = 0 }
+        }
+    }
+
+    private func revivirMicrofono() {
+        do { try prepararMotor(); paso("Micrófono abierto otra vez") }
+        catch {
+            paso("No pude volver a abrir el micrófono (\((error as NSError).code))")
+            if estado == .hablando { fallo("iOS apagó el micrófono y no dejó volver a abrirlo. Abre Alma y vuelve a intentar.") }
+        }
+    }
+
     private func terminar() {
+        vigia?.invalidate(); vigia = nil
         let habia = estado == .hablando || estado == .conectando
         if habia { paso("Pausa") }
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
