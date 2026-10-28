@@ -37,9 +37,19 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         }
     }
 
-    /// Google no deja entrar dentro de un visor: se abre en una hoja de Safari y vuelve con alma://google?cred=…
+    /// Google no deja entrar dentro de un visor: la hoja segura de Safari va directo a elegir la cuenta de Google.
+    /// Google vuelve a hub.spacioam.com/alma/google.html, que la devuelve al instante con alma://google?cred=…
     private func google() {
-        let u = URL(string: "https://hub.spacioam.com/alma/google.html?ir=1")!
+        var c = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
+        c.queryItems = [
+            URLQueryItem(name: "client_id", value: "946315464909-i0uptgcvbpqnspnjp5a0o4a7dnpi0ngi.apps.googleusercontent.com"),
+            URLQueryItem(name: "response_type", value: "id_token"),
+            URLQueryItem(name: "scope", value: "openid email profile"),
+            URLQueryItem(name: "prompt", value: "select_account"),
+            URLQueryItem(name: "redirect_uri", value: "https://hub.spacioam.com/alma/google.html"),
+            URLQueryItem(name: "nonce", value: UUID().uuidString)
+        ]
+        let u = c.url!
         let s = ASWebAuthenticationSession(url: u, callbackURLScheme: "alma") { [weak self] url, error in
             DispatchQueue.main.async {
                 self?.sesionGoogle = nil
