@@ -8,7 +8,7 @@ import Security
 /// · «Alma con el anillo» encendido: la app queda lista en segundo plano como la app de audio del teléfono
 ///   (un audio en silencio la mantiene viva y en «Reproduciendo»). El anillo en modo Music manda su toque como el botón
 ///   de unos audífonos → doble toque: Alma escucha y responde · otro doble toque: pausa · otro: retoma.
-/// · La voz es el mismo agente de ElevenLabs del Hub (websocket directo con agent_id). La ficha (quién eres, saludo y
+/// · La voz es el mismo agente de ElevenLabs del Hub (websocket con la URL firmada del Hub). La ficha (quién eres, saludo y
 ///   contexto reciente) se pide al Hub con tu sesión, igual que la voz de las web apps, y la llamada se liga a tu chat.
 /// Pausar termina la conversación; al retomar, el Hub le da a Alma lo que venían hablando («¿Retomamos…?»).
 final class VozNativa: NSObject, URLSessionWebSocketDelegate {
@@ -39,7 +39,11 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
 
     func ponerModoAnillo(_ on: Bool) {
         UserDefaults.standard.set(on, forKey: "voz_modo_anillo")
-        if on { prepararMandos(); quedarLista() } else { terminar(); apagar() }
+        if on {
+            // El permiso del micrófono se pide ahora, con la app abierta: con el teléfono bloqueado iOS no puede preguntar.
+            AVAudioSession.sharedInstance().requestRecordPermission { _ in }
+            prepararMandos(); quedarLista()
+        } else { terminar(); apagar() }
     }
 
     func arrancarSiHaceFalta() { if modoAnillo { prepararMandos(); quedarLista() } }
@@ -52,7 +56,8 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    var resumen: [String: Any] { ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo] }
+    var resumen: [String: Any] { ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? ""] }
+    static let opciones: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
 
     // MARK: - Estar lista (audio en silencio + mandos de la pantalla de bloqueo)
 
@@ -60,7 +65,8 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         guard estado != .hablando, estado != .conectando else { return }
         do {
             let s = AVAudioSession.sharedInstance()
-            try s.setCategory(.playback, mode: .default, options: [])
+            // Desde que queda lista ya es «hablar y escuchar»: con la pantalla bloqueada iOS no deja cambiar a micrófono después.
+            try s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
             try s.setActive(true)
         } catch {}
         if silencio == nil, let wav = VozNativa.wavSilencio() { silencio = try? AVAudioPlayer(data: wav); silencio?.numberOfLoops = -1; silencio?.volume = 0.01 }
@@ -108,12 +114,13 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         AudioServicesPlaySystemSound(1113)
         infoBloqueo("Conectando…")
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
-        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWeb", "ligero": 1, "token": token, "session": sesion])
-        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWeb", "token": token, "session": sesion])
+        URLSession.shared.dataTask(with: r) { [weak self] data, resp, err in
             guard let self else { return }
             guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], (j["ok"] as? Bool) == true,
                   let agente = j["agent_id"] as? String else {
-                DispatchQueue.main.async { self.fallo("No pude conectar con Alma.") }; return
+                let por = err?.localizedDescription ?? (data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] as? String) ?? "sin respuesta del Hub"
+                DispatchQueue.main.async { self.fallo("No pude pedir tu ficha: \(por)") }; return
             }
             DispatchQueue.main.async { self.conectar(agente: agente, ficha: j) }
         }.resume()
@@ -123,15 +130,20 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         guard estado == .conectando else { return }
         do {
             let s = AVAudioSession.sharedInstance()
-            try s.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
+            guard s.recordPermission == .granted else { fallo("Falta el permiso del micrófono: Ajustes del iPhone → Alma → Micrófono."); return }
+            try s.setCategory(.playAndRecord, mode: .voiceChat, options: VozNativa.opciones)
             try s.setActive(true)
             try prepararMotor()
-        } catch { fallo("No pude abrir el micrófono."); return }
+        } catch { fallo("No pude abrir el micrófono (\((error as NSError).code))."); return }
         silencio?.stop()
-        guard let u = URL(string: "wss://api.elevenlabs.io/v1/convai/conversation?agent_id=\(agente)") else { return }
+        let firmada = (ficha["signed_url"] as? String).flatMap { URL(string: $0) }
+        guard let u = firmada ?? URL(string: "wss://api.elevenlabs.io/v1/convai/conversation?agent_id=\(agente)") else { return }
+        var pedido = URLRequest(url: u); pedido.setValue("https://hub.spacioam.com", forHTTPHeaderField: "Origin")
         let sesion = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
         sesionURL = sesion
-        let t = sesion.webSocketTask(with: u); ws = t; t.resume()
+        let t = sesion.webSocketTask(with: pedido); ws = t; t.resume()
+        // Si en 12 s Alma no contestó, se avisa (y no queda «Conectando…» para siempre).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in if self?.estado == .conectando { self?.fallo("Alma no contestó. Revisa tu internet.") } }
         var dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
         dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nEN PANTALLA: habla con Alma desde su anillo, con el teléfono bloqueado (solo voz, sin pantalla). Respuestas cortas y claras."
         var agent: [String: Any] = [:]
@@ -183,8 +195,11 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
                     DispatchQueue.main.async { self.mensaje(j) }
                 }
                 self.escuchar()
-            case .failure:
-                DispatchQueue.main.async { if self.estado == .hablando || self.estado == .conectando { self.terminar() } }
+            case .failure(let e):
+                DispatchQueue.main.async {
+                    if self.estado == .conectando { self.fallo("No pude conectar la voz: \(e.localizedDescription)") }
+                    else if self.estado == .hablando { self.terminar() }
+                }
             }
         }
     }
@@ -256,12 +271,16 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func fallo(_ m: String) {
+        UserDefaults.standard.set(m, forKey: "voz_ultimo_error")
         emitir(["tipo": "error", "mensaje": m])
         terminar()
+        infoBloqueo(m)   // se ve en la pantalla de bloqueo
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in if self?.estado == .lista { self?.infoBloqueo("Toca dos veces tu anillo para hablar") } }
     }
 
     func urlSession(_ s: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith code: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-        if estado == .hablando || estado == .conectando { terminar() }
+        let por = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        if estado == .conectando { fallo("La voz se cerró (\(code.rawValue)) \(por)") } else if estado == .hablando { terminar() }
     }
 
     private func avisar() { emitir(resumen) }
