@@ -50,6 +50,13 @@ final class Anillo: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         guard central.state == .poweredOn else { emitirEstado(); return }
         if reconectarGuardado() { return }
         buscando = true; vistos = [:]
+        // Un anillo que ya está conectado al iPhone (la app QRing, o Ajustes → Bluetooth) no se anuncia: se pide al sistema
+        // la lista de los que ya están conectados y Alma se une a esa misma conexión.
+        let yaConectados = central.retrieveConnectedPeripherals(withServices: [Anillo.servicio, Anillo.servicio2, CBUUID(string: "180F"), CBUUID(string: "1812"), CBUUID(string: "180A")])
+        for p in yaConectados where Anillo.pareceAnillo(p.name ?? "", []) && vistos[p.identifier] == nil {
+            vistos[p.identifier] = p
+            emitir(["tipo": "encontrado", "id": p.identifier.uuidString, "nombre": p.name ?? "Anillo", "senal": 0, "yaConectado": true])
+        }
         central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
         emitir(["tipo": "buscando"])
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
@@ -126,8 +133,7 @@ final class Anillo: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_ c: CBCentralManager, didDiscover p: CBPeripheral, advertisementData ad: [String: Any], rssi: NSNumber) {
         let nombre = p.name ?? (ad[CBAdvertisementDataLocalNameKey] as? String) ?? ""
         let servicios = (ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
-        let pareceAnillo = servicios.contains(Anillo.servicio) || ["R0", "R1", "R2", "COLMI", "QRING", "RING", "YAWELL"].contains { nombre.uppercased().contains($0) }
-        guard !nombre.isEmpty, pareceAnillo, vistos[p.identifier] == nil else { return }
+        guard !nombre.isEmpty, Anillo.pareceAnillo(nombre, servicios), vistos[p.identifier] == nil else { return }
         vistos[p.identifier] = p
         emitir(["tipo": "encontrado", "id": p.identifier.uuidString, "nombre": nombre, "senal": rssi.intValue])
     }
@@ -187,6 +193,10 @@ final class Anillo: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         b.append(UInt8(b.reduce(0) { ($0 + Int($1)) } & 0xFF))
         ultimoComando = Date()
         p.writeValue(Data(b), for: ch, type: ch.properties.contains(.write) ? .withResponse : .withoutResponse)
+    }
+
+    static func pareceAnillo(_ nombre: String, _ servicios: [CBUUID]) -> Bool {
+        servicios.contains(Anillo.servicio) || ["R0", "R1", "R2", "COLMI", "QRING", "RING", "YAWELL"].contains { nombre.uppercased().contains($0) }
     }
 
     static func bytes(_ h: String) -> [UInt8] {
