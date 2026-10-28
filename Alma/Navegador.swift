@@ -7,6 +7,9 @@ final class Navegador: NSObject, ObservableObject {
     /// Inicio de la app: Alma grande al centro sobre el atardecer (hub.spacioam.com/alma/inicio.html).
     static let inicio = URL(string: "https://hub.spacioam.com/alma/inicio.html")!
 
+    /// Acceso directo que sale al tocar la barra de dirección.
+    static let homeSpacio = URL(string: "https://hub.spacioam.com/")!
+
     let web: WKWebView
     @Published var direccion = ""
     @Published var titulo = ""
