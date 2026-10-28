@@ -2,7 +2,7 @@ import Foundation
 import HealthKit
 
 /// Apple Salud: lo que guardan el reloj, el iPhone, la app del anillo u otras apps, para la página Health.
-/// La página pide { accion: "salud", que: "permiso" | "leer" } y recibe AlmaSalud.datos({ permiso, hoy, sueno, ejercicios }).
+/// La página pide { accion: "salud", que: "permiso" | "leer" | "historial" } y recibe AlmaSalud.datos({ permiso, hoy, sueno, ejercicios }).
 /// Solo lee (nunca escribe en Apple Salud).
 final class Salud {
     static let shared = Salud()
@@ -27,7 +27,63 @@ final class Salud {
         }
         // Solo se lee si ya se pidió el permiso antes (iOS no dice qué aceptó; «ya preguntado» basta).
         store.getRequestStatusForAuthorization(toShare: [], read: tipos) { [weak self] estado, _ in
-            if estado == .unnecessary { self?.leer(fin) } else { DispatchQueue.main.async { fin(["permiso": false]) } }
+            guard estado == .unnecessary else { DispatchQueue.main.async { fin(["permiso": false]) }; return }
+            if que == "historial" { self?.historial(fin) } else { self?.leer(fin) }
+        }
+    }
+
+    /// Los últimos 30 días, un dato por día (lo que guardó cualquier fuente: QRing, el reloj, el iPhone…):
+    /// { permiso, historial: [{ d: "2026-10-28", pasos, ritmo, ritmoMin, reposo, hrv, oxigeno, sueno }] }
+    private func historial(_ fin: @escaping ([String: Any]) -> Void) {
+        let cal = Calendar.current, ahora = Date(), hoy = cal.startOfDay(for: ahora)
+        let desde = cal.date(byAdding: .day, value: -29, to: hoy) ?? hoy
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.locale = Locale(identifier: "en_US_POSIX")
+        let g = DispatchGroup(), cerrojo = NSLock()
+        var dias: [String: [String: Any]] = [:]
+        func pon(_ d: Date, _ k: String, _ v: Double) { cerrojo.lock(); dias[f.string(from: d), default: [:]][k] = v; cerrojo.unlock() }
+        let rango = HKQuery.predicateForSamples(withStart: desde, end: ahora)
+
+        let diarios: [(String, HKQuantityTypeIdentifier, HKUnit, HKStatisticsOptions, Double)] = [
+            ("pasos", .stepCount, .count(), .cumulativeSum, 1),
+            ("ritmo", .heartRate, HKUnit.count().unitDivided(by: .minute()), [.discreteAverage, .discreteMin], 1),
+            ("reposo", .restingHeartRate, HKUnit.count().unitDivided(by: .minute()), .discreteAverage, 1),
+            ("hrv", .heartRateVariabilitySDNN, .secondUnit(with: .milli), .discreteAverage, 1),
+            ("oxigeno", .oxygenSaturation, .percent(), .discreteAverage, 100)
+        ]
+        for (k, id, unidad, op, factor) in diarios {
+            g.enter()
+            let q = HKStatisticsCollectionQuery(quantityType: HKQuantityType(id), quantitySamplePredicate: rango, options: op,
+                                                anchorDate: hoy, intervalComponents: DateComponents(day: 1))
+            q.initialResultsHandler = { _, res, _ in
+                res?.enumerateStatistics(from: desde, to: ahora) { st, _ in
+                    if let v = (op.contains(.cumulativeSum) ? st.sumQuantity() : st.averageQuantity())?.doubleValue(for: unidad), v > 0 { pon(st.startDate, k, (v * factor).rounded()) }
+                    if k == "ritmo", let m = st.minimumQuantity()?.doubleValue(for: unidad) { pon(st.startDate, "ritmoMin", m.rounded()) }
+                }
+                g.leave()
+            }
+            store.execute(q)
+        }
+
+        // Sueño por noche: la noche cuenta para el día en que despiertas; si hay varias fuentes, la que más registró.
+        g.enter()
+        let desdeNoche = cal.date(byAdding: .hour, value: -12, to: desde) ?? desde
+        store.execute(HKSampleQuery(sampleType: HKCategoryType(.sleepAnalysis), predicate: HKQuery.predicateForSamples(withStart: desdeNoche, end: ahora),
+                                    limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, m, _ in
+            let dormido: Set<Int> = [HKCategoryValueSleepAnalysis.asleepREM.rawValue, HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                                     HKCategoryValueSleepAnalysis.asleepDeep.rawValue, HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue]
+            let muestras = (m as? [HKCategorySample] ?? []).filter { dormido.contains($0.value) }
+            let porNoche = Dictionary(grouping: muestras) { cal.startOfDay(for: $0.startDate.addingTimeInterval(12 * 3600)) }
+            for (noche, lista) in porNoche {
+                let porFuente = Dictionary(grouping: lista) { $0.sourceRevision.source.bundleIdentifier }
+                let mejor = porFuente.values.map { $0.reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) } }.max() ?? 0
+                if mejor > 0 { pon(noche, "sueno", (mejor / 60).rounded()) }
+            }
+            g.leave()
+        })
+
+        g.notify(queue: .main) {
+            let lista = dias.keys.sorted().map { k -> [String: Any] in var o = dias[k] ?? [:]; o["d"] = k; return o }
+            fin(["permiso": true, "historial": lista])
         }
     }
 
