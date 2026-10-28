@@ -78,8 +78,8 @@ struct BarraDireccion: View {
                     .font(.system(size: 15))
                     .foregroundStyle(Color.almaTinta)
                     .padding(.horizontal, 14)
-                    .frame(height: 38)
-                    .background(Capsule().fill(Color.white))
+                    .frame(height: 34)
+                    .background(Capsule().fill(Color.white.opacity(0.85)))
                     .overlay(Capsule().stroke(Color.almaBorde, lineWidth: 1))
                 if !enfocado, let u = URL(string: nav.direccion), u.scheme != nil {
                     ShareLink(item: u) {
@@ -92,7 +92,27 @@ struct BarraDireccion: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
+            // Al tocar la barra: acceso directo al home de Spacio AM.
+            if enfocado {
+                Button {
+                    nav.abrir(texto: Navegador.homeSpacio.absoluteString)
+                    enfocado = false
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "house").font(.system(size: 14, weight: .medium))
+                        Text("Home de Spacio AM").font(.system(size: 15))
+                        Spacer()
+                        Text("hub.spacioam.com").font(.system(size: 12)).foregroundStyle(Color.almaTinta.opacity(0.5))
+                    }
+                    .foregroundStyle(Color.almaTinta)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity)
+            }
             GeometryReader { g in
                 Rectangle().fill(Color.almaCoral)
                     .frame(width: g.size.width * CGFloat(nav.progreso), height: 2)
@@ -102,6 +122,7 @@ struct BarraDireccion: View {
             .frame(height: 2)
         }
         .background(Color.almaFondo)
+        .animation(.easeOut(duration: 0.15), value: enfocado)
         .onChange(of: nav.direccion) { _, nueva in if !enfocado { texto = nueva } }
         .onChange(of: enfocado) { _, foco in if !foco { texto = nav.direccion } }
         .onAppear { texto = nav.direccion }
