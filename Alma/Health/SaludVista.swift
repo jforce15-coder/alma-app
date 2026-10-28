@@ -51,13 +51,13 @@ struct SaludVista: View {
         .fullScreenCover(isPresented: $respira) { RespiraVista() }
     }
 
-    private func abrirConexion() { m.reiniciarConexion(); conexion = true }
+    private func abrirConexion() { m.reiniciarConexion(); Portal.shared.pasar { conexion = true } }
 
     // MARK: - La firma del deck
 
     private func firma(_ arriba: CGFloat) -> some View {
         HStack {
-            Button { cerrar() } label: {
+            Button { Portal.shared.pasar { cerrar() } } label: {
                 HStack(spacing: 8) { Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold)); Text("ALMA").tracking(3.5) }
             }
             Spacer()
@@ -195,7 +195,7 @@ struct SaludVista: View {
             Titulo("Respira.", "Un minuto con Alma.").aparece(0)
             Text("Inhala cuando la roca crezca. Exhala cuando se encoja.").font(Tipo.sans(15)).padding(.top, 14).aparece(1)
         } tarjetas: {
-            Pildora("Empezar") { respira = true }.aparece(2)
+            Pildora("Empezar") { Portal.shared.pasar { respira = true } }.aparece(2)
             Text("Inhala 4 · sostén 4 · exhala 6").font(Tipo.sans(12)).foregroundStyle(.white.opacity(0.85)).aparece(3)
         }
     }
@@ -850,7 +850,7 @@ struct ConexionVista: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Button { cerrar() } label: { Image(systemName: "xmark").font(.system(size: 15, weight: .medium)).frame(width: 40, height: 40).background(Circle().fill(Tinta.tinta.opacity(0.06))) }
+                Button { Portal.shared.pasar { cerrar() } } label: { Image(systemName: "xmark").font(.system(size: 15, weight: .medium)).frame(width: 40, height: 40).background(Circle().fill(Tinta.tinta.opacity(0.06))) }
                 Spacer()
             }
             ZStack {
@@ -889,7 +889,7 @@ struct ConexionVista: View {
             if m.pasoConexion == 0 || m.pasoConexion == 4 {
                 Text(m.pasoConexion == 4 ? "LISTO" : "BUSCAR MI ANILLO").tracking(1.9).font(Tipo.sans(12, .semibold))
                     .frame(maxWidth: 380).frame(height: 54).background(Capsule().fill(Tinta.tinta)).foregroundStyle(Color(hex: 0xF7F1EA))
-                    .boton { if m.pasoConexion == 4 { cerrar() } else { m.buscar() } }
+                    .boton { if m.pasoConexion == 4 { Portal.shared.pasar { cerrar() } } else { m.buscar() } }
                     .padding(.top, 14)
             }
         }
@@ -929,7 +929,7 @@ struct RespiraVista: View {
             }.foregroundStyle(Color(hex: 0xFBF6F0))
             VStack {
                 HStack {
-                    Button { tarea?.cancel(); cerrar() } label: { Image(systemName: "xmark").font(.system(size: 15, weight: .medium)).frame(width: 40, height: 40).background(Circle().fill(.white.opacity(0.16))).foregroundStyle(.white) }
+                    Button { tarea?.cancel(); Portal.shared.pasar { cerrar() } } label: { Image(systemName: "xmark").font(.system(size: 15, weight: .medium)).frame(width: 40, height: 40).background(Circle().fill(.white.opacity(0.16))).foregroundStyle(.white) }
                     Spacer()
                 }
                 Spacer()

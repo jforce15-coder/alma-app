@@ -47,7 +47,8 @@ struct ContentView: View {
         .fullScreenCover(isPresented: $salud) { SaludVista() }
         .background { Color.clear.fullScreenCover(isPresented: llamada) { LlamadaVista(voz: voz) { llamadaOculta = true } } }
         .onChange(of: voz.estado) { _, e in if e == .apagada || e == .lista { llamadaOculta = false } }
-        .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in salud = true }
+        .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in Portal.shared.pasar { salud = true } }
+        .onAppear { Portal.shared.instalar() }
         .sheet(isPresented: $almaAbierta) {
             PanelAlma(titulo: nav.titulo, desde: nav.direccion)
                 .presentationDetents([.medium, .large])
