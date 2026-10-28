@@ -16,6 +16,8 @@ final class Navegador: NSObject, ObservableObject {
     @Published var cargando = false
 
     private var observaciones: [NSKeyValueObservation] = []
+    /// Entrar con Face ID o Google desde la página de inicio (Puente.swift).
+    private let puente = Puente()
 
     override init() {
         web = WKWebView(frame: .zero, configuration: Navegador.configuracion())
@@ -24,6 +26,8 @@ final class Navegador: NSObject, ObservableObject {
         web.uiDelegate = self
         web.allowsBackForwardNavigationGestures = true
         if #available(iOS 16.4, *) { web.isInspectable = true }
+        puente.web = web
+        web.configuration.userContentController.add(PuenteDebil(puente), name: Puente.nombre)
         observaciones = [
             web.observe(\.url, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.direccion = w.url?.absoluteString ?? "" } },
             web.observe(\.title, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.titulo = w.title ?? "" } },
