@@ -1,0 +1,5 @@
+Alma.xcodeproj/
+Alma/Info.plist
+build/
+.DS_Store
+DerivedData/
