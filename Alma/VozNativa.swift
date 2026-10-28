@@ -3,6 +3,7 @@ import AudioToolbox
 import Foundation
 import MediaPlayer
 import Security
+import UIKit
 
 /// Alma por voz dentro de la app, también con el teléfono bloqueado.
 /// · «Alma con el anillo» encendido: la app queda lista en segundo plano como la app de audio del teléfono
@@ -29,6 +30,8 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
     private var silencio: AVAudioPlayer?
     private var ultimoToque = Date.distantPast
     private var motorListo = false
+    private var formatoMono: AVAudioFormat?
+    private var sono = false
 
     // MARK: - Lo que pide la página
 
@@ -46,7 +49,22 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         } else { terminar(); apagar() }
     }
 
-    func arrancarSiHaceFalta() { if modoAnillo { prepararMandos(); quedarLista() } }
+    func arrancarSiHaceFalta() {
+        let d = UserDefaults.standard
+        if d.bool(forKey: "voz_abierta") {   // la app se cerró a media conversación (iOS la volvió a abrir por el anillo)
+            d.set("Alma se cerró sola en el paso: " + (d.string(forKey: "voz_paso") ?? "?"), forKey: "voz_ultimo_error"); d.set(false, forKey: "voz_abierta")
+        }
+        if modoAnillo { prepararMandos(); quedarLista() }
+    }
+
+    /// Lo último que hizo la voz (se ve en Ajustes y ayuda a saber dónde se queda).
+    private func paso(_ t: String) {
+        let d = UserDefaults.standard; d.set(t, forKey: "voz_paso")
+        var lista = d.stringArray(forKey: "voz_pasos") ?? []
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
+        lista.append(f.string(from: Date()) + " " + t); d.set(Array(lista.suffix(14)), forKey: "voz_pasos")
+        emitir(["tipo": "paso", "texto": t])
+    }
 
     /// Doble toque del anillo (o el botón de la página): habla o pausa.
     func alternar() {
@@ -56,7 +74,9 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
-    var resumen: [String: Any] { ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? ""] }
+    var resumen: [String: Any] { ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
+                                  "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
+                                  "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar"] }
     static let opciones: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
 
     // MARK: - Estar lista (audio en silencio + mandos de la pantalla de bloqueo)
@@ -85,6 +105,10 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
     private var mandosListos = false
     private func prepararMandos() {
         guard !mandosListos else { return }; mandosListos = true
+        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
+            guard let self, let t = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt, t == AVAudioSession.InterruptionType.began.rawValue else { return }
+            if self.estado == .hablando || self.estado == .conectando { self.fallo("Otra app o una llamada tomó el audio.") }
+        }
         let c = MPRemoteCommandCenter.shared()
         // El anillo (modo Music) llega como reproducir/pausar. Un doble toque puede llegar como dos avisos: se cuentan como uno.
         let toque: (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus = { [weak self] _ in
@@ -110,6 +134,8 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else {
             emitir(["tipo": "error", "mensaje": "Abre Alma una vez con tu sesión para que pueda hablar con el teléfono bloqueado."]); return
         }
+        UserDefaults.standard.set([String](), forKey: "voz_pasos"); UserDefaults.standard.set(true, forKey: "voz_abierta")
+        paso("Pidiendo tu ficha al Hub" + (UIApplication.shared.applicationState == .active ? "" : " (en segundo plano)"))
         estado = .conectando
         AudioServicesPlaySystemSound(1113)
         infoBloqueo("Conectando…")
@@ -122,7 +148,7 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
                 let por = err?.localizedDescription ?? (data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] as? String) ?? "sin respuesta del Hub"
                 DispatchQueue.main.async { self.fallo("No pude pedir tu ficha: \(por)") }; return
             }
-            DispatchQueue.main.async { self.conectar(agente: agente, ficha: j) }
+            DispatchQueue.main.async { self.paso("Ficha lista" + (j["signed_url"] != nil ? " (URL firmada)" : "")); self.conectar(agente: agente, ficha: j) }
         }.resume()
     }
 
@@ -131,9 +157,12 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         do {
             let s = AVAudioSession.sharedInstance()
             guard s.recordPermission == .granted else { fallo("Falta el permiso del micrófono: Ajustes del iPhone → Alma → Micrófono."); return }
+            paso("Abriendo el audio")
             try s.setCategory(.playAndRecord, mode: .voiceChat, options: VozNativa.opciones)
             try s.setActive(true)
+            paso("Abriendo el micrófono")
             try prepararMotor()
+            paso("Micrófono abierto · conectando la voz")
         } catch { fallo("No pude abrir el micrófono (\((error as NSError).code))."); return }
         silencio?.stop()
         let firmada = (ficha["signed_url"] as? String).flatMap { URL(string: $0) }
@@ -163,7 +192,11 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
         }
         engine.connect(player, to: engine.mainMixerNode, format: formatoSalida)
         let fIn = engine.inputNode.outputFormat(forBus: 0)
-        convertidor = AVAudioConverter(from: fIn, to: formatoEntrada)
+        guard fIn.sampleRate > 0, fIn.channelCount > 0, let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: fIn.sampleRate, channels: 1, interleaved: false) else {
+            throw NSError(domain: "Alma", code: -1, userInfo: [NSLocalizedDescriptionKey: "el micrófono no está disponible"])
+        }
+        formatoMono = mono
+        convertidor = AVAudioConverter(from: mono, to: formatoEntrada)
         engine.inputNode.removeTap(onBus: 0)
         engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: fIn) { [weak self] buf, _ in self?.microfono(buf) }
         if !engine.isRunning { try engine.start() }
@@ -171,13 +204,16 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func microfono(_ buf: AVAudioPCMBuffer) {
-        guard estado == .hablando, let conv = convertidor else { return }
+        guard estado == .hablando, let conv = convertidor, let mf = formatoMono, let src = buf.floatChannelData,
+              let mono = AVAudioPCMBuffer(pcmFormat: mf, frameCapacity: buf.frameLength), let dst = mono.floatChannelData else { return }
+        mono.frameLength = buf.frameLength
+        dst[0].update(from: src[0], count: Int(buf.frameLength))   // primer canal
         let cap = AVAudioFrameCount(Double(buf.frameLength) * 16000 / buf.format.sampleRate) + 32
         guard let out = AVAudioPCMBuffer(pcmFormat: formatoEntrada, frameCapacity: cap) else { return }
         var dado = false
         conv.convert(to: out, error: nil) { _, st in
             if dado { st.pointee = .noDataNow; return nil }
-            dado = true; st.pointee = .haveData; return buf
+            dado = true; st.pointee = .haveData; return mono
         }
         guard out.frameLength > 0, let p = out.int16ChannelData else { return }
         let datos = Data(bytes: p[0], count: Int(out.frameLength) * 2)
@@ -197,8 +233,7 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
                 self.escuchar()
             case .failure(let e):
                 DispatchQueue.main.async {
-                    if self.estado == .conectando { self.fallo("No pude conectar la voz: \(e.localizedDescription)") }
-                    else if self.estado == .hablando { self.terminar() }
+                    if self.estado == .conectando || self.estado == .hablando { self.fallo("La voz se cortó: \(e.localizedDescription)") }
                 }
             }
         }
@@ -213,11 +248,12 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
                 formatoSalida = nuevo; player.stop(); engine.disconnectNodeOutput(player); engine.connect(player, to: engine.mainMixerNode, format: nuevo); player.play()
             }
             estado = .hablando
+            paso("Alma conectada · te escucha")
             infoBloqueo("Te escucho · dos toques para pausar")
             if let id = ev["conversation_id"] as? String { vincular(id) }
         case "audio":
             let ev = j["audio_event"] as? [String: Any] ?? [:]
-            if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) { sonar(d) }
+            if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) { if !sono { sono = true; paso("Alma está hablando") }; sonar(d) }
         case "interruption":
             player.stop(); player.play()
         case "ping":
@@ -260,6 +296,8 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
 
     private func terminar() {
         let habia = estado == .hablando || estado == .conectando
+        if habia { paso("Pausa") }
+        UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
         sesionURL?.invalidateAndCancel(); sesionURL = nil
         engine.inputNode.removeTap(onBus: 0)
@@ -271,6 +309,7 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
     }
 
     private func fallo(_ m: String) {
+        paso("Error: " + m)
         UserDefaults.standard.set(m, forKey: "voz_ultimo_error")
         emitir(["tipo": "error", "mensaje": m])
         terminar()
@@ -280,7 +319,7 @@ final class VozNativa: NSObject, URLSessionWebSocketDelegate {
 
     func urlSession(_ s: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith code: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         let por = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-        if estado == .conectando { fallo("La voz se cerró (\(code.rawValue)) \(por)") } else if estado == .hablando { terminar() }
+        if estado == .conectando || estado == .hablando { fallo("ElevenLabs cerró la voz (\(code.rawValue)) \(por)") }
     }
 
     private func avisar() { emitir(resumen) }
