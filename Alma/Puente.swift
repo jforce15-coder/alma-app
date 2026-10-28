@@ -33,7 +33,24 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             }
         case "faceBorrar":
             Llavero.borrar()
+        case "anillo":
+            anillo(d)
         default: break
+        }
+    }
+
+    /// El anillo por Bluetooth (Anillo.swift): { accion: "anillo", que: "estado" | "buscar" | "elegir" | "olvidar" | "comando" | "registro", … }
+    /// Lo que llega del anillo va a la página como AlmaAnillo.evento({ tipo, … }).
+    private func anillo(_ d: [String: Any]) {
+        let a = Anillo.shared
+        a.alEvento = { [weak self] e in self?.responder("AlmaAnillo.evento", [e]) }
+        switch d["que"] as? String ?? "" {
+        case "buscar": a.buscar()
+        case "elegir": if let id = d["id"] as? String { a.elegir(id) }
+        case "olvidar": a.olvidar()
+        case "comando": a.comando(d["nombre"] as? String ?? "", d)
+        case "registro": responder("AlmaAnillo.registro", [a.tomarRegistro()])
+        default: var e = a.estado; e["tipo"] = "estado"; responder("AlmaAnillo.evento", [e])
         }
     }
 
