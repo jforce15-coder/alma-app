@@ -64,10 +64,11 @@ jobs:
           ISS: ${{ secrets.ASC_ISSUER_ID }}
         run: |
           set -o pipefail
+          # Se firma directo para distribución (perfil App Store): el de desarrollo pide un iPhone registrado y no hace falta.
           AUTH="-allowProvisioningUpdates -authenticationKeyPath $ASC_KEY_PATH -authenticationKeyID $KID -authenticationKeyIssuerID $ISS"
           xcodebuild -project Alma.xcodeproj -scheme Alma -configuration Release \
             -destination 'generic/platform=iOS' -archivePath build/Alma.xcarchive archive \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }} $AUTH | tail -60
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} CODE_SIGN_IDENTITY="Apple Distribution" $AUTH | tail -60
           xcodebuild -exportArchive -archivePath build/Alma.xcarchive -exportOptionsPlist ExportOptions.plist \
             -exportPath build/export $AUTH | tail -60
           echo "Versión 1.0 (${{ github.run_number }}) enviada a TestFlight. Apple la procesa en 5–15 min." >> "$GITHUB_STEP_SUMMARY"
