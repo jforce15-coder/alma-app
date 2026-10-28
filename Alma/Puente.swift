@@ -35,6 +35,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             Llavero.borrar()
         case "anillo":
             anillo(d)
+        case "salud":
+            Salud.shared.manejar(d["que"] as? String ?? "leer") { [weak self] datos in self?.responder("AlmaSalud.datos", [datos]) }
         default: break
         }
     }

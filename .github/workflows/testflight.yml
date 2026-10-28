@@ -70,6 +70,9 @@ jobs:
           xcodebuild -project Alma.xcodeproj -scheme Alma -configuration Release \
             -destination 'generic/platform=iOS' -archivePath build/Alma.xcarchive archive \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} CODE_SIGNING_ALLOWED=NO | tail -40
+          # El archivo sin firmar no lleva los permisos (Apple Salud): se le ponen con una firma provisional y la
+          # exportación los conserva al firmar para distribución (y los activa en el App ID con -allowProvisioningUpdates).
+          codesign --force --sign - --entitlements Alma/Alma.entitlements build/Alma.xcarchive/Products/Applications/Alma.app
           xcodebuild -exportArchive -archivePath build/Alma.xcarchive -exportOptionsPlist ExportOptions.plist \
             -exportPath build/export $AUTH | tail -60
           echo "Versión 1.0 (${{ github.run_number }}) enviada a TestFlight. Apple la procesa en 5–15 min." >> "$GITHUB_STEP_SUMMARY"
