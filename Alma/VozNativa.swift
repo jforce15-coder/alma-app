@@ -214,7 +214,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         paso("Pidiendo tu ficha al Hub" + (UIApplication.shared.applicationState == .active ? "" : " (en segundo plano)"))
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
-        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWeb", "token": token, "session": sesion])
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWeb", "app": "alma", "token": token, "session": sesion])
         URLSession.shared.dataTask(with: r) { [weak self] data, resp, err in
             guard let self else { return }
             guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], (j["ok"] as? Bool) == true,
@@ -404,7 +404,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private func vincular(_ id: String) {
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
-        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWebVincular", "conv_id": id, "token": token, "session": sesion])
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWebVincular", "app": "alma", "conv_id": id, "token": token, "session": sesion])
         URLSession.shared.dataTask(with: r).resume()
     }
 
@@ -486,7 +486,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
         pidiendoFicha = true
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
-        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWeb", "token": token, "session": sesion])
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWeb", "app": "alma", "token": token, "session": sesion])
         URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
             DispatchQueue.main.async {
                 guard let self else { return }; self.pidiendoFicha = false
