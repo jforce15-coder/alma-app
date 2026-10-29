@@ -9,10 +9,12 @@ import SwiftUI
 /// Lo que dices se reconoce en el teléfono; el Hub (mejorarCampo) escribe la respuesta.
 final class MejoraCampo: ObservableObject {
     static let shared = MejoraCampo()
-    enum Estado { case apagada, escuchando, pensando }
+    enum Estado { case apagada, escuchando, pensando, diciendo }
     @Published private(set) var estado = Estado.apagada
     @Published private(set) var oido = ""
     @Published private(set) var aviso = ""
+    /// Lo que Alma contestó en voz (cuando pediste ayuda y no algo escrito); se ve junto a la roca mientras habla.
+    @Published private(set) var respuesta = ""
 
     private let reconocedor = SFSpeechRecognizer(locale: Locale(identifier: "es-MX"))
     private let motor = AVAudioEngine()
@@ -28,7 +30,8 @@ final class MejoraCampo: ObservableObject {
 
     /// fin(pedido): "" = sin pedido (mejorar lo que hay); nil = no hubo nada que hacer.
     func empezar(textoCampo: String, _ fin: @escaping (String?) -> Void) {
-        guard estado == .apagada, VozNativa.shared.estado != .hablando, VozNativa.shared.estado != .conectando else { return }
+        guard estado == .apagada || estado == .diciendo, VozNativa.shared.estado != .hablando, VozNativa.shared.estado != .conectando else { return }
+        reproductor?.stop(); respuesta = ""
         self.fin = fin; hayTexto = !textoCampo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty; pregunto = false; oido = ""
         if !hayTexto && saludo == nil { pedirSaludo() }
         SFSpeechRecognizer.requestAuthorization { st in
@@ -45,8 +48,31 @@ final class MejoraCampo: ObservableObject {
         }
     }
 
-    /// Alma respondió (o falló): vuelve a su estado normal.
-    func listo() { estado = .apagada; oido = "" }
+    /// Alma respondió (o falló): vuelve a su estado normal. Si contestó en voz, primero lo dice (y se ve) y luego se apaga.
+    func listo(decir: String? = nil, audio: Data? = nil) {
+        oido = ""
+        guard let decir, !decir.isEmpty else { estado = .apagada; respuesta = ""; return }
+        respuesta = decir; estado = .diciendo
+        var dura = max(3.5, Double(decir.count) / 14)
+        if let a = audio, let pl = try? AVAudioPlayer(data: a) {
+            try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
+            reproductor = pl; pl.volume = 1; pl.play(); dura = pl.duration + 1.5
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + dura) { [weak self] in
+            guard let self, self.estado == .diciendo, self.respuesta == decir else { return }
+            self.estado = .apagada; self.respuesta = ""
+        }
+    }
+
+    /// Qué decir junto a la roca.
+    var textoAviso: String {
+        switch estado {
+        case .apagada: return ""
+        case .escuchando: return oido.isEmpty ? (pregunto ? "¿En qué te ayudo?" : "Te escucho…") : oido
+        case .pensando: return "Escribiendo…"
+        case .diciendo: return respuesta
+        }
+    }
 
     private func escuchar() {
         let s = AVAudioSession.sharedInstance()
@@ -139,11 +165,18 @@ final class MejoraCampo: ObservableObject {
         }
     }
 
-    /// Le pide al Hub el texto final para el cuadro.
-    func escribir(texto: String, pedido: String, pagina: String, etiqueta: String, _ listo: @escaping (String?) -> Void) {
-        llamar(["texto": texto, "pedido": pedido, "pagina": pagina, "etiqueta": etiqueta]) { j in
-            let t = (j?["ok"] as? Bool) == true ? j?["texto"] as? String : nil
-            listo(t?.isEmpty == false ? t : nil)
+    /// Le pide al Hub qué hacer: el texto para el cuadro y/o lo que Alma te contesta en voz (con su audio).
+    /// Va con la dirección de la página y, si hay, la captura de la pantalla: Alma ayuda con ese contexto.
+    func escribir(texto: String, pedido: String, pagina: String, url: String, etiqueta: String, captura: String?,
+                  _ listo: @escaping (_ campo: String?, _ decir: String?, _ audio: Data?) -> Void) {
+        var b: [String: Any] = ["texto": texto, "pedido": pedido, "pagina": pagina, "url": url, "etiqueta": etiqueta]
+        if let captura { b["captura"] = captura }
+        llamar(b, timeout: 60) { j in
+            guard (j?["ok"] as? Bool) == true else { listo(nil, nil, nil); return }
+            let c = (j?["texto"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let d = (j?["decir"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let a = (j?["audio"] as? String).flatMap { Data(base64Encoded: $0) }
+            listo(c, d, a)
         }
     }
 }

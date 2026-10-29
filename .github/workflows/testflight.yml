@@ -43,8 +43,11 @@ jobs:
         if: env.SUBIR != 'true'
         run: |
           set -o pipefail
+          # Si falla, se muestran primero los errores del compilador (con tail solo se veía el final del registro).
           xcodebuild -project Alma.xcodeproj -scheme Alma -configuration Release \
-            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build | tail -40
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 \
+            || { grep -E "error:" -A3 build.log | head -80; tail -20 build.log; exit 1; }
+          tail -20 build.log
 
       - name: Llave de App Store Connect
         if: env.SUBIR == 'true'
