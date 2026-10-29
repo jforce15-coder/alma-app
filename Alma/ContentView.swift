@@ -25,7 +25,50 @@ struct ContentView: View {
     /// En el inicio la página ocupa toda la pantalla; deslizar desde arriba muestra la barra.
     private var limpio: Bool { nav.enInicio && !barraEnInicio }
 
+    // (dividido en partes: todo junto era demasiado para el compilador)
     var body: some View {
+        conRoca
+            // Alma se llevó hacia un lado en el inicio: el navegador, con la barra lista para buscar. "" = volvió al centro.
+            .onReceive(NotificationCenter.default.publisher(for: .modoNavegador)) { n in
+                let pos = n.object as? String ?? ""
+                if Navegador.posiciones.contains(pos) { nav.guardarPosicion(pos); barraEnInicio = true; nav.pedirBusqueda = true }
+                else { nav.pedirBusqueda = false; barraEnInicio = false }
+            }
+            .background(Color.almaFondo)
+            .fullScreenCover(isPresented: $salud) { SaludVista() }
+            .background { Color.clear.fullScreenCover(isPresented: llamada) { LlamadaVista(voz: voz) { llamadaOculta = true } } }
+            .onChange(of: voz.estado) { _, e in if e == .apagada || e == .lista { llamadaOculta = false } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in Portal.shared.pasar { salud = true } }
+            .onAppear { Portal.shared.instalar() }
+            .sheet(isPresented: $almaAbierta) {
+                PanelAlma(titulo: nav.titulo, desde: nav.direccion, captura: captura)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+    }
+
+    /// La roca del navegador: se aparta de los cuadros de texto, brilla mientras escucha y cuenta los toques.
+    private var conRoca: some View {
+        pantalla
+            .onChange(of: nav.enInicio) { _, en in if !en { barraEnInicio = false } }
+            .onChange(of: nav.esSpacio) { _, s in roca.web.isHidden = s; if !s { roca.apartar(de: nil) } }   // al salir: a tu lugar (por si la moviste en el inicio)
+            // Con un cuadro de texto activo, Alma se aparta (a la posición más lejana); al soltarlo, vuelve a su lugar.
+            .onChange(of: nav.campo?.rect) { _, r in roca.apartar(de: r) }
+            .onChange(of: mejora.estado) { _, e in roca.escuchar(e == .escuchando || e == .pensando) }
+            .onAppear {
+                roca.web.isHidden = nav.esSpacio
+                roca.alToques = { n in tocaron(n) }
+            }
+    }
+
+    /// 1 toque: Alma sobre la página · 2: escribe en el cuadro de texto activo · 3: captura
+    private func tocaron(_ n: Int) {
+        if n >= 3 { capturar() }
+        else if n == 2, let c = nav.campo, !c.clave { mejorar() }
+        else { captura = nil; almaAbierta = true }
+    }
+
+    private var pantalla: some View {
         // La barra de dirección va abajo (al alcance del pulgar); con el teclado, sube con él.
         VStack(spacing: 0) {
             ZStack {
@@ -51,37 +94,6 @@ struct ContentView: View {
             if !limpio { BarraDireccion().transition(.move(edge: .bottom).combined(with: .opacity)) }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: limpio)
-        .onChange(of: nav.enInicio) { _, en in if !en { barraEnInicio = false } }
-        .onChange(of: nav.esSpacio) { _, s in roca.web.isHidden = s; if !s { roca.apartar(de: nil) } }   // al salir: a tu lugar (por si la moviste en el inicio)
-        // Con un cuadro de texto activo, Alma se aparta (a la posición más lejana); al soltarlo, vuelve a su lugar.
-        .onChange(of: nav.campo?.rect) { _, r in roca.apartar(de: r) }
-        .onChange(of: mejora.estado) { _, e in roca.escuchar(e == .escuchando || e == .pensando) }
-        .onAppear {
-            roca.web.isHidden = nav.esSpacio
-            // 1 toque: Alma sobre la página · 2: escribe en el cuadro de texto activo · 3: captura
-            roca.alToques = { n in
-                if n >= 3 { capturar() }
-                else if n == 2, let c = nav.campo, !c.clave { mejorar() }
-                else { captura = nil; almaAbierta = true }
-            }
-        }
-        // Alma se llevó hacia un lado en el inicio: el navegador, con la barra lista para buscar. "" = volvió al centro.
-        .onReceive(NotificationCenter.default.publisher(for: .modoNavegador)) { n in
-            let pos = n.object as? String ?? ""
-            if Navegador.posiciones.contains(pos) { nav.guardarPosicion(pos); barraEnInicio = true; nav.pedirBusqueda = true }
-            else { nav.pedirBusqueda = false; barraEnInicio = false }
-        }
-        .background(Color.almaFondo)
-        .fullScreenCover(isPresented: $salud) { SaludVista() }
-        .background { Color.clear.fullScreenCover(isPresented: llamada) { LlamadaVista(voz: voz) { llamadaOculta = true } } }
-        .onChange(of: voz.estado) { _, e in if e == .apagada || e == .lista { llamadaOculta = false } }
-        .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in Portal.shared.pasar { salud = true } }
-        .onAppear { Portal.shared.instalar() }
-        .sheet(isPresented: $almaAbierta) {
-            PanelAlma(titulo: nav.titulo, desde: nav.direccion, captura: captura)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
     }
 }
 
