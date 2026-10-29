@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var barraEnInicio = false
     @State private var salud = false
     @ObservedObject private var voz = VozNativa.shared
+    @ObservedObject private var mejora = MejoraCampo.shared
     @State private var llamadaOculta = false
     /// La conversación del modo anillo sigue en pantalla al abrir la app (y se puede terminar aquí).
     private var llamada: Binding<Bool> {
@@ -23,11 +24,11 @@ struct ContentView: View {
     private var limpio: Bool { nav.enInicio && !barraEnInicio }
 
     var body: some View {
+        // La barra de dirección va abajo (al alcance del pulgar); con el teclado, sube con él.
         VStack(spacing: 0) {
-            if !limpio { BarraDireccion().transition(.move(edge: .top).combined(with: .opacity)) }
             ZStack {
                 WebVista(web: nav.web)
-                    .ignoresSafeArea(edges: limpio ? .all : .bottom)
+                    .ignoresSafeArea(edges: limpio ? .all : [])
                 if limpio {
                     // franja invisible arriba: deslizar hacia abajo trae la barra para escribir una dirección
                     Color.clear.contentShape(Rectangle()).frame(maxWidth: .infinity).frame(height: 28)
@@ -36,8 +37,10 @@ struct ContentView: View {
                 }
                 // En las páginas de Spacio AM, Alma ya vive en la roca de la página: no se duplica.
                 if !nav.esSpacio {
-                    AlmaFlotante(pos: nav.posAlma, mover: { nav.guardarPosicion($0) },
+                    AlmaFlotante(pos: nav.posAlma, campo: nav.campo?.rect, mejora: mejora.estado, oido: mejora.oido,
+                                 mover: { nav.guardarPosicion($0) },
                                  tocar: { captura = nil; almaAbierta = true },
+                                 dobleToque: { if nav.campo != nil && nav.campo?.clave == false { mejorar() } else { captura = nil; almaAbierta = true } },
                                  tripleToque: capturar)
                         .transition(.scale.combined(with: .opacity))
                 }
@@ -45,6 +48,7 @@ struct ContentView: View {
                 Color.white.opacity(destello ? 0.55 : 0).allowsHitTesting(false).ignoresSafeArea()
             }
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: nav.esSpacio)
+            if !limpio { BarraDireccion().transition(.move(edge: .bottom).combined(with: .opacity)) }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: limpio)
         .onChange(of: nav.enInicio) { _, en in if !en { barraEnInicio = false } }
@@ -70,6 +74,23 @@ struct ContentView: View {
 }
 
 extension ContentView {
+    /// Dos toques con un cuadro de texto activo: Alma escucha lo que le pides y escribe en el cuadro
+    /// (sin pedido, mejora lo que ya dice; con el cuadro vacío y sin pedido, pregunta «¿En qué te ayudo?»).
+    func mejorar() {
+        guard let c = nav.campo else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        mejora.empezar(textoCampo: c.texto) { pedido in
+            guard let pedido else { return }
+            let texto = nav.campo?.texto ?? c.texto
+            let host = URL(string: nav.direccion)?.host ?? ""
+            mejora.escribir(texto: texto, pedido: pedido, pagina: [nav.titulo, host].filter { !$0.isEmpty }.joined(separator: " · "), etiqueta: c.etiqueta) { r in
+                mejora.listo()
+                if let r { nav.ponerEnCampo(r); UINotificationFeedbackGenerator().notificationOccurred(.success) }
+                else { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+            }
+        }
+    }
+
     /// Triple toque: destello, la captura de lo que se ve, y Alma se abre ya con ella.
     func capturar() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -88,8 +109,13 @@ extension ContentView {
 /// Deslizarla la lleva a otra posición (la más cercana a donde la sueltas) · 1 toque: Alma · 3 toques: Alma con captura.
 struct AlmaFlotante: View {
     let pos: String
+    /// El cuadro de texto activo de la página: mientras está, Alma se va a la posición más alejada de él.
+    var campo: CGRect? = nil
+    var mejora: MejoraCampo.Estado = .apagada
+    var oido = ""
     let mover: (String) -> Void
     let tocar: () -> Void
+    let dobleToque: () -> Void
     let tripleToque: () -> Void
     @State private var arrastre: CGSize = .zero
     @State private var arrastrando = false
@@ -98,8 +124,11 @@ struct AlmaFlotante: View {
 
     var body: some View {
         GeometryReader { g in
-            let p = AlmaFlotante.punto(pos, g.size)
+            let aqui = campo.map { AlmaFlotante.lejana($0, g.size) } ?? pos
+            let p = AlmaFlotante.punto(aqui, g.size)
             RocaAlma()
+                .overlay(Circle().stroke(Color.almaCoral, lineWidth: 3).scaleEffect(escucha ? 1.18 : 1.02).opacity(mejora == .apagada ? 0 : escucha ? 0.25 : 0.9)
+                    .animation(mejora == .apagada ? .default : .easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: escucha))
                 .scaleEffect(arrastrando ? 1.12 : 1)
                 .frame(width: 84, height: 84)
                 .contentShape(Circle())
@@ -123,19 +152,32 @@ struct AlmaFlotante: View {
                 .simultaneousGesture(TapGesture().onEnded { tocado() })
                 .accessibilityElement()
                 .accessibilityLabel("Alma")
-                .accessibilityHint("Un toque para hablar con Alma sobre esta página, tres toques para mandarle una captura")
+                .accessibilityHint("Un toque para hablar con Alma sobre esta página · dos toques en un cuadro de texto: escribe por ti · tres toques: le mandas una captura")
                 .accessibilityAction { tocar() }
                 .position(x: p.x + arrastre.width, y: p.y + arrastre.height)
-                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: pos)
+                .animation(.spring(response: 0.45, dampingFraction: 0.75), value: aqui)
                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: arrastrando)
+            // lo que Alma está haciendo en el cuadro: escuchando (con lo que oye) o escribiendo
+            if mejora != .apagada {
+                Text(mejora == .pensando ? "Escribiendo…" : oido.isEmpty ? "Te escucho…" : oido)
+                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Color.almaTinta).lineLimit(2)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(Capsule().fill(.ultraThinMaterial)).overlay(Capsule().stroke(Color.almaBorde, lineWidth: 0.5))
+                    .frame(maxWidth: min(g.size.width - 40, 300))
+                    .position(x: max(min(p.x, g.size.width - 160), min(160, g.size.width / 2)), y: p.y + (p.y > g.size.height / 2 ? -74 : 74))
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    .allowsHitTesting(false)
+            }
         }
     }
 
-    /// Se cuentan los toques seguidos: 3 = captura; menos = Alma.
+    private var escucha: Bool { mejora == .escuchando }
+
+    /// Se cuentan los toques seguidos: 1 = Alma · 2 = mejorar el cuadro de texto activo · 3 = captura.
     private func tocado() {
         espera?.cancel(); toques += 1
         if toques >= 3 { toques = 0; tripleToque(); return }
-        let w = DispatchWorkItem { toques = 0; tocar() }
+        let w = DispatchWorkItem { let n = toques; toques = 0; if n == 2 { dobleToque() } else { tocar() } }
         espera = w; DispatchQueue.main.asyncAfter(deadline: .now() + 0.32, execute: w)
     }
 
@@ -145,6 +187,12 @@ struct AlmaFlotante: View {
         let x: CGFloat = a.hasSuffix("l") ? m : a.hasSuffix("r") ? s.width - m : s.width / 2
         let y: CGFloat = a.hasPrefix("t") ? m : a.hasPrefix("b") ? s.height - m - 10 : s.height / 2
         return CGPoint(x: x, y: y)
+    }
+
+    /// La posición más alejada del cuadro de texto (para no taparlo).
+    static func lejana(_ r: CGRect, _ s: CGSize) -> String {
+        let c = CGPoint(x: r.midX, y: r.midY)
+        return Navegador.posiciones.max { hypot(punto($0, s).x - c.x, punto($0, s).y - c.y) < hypot(punto($1, s).x - c.x, punto($1, s).y - c.y) } ?? "br"
     }
 
     static func cercana(_ p: CGPoint, _ s: CGSize) -> String {
@@ -160,6 +208,15 @@ struct BarraDireccion: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            GeometryReader { g in
+                Rectangle().fill(Color.almaCoral)
+                    .frame(width: g.size.width * CGFloat(nav.progreso), height: 2)
+                    .opacity(nav.cargando ? 1 : 0)
+                    .animation(.easeOut(duration: 0.2), value: nav.progreso)
+            }
+            .frame(height: 2)
+            // Al tocar la barra: acceso directo al home de Spacio AM (arriba del campo, que está abajo).
+            if enfocado { atajoHome }
             HStack(spacing: 6) {
                 Boton(simbolo: "chevron.left", activo: nav.puedeAtras) { nav.web.goBack() }
                 Boton(simbolo: "chevron.right", activo: nav.puedeAdelante) { nav.web.goForward() }
@@ -188,35 +245,8 @@ struct BarraDireccion: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            // Al tocar la barra: acceso directo al home de Spacio AM.
-            if enfocado {
-                Button {
-                    nav.abrir(texto: Navegador.homeSpacio.absoluteString)
-                    enfocado = false
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "house").font(.system(size: 14, weight: .medium))
-                        Text("Home de Spacio AM").font(.system(size: 15))
-                        Spacer()
-                        Text("hub.spacioam.com").font(.system(size: 12)).foregroundStyle(Color.almaTinta.opacity(0.5))
-                    }
-                    .foregroundStyle(Color.almaTinta)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity)
-            }
-            GeometryReader { g in
-                Rectangle().fill(Color.almaCoral)
-                    .frame(width: g.size.width * CGFloat(nav.progreso), height: 2)
-                    .opacity(nav.cargando ? 1 : 0)
-                    .animation(.easeOut(duration: 0.2), value: nav.progreso)
-            }
-            .frame(height: 2)
         }
-        .background(Color.almaFondo)
+        .background(Color.almaFondo.ignoresSafeArea(edges: .bottom))
         .animation(.easeOut(duration: 0.15), value: enfocado)
         .onChange(of: nav.direccion) { _, nueva in if !enfocado { texto = nueva } }
         .onChange(of: enfocado) { _, foco in
@@ -230,11 +260,32 @@ struct BarraDireccion: View {
             }
         }
         .onChange(of: nav.pedirBusqueda) { _, b in if b { texto = ""; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { enfocado = true } } }
-
         .onAppear {
             texto = nav.direccion
             if nav.pedirBusqueda { texto = ""; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { enfocado = true } }
         }
+    }
+}
+
+extension BarraDireccion {
+    var atajoHome: some View {
+        Button {
+            nav.abrir(texto: Navegador.homeSpacio.absoluteString)
+            enfocado = false
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "house").font(.system(size: 14, weight: .medium))
+                Text("Home de Spacio AM").font(.system(size: 15))
+                Spacer()
+                Text("hub.spacioam.com").font(.system(size: 12)).foregroundStyle(Color.almaTinta.opacity(0.5))
+            }
+            .foregroundStyle(Color.almaTinta)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .transition(.opacity)
     }
 }
 

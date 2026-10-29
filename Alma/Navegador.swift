@@ -22,6 +22,9 @@ final class Navegador: NSObject, ObservableObject {
     @Published var posAlma = "br"
     /// La barra pide el teclado (modo búsqueda): se pone en true al llevar a Alma hacia un lado.
     @Published var pedirBusqueda = false
+    /// El cuadro de texto activo de la página (dónde está y qué dice): Alma se aparta de él y, con dos toques, lo mejora.
+    struct Campo: Equatable { var rect: CGRect; var texto: String; var etiqueta: String; var clave: Bool }
+    @Published var campo: Campo?
 
     private var observaciones: [NSKeyValueObservation] = []
     /// Entrar con Face ID o Google desde la página de inicio (Puente.swift).
@@ -36,8 +39,10 @@ final class Navegador: NSObject, ObservableObject {
         if #available(iOS 16.4, *) { web.isInspectable = true }
         puente.web = web
         web.configuration.userContentController.add(PuenteDebil(puente), name: Puente.nombre)
+        web.configuration.userContentController.add(PuenteDebil(self), name: "almaCampo")
+        web.configuration.userContentController.addUserScript(WKUserScript(source: Navegador.scriptCampo, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         observaciones = [
-            web.observe(\.url, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.direccion = w.url?.absoluteString ?? "" } },
+            web.observe(\.url, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.direccion = w.url?.absoluteString ?? ""; self?.campo = nil } },
             web.observe(\.title, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.titulo = w.title ?? "" } },
             web.observe(\.canGoBack, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.puedeAtras = w.canGoBack } },
             web.observe(\.canGoForward, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.puedeAdelante = w.canGoForward } },
@@ -49,6 +54,36 @@ final class Navegador: NSObject, ObservableObject {
     }
 
     static let posiciones = ["tl", "tc", "tr", "ml", "mr", "bl", "bc", "br"]
+
+    /// En cada página: avisa cuando se activa o se suelta un cuadro de texto (posición y texto; nunca el de una contraseña)
+    /// y deja window.__almaPoner(texto) para que Alma escriba en él.
+    static let scriptCampo = """
+    (function(){
+      if (window.__almaCampoOk) return; window.__almaCampoOk = true;
+      function editable(e){ if(!e) return false; if(e.isContentEditable) return true; var t=e.tagName;
+        if(t==='TEXTAREA') return !e.readOnly && !e.disabled; if(t!=='INPUT') return false;
+        var ty=(e.type||'text').toLowerCase(); return ['text','search','email','url','tel','password','number'].indexOf(ty)>=0 && !e.readOnly && !e.disabled; }
+      function val(e){ return e.isContentEditable ? e.innerText : e.value; }
+      function enviar(e,on){ try { var r=e.getBoundingClientRect(), clave=(e.type||'')==='password';
+        webkit.messageHandlers.almaCampo.postMessage({ on:on, x:r.left, y:r.top, w:r.width, h:r.height, clave:clave,
+          texto: on && !clave ? String(val(e)||'').slice(0,6000) : '',
+          etiqueta: String(e.getAttribute('aria-label')||e.placeholder||e.name||'').slice(0,120) }); } catch(x){} }
+      document.addEventListener('focusin', function(ev){ var e=ev.target; if(editable(e)){ window.__almaCampo=e; enviar(e,true); } }, true);
+      document.addEventListener('focusout', function(ev){ var e=ev.target; setTimeout(function(){ if(!editable(document.activeElement)) enviar(e,false); }, 150); }, true);
+      var t=0; document.addEventListener('input', function(ev){ if(ev.target===window.__almaCampo){ clearTimeout(t); t=setTimeout(function(){ enviar(ev.target,true); }, 350); } }, true);
+      window.__almaPoner = function(txt){ var e=window.__almaCampo; if(!e) return false; e.focus();
+        if(e.isContentEditable){ var s=getSelection(), r=document.createRange(); r.selectNodeContents(e); s.removeAllRanges(); s.addRange(r); document.execCommand('insertText', false, txt); }
+        else { var p=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(p,'value').set.call(e,txt);
+          e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); }
+        return true; };
+    })();
+    """
+
+    /// Escribe en el cuadro de texto activo (lo que respondió Alma).
+    func ponerEnCampo(_ texto: String) {
+        guard let d = try? JSONSerialization.data(withJSONObject: [texto]), let j = String(data: d, encoding: .utf8) else { return }
+        web.evaluateJavaScript("window.__almaPoner && __almaPoner(\(j)[0])")
+    }
 
     /// La posición que dejaron las web apps (cookie compartida de .spacioam.com).
     func leerPosicion() {
@@ -148,6 +183,18 @@ final class Navegador: NSObject, ObservableObject {
     }
 
     func irAlInicio() { web.load(URLRequest(url: Navegador.inicio)) }
+}
+
+// MARK: - El cuadro de texto activo
+
+extension Navegador: WKScriptMessageHandler {
+    func userContentController(_ uc: WKUserContentController, didReceive m: WKScriptMessage) {
+        guard m.name == "almaCampo", let d = m.body as? [String: Any] else { return }
+        guard (d["on"] as? Bool) == true else { campo = nil; return }
+        let n = { (k: String) in CGFloat((d[k] as? NSNumber)?.doubleValue ?? 0) }
+        campo = Campo(rect: CGRect(x: n("x"), y: n("y"), width: n("w"), height: n("h")), texto: d["texto"] as? String ?? "",
+                      etiqueta: d["etiqueta"] as? String ?? "", clave: (d["clave"] as? Bool) ?? false)
+    }
 }
 
 // MARK: - Navegación
