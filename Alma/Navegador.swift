@@ -27,6 +27,8 @@ final class Navegador: NSObject, ObservableObject {
     @Published var campo: Campo?
     /// La barra de dirección tiene el teclado (se escribe una dirección o una búsqueda).
     @Published var escribiendo = false
+    /// La roca tapa una carga en curso (Portal.swift); se destapa al terminar de cargar.
+    var cargaTapada = false
 
     private var observaciones: [NSKeyValueObservation] = []
     /// Entrar con Face ID o Google desde la página de inicio (Puente.swift).
@@ -203,7 +205,33 @@ extension Navegador: WKScriptMessageHandler {
 
 extension Navegador: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        Navegador.decidir(navigationAction, decisionHandler)
+        Navegador.decidir(navigationAction) { [weak self] pol in
+            if pol == .allow, navigationAction.targetFrame?.isMainFrame ?? true, let u = navigationAction.request.url, self?.taparCarga(hacia: u) == true {
+                self?.cargaTapada = true; Portal.shared.cubrir()
+            }
+            decisionHandler(pol)
+        }
+    }
+
+    /// Lo que tarda en cargar una página nueva lo tapa la roca de Alma (como el cambio de app en el Hub): crece, detrás
+    /// carga la página y se encoge al estar lista. No en las de Spacio AM entre sí (sa-nav ya hace su propia transición),
+    /// ni al volver al inicio (trae la suya), ni dentro de la misma página.
+    func taparCarga(hacia u: URL) -> Bool {
+        guard let s = u.scheme?.lowercased(), s == "http" || s == "https", let h = u.host?.lowercased() else { return false }
+        let antes = URL(string: direccion)?.host?.lowercased() ?? ""
+        let spacio = { (x: String) in x == "spacioam.com" || x.hasSuffix(".spacioam.com") }
+        if h == antes { return false }
+        if spacio(h) && (spacio(antes) || Navegador.pantallasCompletas.contains(u.path)) { return false }
+        return true
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { destapar() }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { destapar() }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { destapar() }
+    private func destapar() {
+        guard cargaTapada else { return }
+        cargaTapada = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { Portal.shared.descubrir() }   // un instante para que pinte
     }
 
     /// tel:, mailto:, whatsapp:, maps… se abren con la app del teléfono; lo web se queda aquí.
