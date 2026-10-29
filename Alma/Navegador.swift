@@ -25,6 +25,8 @@ final class Navegador: NSObject, ObservableObject {
     /// El cuadro de texto activo de la página (dónde está y qué dice): Alma se aparta de él y, con dos toques, lo mejora.
     struct Campo: Equatable { var rect: CGRect; var texto: String; var etiqueta: String; var clave: Bool }
     @Published var campo: Campo?
+    /// La barra de dirección tiene el teclado (se escribe una dirección o una búsqueda).
+    @Published var escribiendo = false
 
     private var observaciones: [NSKeyValueObservation] = []
     /// Entrar con Face ID o Google desde la página de inicio (Puente.swift).
