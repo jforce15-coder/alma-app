@@ -11,7 +11,12 @@ import UIKit
 ///   de unos audífonos → doble toque: Alma escucha y responde · otro doble toque: pausa · otro: retoma.
 /// · La voz es el mismo agente de ElevenLabs del Hub (websocket con la URL firmada del Hub). La ficha (quién eres, saludo y
 ///   contexto reciente) se pide al Hub con tu sesión, igual que la voz de las web apps, y la llamada se liga a tu chat.
-/// Pausar termina la conversación; al retomar, el Hub le da a Alma lo que venían hablando («¿Retomamos…?»).
+/// · Más rápido: la ficha y la URL firmada quedan pedidas de antemano (cada 9 min); al doble toque suena la señal
+///   enseguida y lo que dices se guarda mientras conecta.
+/// · Pausa: dos toques mientras hablan pausan (Alma espera). Otros dos la retoman. Si no se retoma en 25 s, lo dicho se
+///   toma como enviado: Alma responde y la conversación se cierra sola.
+/// · Avisos al oído: cada 45 s pregunta al Hub si Alma terminó algo (segundo plano, Claude). Suena la señal y Alma lo dice
+///   con su voz; si tocas dos veces en los 5 min siguientes, la conversación retoma ese aviso.
 final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static let shared = VozNativa()
 
@@ -45,6 +50,21 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var ultimaVoz = Date.distantPast
     private var vigia: Timer?   // si la cancelación de eco falló una vez, ya no se intenta
     private var sono = false
+    // ficha pedida de antemano (la URL firmada de ElevenLabs dura ~15 min; se usa si tiene menos de 9)
+    private var fichaLista: (j: [String: Any], t: Date)?
+    private var pidiendoFicha = false
+    private var precarga: Timer?
+    private var colaVoz: [String] = []      // lo que dices mientras conecta
+    // pausa: Alma espera; si no se retoma en 25 s, responde a lo dicho y se cierra
+    @Published private(set) var pausada = false
+    private var pausaT: DispatchWorkItem?
+    private var cerrarTrasRespuesta = false
+    private var desdeCierre = Date.distantPast
+    private var ultimoAudioAlma = Date.distantPast
+    // avisos al oído
+    private var avisosT: Timer?
+    private var avisoPlayer: AVAudioPlayer?
+    private var ultimoAviso: (texto: String, t: Date)?
 
     // MARK: - Lo que pide la página
 
@@ -82,10 +102,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Doble toque del anillo (o el botón de la página): habla o pausa.
     func alternar() {
         switch estado {
-        case .hablando, .conectando: terminar()
+        case .hablando: if cerrarTrasRespuesta { terminar() } else if pausada { reanudar() } else { pausar() }
+        case .conectando: terminar()
         case .lista, .apagada: hablar()
         }
     }
+
+    /// «Terminar» en la pantalla: cierra la conversación (el doble toque, en cambio, pausa).
+    func colgar() { if estado == .hablando || estado == .conectando { terminar() } }
 
     var resumen: [String: Any] { ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
                                   "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
@@ -106,6 +130,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         silencio?.play()
         estado = .lista
         encenderMicrofono()
+        precargarSiToca()
+        if precarga == nil { precarga = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.precargarSiToca() } }
+        if avisosT == nil { avisosT = Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in self?.buscarAvisos() } }
     }
 
     /// iOS no deja *empezar* a usar el micrófono con el teléfono bloqueado; sí deja seguir usándolo.
@@ -122,6 +149,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     private func apagar() {
+        precarga?.invalidate(); precarga = nil; avisosT?.invalidate(); avisosT = nil; fichaLista = nil
         silencio?.stop()
         engine.inputNode.removeTap(onBus: 0); player.stop(); if engine.isRunning { engine.stop() }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -178,9 +206,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             emitir(["tipo": "error", "mensaje": "Abre Alma una vez con tu sesión para que pueda hablar con el teléfono bloqueado."]); return
         }
         UserDefaults.standard.set([String](), forKey: "voz_pasos"); UserDefaults.standard.set(true, forKey: "voz_abierta"); lineas = []
+        estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false
+        sonido("alma-inicio")   // la señal suena ya: lo que digas se guarda mientras conecta
+        infoBloqueo("Te escucho…")
+        if let f = fichaLista, Date().timeIntervalSince(f.t) < 540 {
+            fichaLista = nil; paso("Ficha lista de antemano"); conectar(agente: f.j["agent_id"] as? String ?? "", ficha: f.j); return
+        }
         paso("Pidiendo tu ficha al Hub" + (UIApplication.shared.applicationState == .active ? "" : " (en segundo plano)"))
-        estado = .conectando
-        infoBloqueo("Conectando…")
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
         r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWeb", "token": token, "session": sesion])
         URLSession.shared.dataTask(with: r) { [weak self] data, resp, err in
@@ -220,6 +252,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in if self?.estado == .conectando { self?.fallo("Alma no contestó. Revisa tu internet.") } }
         var dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
         dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO ANILLO: Juan te habla desde su anillo, casi siempre con el teléfono bloqueado (solo voz, sin pantalla). Ya sonó la señal: NO saludes ni hables primero. Escucha. Habla en tramos, con pausas, como quien piensa en voz alta: mientras no haya pedido algo concreto o su idea quede a medias, usa skip_turn y sigue escuchando; junta todo lo que dijo como un solo mensaje. Responde solo cuando ya pidió algo claro o terminó de hablar. Respuestas cortas, claras y cálidas."
+        if let a = ultimoAviso, Date().timeIntervalSince(a.t) < 300 {
+            let min = max(1, Int(Date().timeIntervalSince(a.t) / 60))
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nRETOMA UN AVISO: hace \(min) min le dijiste al oído: «\(a.texto)». Tocó el anillo para retomarlo: si lo primero que dice no es otra cosa, sigue con ese tema (sin repetir el aviso completo)."
+            ultimoAviso = nil
+        }
         var agent: [String: Any] = [:]
         agent["first_message"] = ""   // modo anillo: Alma no saluda; solo suena la señal y escucha
         if let l = ficha["language"] as? String, !l.isEmpty { agent["language"] = l }
@@ -259,7 +296,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     private func microfono(_ buf: AVAudioPCMBuffer) {
-        guard estado == .hablando, let conv = convertidor, let mf = formatoMono, let src = buf.floatChannelData,
+        guard estado == .hablando || estado == .conectando, !pausada, let conv = convertidor, let mf = formatoMono, let src = buf.floatChannelData,
               let mono = AVAudioPCMBuffer(pcmFormat: mf, frameCapacity: buf.frameLength), let dst = mono.floatChannelData else { return }
         mono.frameLength = buf.frameLength
         dst[0].update(from: src[0], count: Int(buf.frameLength))   // primer canal
@@ -276,6 +313,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let datos = Data(bytes: p[0], count: Int(out.frameLength) * 2)
         let seg = Double(out.frameLength) / 16000
         DispatchQueue.main.async {
+            if self.estado == .conectando { if self.colaVoz.count < 80 { self.colaVoz.append(datos.base64EncodedString()) }; return }
             self.vozEnviada += seg; self.ultimaVoz = Date(); self.mandar(["user_audio_chunk": datos.base64EncodedString()])
             if !self.almaHabla { self.nivel = min(1, CGFloat(rmsTu) * 9) }
         }
@@ -310,8 +348,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             estado = .hablando
             vigilar()
-            paso("Alma conectada · te escucha")
-            sonido("alma-inicio")   // la señal del modo anillo: puedes hablar
+            paso("Alma conectada · te escucha" + (colaVoz.isEmpty ? "" : String(format: " (%.1f s dichos mientras conectaba)", Double(colaVoz.count) * 0.128)))
+            for c in colaVoz { mandar(["user_audio_chunk": c]) }; colaVoz = []
             infoBloqueo("Te escucho · dos toques para pausar")
             if let id = ev["conversation_id"] as? String { vincular(id) }
         case "audio":
@@ -343,7 +381,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         // Alma habla mientras suena este trozo: el círculo late con su voz
         let dur = Double(n) / formatoSalida.sampleRate, nv = min(1, CGFloat(sqrt(e / Float(n))) * 6)
-        almaHabla = true; nivel = nv
+        almaHabla = true; nivel = nv; ultimoAudioAlma = Date()
         finHabla?.cancel()
         let w = DispatchWorkItem { [weak self] in self?.almaHabla = false; self?.nivel = 0 }
         finHabla = w; DispatchQueue.main.asyncAfter(deadline: .now() + dur + 0.25, execute: w)
@@ -377,6 +415,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         vigia = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] t in
             guard let self, self.estado == .hablando else { t.invalidate(); return }
             tramo += 1
+            if self.cerrarTrasRespuesta {   // pausa sin retomar: cuando Alma terminó de responder (o a los 45 s), se cierra
+                let callada = Date().timeIntervalSince(self.ultimoAudioAlma) > 5 && self.ultimoAudioAlma > self.desdeCierre
+                if (callada && !self.almaHabla) || Date().timeIntervalSince(self.desdeCierre) > 45 { self.terminar() }
+                return
+            }
+            if self.pausada { self.ultimaVoz = Date(); return }
             if Date().timeIntervalSince(self.ultimaVoz) > 3 {
                 self.paso("El micrófono dejó de mandar voz (motor " + (self.engine.isRunning ? "encendido" : "apagado") + ")")
                 self.ultimaVoz = Date()
@@ -396,6 +440,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     private func terminar() {
         vigia?.invalidate(); vigia = nil
+        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []
         let habia = estado == .hablando || estado == .conectando
         if habia { paso("Pausa") }
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
@@ -406,7 +451,77 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         else { engine.inputNode.removeTap(onBus: 0); if engine.isRunning { engine.stop() } }
         if habia { sonido("alma-fin") }
         estado = .apagada
-        if modoAnillo { quedarLista() } else { apagar() }
+        if modoAnillo { quedarLista(); DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.fichaLista = nil; self?.precargarSiToca() } }
+        else { apagar() }
+    }
+
+    // MARK: - Pausa
+
+    private func pausar() {
+        pausada = true; paso("Pausa · Alma espera")
+        mandar(["type": "contextual_update", "text": "PAUSA: Juan tocó el anillo para pausar (está pensando o lo interrumpieron). No hables ni respondas hasta que retome."])
+        sonido("alma-fin"); infoBloqueo("En pausa · dos toques para seguir")
+        let w = DispatchWorkItem { [weak self] in self?.pausaVencida() }
+        pausaT = w; DispatchQueue.main.asyncAfter(deadline: .now() + 25, execute: w)
+    }
+    private func reanudar() {
+        pausaT?.cancel(); pausaT = nil; pausada = false; ultimaVoz = Date(); paso("Sigue la conversación")
+        mandar(["type": "contextual_update", "text": "SIGUE: Juan retomó; sigue escuchando donde iba."])
+        sonido("alma-inicio"); infoBloqueo("Te escucho · dos toques para pausar")
+    }
+    /// 25 s en pausa: lo dicho se toma como enviado. Alma responde y la conversación se cierra sola al terminar.
+    private func pausaVencida() {
+        guard estado == .hablando, pausada else { return }
+        paso("Pausa larga · Alma responde a lo dicho y cierra")
+        cerrarTrasRespuesta = true; desdeCierre = Date()
+        mandar(["type": "user_message", "text": "(Terminé de hablar. Responde ahora, breve, a lo que te pedí; si ya no hay nada pendiente, despídete en una frase.)"])
+        infoBloqueo("Alma te responde…")
+    }
+
+    // MARK: - Más rápido: la ficha pedida de antemano
+
+    private func precargarSiToca() {
+        guard modoAnillo, !pidiendoFicha, estado == .lista || estado == .apagada else { return }
+        if let f = fichaLista, Date().timeIntervalSince(f.t) < 480 { return }
+        guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
+        pidiendoFicha = true
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWeb", "token": token, "session": sesion])
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }; self.pidiendoFicha = false
+                guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], (j["ok"] as? Bool) == true, j["agent_id"] is String else { return }
+                self.fichaLista = (j, Date())
+            }
+        }.resume()
+    }
+
+    // MARK: - Avisos al oído
+
+    private func buscarAvisos() {
+        guard modoAnillo, estado == .lista || estado == .apagada,
+              let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 40
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozAvisos", "token": token, "session": sesion])
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+            guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], let l = j["avisos"] as? [[String: Any]], !l.isEmpty else { return }
+            DispatchQueue.main.async { self?.decirAvisos(l) }
+        }.resume()
+    }
+    private func decirAvisos(_ l: [[String: Any]]) {
+        guard estado == .lista || estado == .apagada, let a = l.first else { return }
+        let texto = a["texto"] as? String ?? ""
+        ultimoAviso = (texto, Date()); paso("Aviso al oído: " + String(texto.prefix(60)))
+        infoBloqueo("Alma: " + texto)
+        sonido("alma-inicio")
+        let resto = Array(l.dropFirst())
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            guard let self else { return }
+            if let b = a["audio"] as? String, let mp3 = Data(base64Encoded: b), let pl = try? AVAudioPlayer(data: mp3) {
+                self.avisoPlayer = pl; pl.volume = 1; pl.play()
+                if !resto.isEmpty { DispatchQueue.main.asyncAfter(deadline: .now() + pl.duration + 1.2) { self.decirAvisos(resto) } }
+            } else if !resto.isEmpty { self.decirAvisos(resto) }
+        }
     }
 
     private func fallo(_ m: String) {

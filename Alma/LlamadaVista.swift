@@ -10,7 +10,7 @@ struct LlamadaVista: View {
     private var estadoTexto: String {
         switch voz.estado {
         case .conectando: return "Conectando…"
-        case .hablando: return voz.almaHabla ? "Alma te responde" : "Te escucho"
+        case .hablando: return voz.pausada ? "En pausa" : voz.almaHabla ? "Alma te responde" : "Te escucho"
         default: return "En pausa"
         }
     }
@@ -57,7 +57,7 @@ struct LlamadaVista: View {
                 .frame(maxWidth: 420, minHeight: 120, alignment: .bottom)
                 .padding(.top, 24)
                 Spacer()
-                Button { voz.alternar() } label: {
+                Button { voz.colgar() } label: {
                     HStack(spacing: 12) {
                         Circle().fill(Color.almaCoral).frame(width: 7, height: 7)
                         Text("TERMINAR").tracking(2.4).font(.custom("Montserrat", size: 12).weight(.semibold))
@@ -67,7 +67,7 @@ struct LlamadaVista: View {
                     .foregroundStyle(.white)
                 }
                 .buttonStyle(.plain)
-                Text("También puedes tocar dos veces tu anillo").font(.custom("Montserrat", size: 11)).foregroundStyle(.white.opacity(0.7)).padding(.top, 12)
+                Text("Dos toques en tu anillo: pausa · otros dos: sigue").font(.custom("Montserrat", size: 11)).foregroundStyle(.white.opacity(0.7)).padding(.top, 12)
             }
             .padding(.horizontal, 24).padding(.vertical, 18)
         }
