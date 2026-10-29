@@ -17,6 +17,11 @@ final class Navegador: NSObject, ObservableObject {
     @Published var puedeAdelante = false
     @Published var progreso: Double = 0
     @Published var cargando = false
+    /// Dónde vive Alma en el navegador: una de las 8 posiciones del Hub (tl tc tr ml mr bl bc br).
+    /// Es la misma que usan las web apps (cookie sa_nav_pos de .spacioam.com), así Alma está en el mismo lugar en todas.
+    @Published var posAlma = "br"
+    /// La barra pide el teclado (modo búsqueda): se pone en true al llevar a Alma hacia un lado.
+    @Published var pedirBusqueda = false
 
     private var observaciones: [NSKeyValueObservation] = []
     /// Entrar con Face ID o Google desde la página de inicio (Puente.swift).
@@ -40,6 +45,44 @@ final class Navegador: NSObject, ObservableObject {
             web.observe(\.isLoading, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.cargando = w.isLoading } }
         ]
         web.load(URLRequest(url: Navegador.inicio))
+        leerPosicion()
+    }
+
+    static let posiciones = ["tl", "tc", "tr", "ml", "mr", "bl", "bc", "br"]
+
+    /// La posición que dejaron las web apps (cookie compartida de .spacioam.com).
+    func leerPosicion() {
+        web.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] cs in
+            guard let v = cs.first(where: { $0.name == "sa_nav_pos" && $0.domain.hasSuffix("spacioam.com") })?.value,
+                  Navegador.posiciones.contains(v) else { return }
+            DispatchQueue.main.async { self?.posAlma = v }
+        }
+    }
+
+    /// Alma cambió de lugar en la app: se guarda también para las web apps.
+    func guardarPosicion(_ p: String) {
+        guard Navegador.posiciones.contains(p) else { return }
+        posAlma = p
+        if let c = HTTPCookie(properties: [.domain: ".spacioam.com", .path: "/", .name: "sa_nav_pos", .value: p, .secure: "TRUE",
+                                           .expires: Date().addingTimeInterval(365 * 86400)]) {
+            web.configuration.websiteDataStore.httpCookieStore.setCookie(c)
+        }
+    }
+
+    /// Alma vuelve al centro del inicio (se llevó hacia un lado pero no se buscó nada).
+    func almaAlCentro() {
+        guard enInicio else { return }
+        web.evaluateJavaScript("window.SANav && SANav.escena(null)")
+    }
+
+    /// Captura de lo que se ve en el navegador, lista para Alma (JPEG chico en data URL).
+    func captura(_ fin: @escaping (String?) -> Void) {
+        let c = WKSnapshotConfiguration()
+        c.snapshotWidth = NSNumber(value: Double(min(web.bounds.width, 430)))
+        web.takeSnapshot(with: c) { img, _ in
+            guard let img, let d = img.jpegData(compressionQuality: 0.7) else { fin(nil); return }
+            fin("data:image/jpeg;base64," + d.base64EncodedString())
+        }
     }
 
     /// Configuración compartida por el visor y el panel de Alma (misma sesión, micrófono y video en línea).
@@ -48,9 +91,18 @@ final class Navegador: NSObject, ObservableObject {
         c.websiteDataStore = .default()
         c.allowsInlineMediaPlayback = true
         c.mediaTypesRequiringUserActionForPlayback = []
-        // Se presenta como Safari (algunas páginas cambian si ven un visor) y avisa que es la app de Alma.
-        c.applicationNameForUserAgent = "Version/18.0 Mobile/15E148 Safari/604.1 AlmaApp/1.0"
+        // Se presenta exactamente como Safari: Google (y otros) no dejan entrar si ven un visor dentro de una app
+        // («This browser or app may not be secure»). Las páginas de Spacio AM reconocen la app por el puente, no por esto.
+        c.applicationNameForUserAgent = Navegador.firmaSafari
         return c
+    }
+
+    /// El final del agente de Safari de esta versión de iOS: «Version/26.0 Mobile/15E148 Safari/604.1» en el iPhone,
+    /// «Version/26.0 Safari/605.1.15» en el iPad (que se presenta como Mac, igual que Safari).
+    static var firmaSafari: String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        let ver = "Version/\(v.majorVersion).\(v.minorVersion)"
+        return UIDevice.current.userInterfaceIdiom == .pad ? ver + " Safari/605.1.15" : ver + " Mobile/15E148 Safari/604.1"
     }
 
     /// ¿La página es de Spacio AM? Esas ya traen a Alma (la roca), así que la burbuja de la app se esconde.

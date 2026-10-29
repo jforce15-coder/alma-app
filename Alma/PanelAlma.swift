@@ -6,9 +6,11 @@ import WebKit
 struct PanelAlma: View {
     let titulo: String
     let desde: String
+    /// Captura de la pantalla (triple toque a Alma): la página la recibe con AlmaCaptura(dataURL) al cargar.
+    var captura: String? = nil
 
     var body: some View {
-        PanelWeb(url: PanelAlma.direccion(titulo: titulo, desde: desde))
+        PanelWeb(url: PanelAlma.direccion(titulo: titulo, desde: desde), captura: captura)
             .ignoresSafeArea(edges: .bottom)
             .background(Color.almaFondo)
     }
@@ -28,8 +30,9 @@ struct PanelAlma: View {
 
 struct PanelWeb: UIViewRepresentable {
     let url: URL
+    var captura: String? = nil
 
-    func makeCoordinator() -> Coordinador { Coordinador() }
+    func makeCoordinator() -> Coordinador { Coordinador(captura: captura) }
 
     func makeUIView(context: Context) -> WKWebView {
         let w = WKWebView(frame: .zero, configuration: Navegador.configuracion())
@@ -45,6 +48,16 @@ struct PanelWeb: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
     final class Coordinador: NSObject, WKUIDelegate, WKNavigationDelegate {
+        private var captura: String?
+        init(captura: String?) { self.captura = captura }
+
+        /// Ya cargó la página de Alma: se le pasa la captura (una sola vez).
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard let c = captura, webView.url?.path.hasPrefix("/alma") == true,
+                  let d = try? JSONSerialization.data(withJSONObject: [c]), let j = String(data: d, encoding: .utf8) else { return }
+            captura = nil
+            webView.evaluateJavaScript("window.AlmaCaptura && AlmaCaptura(\(j)[0])")
+        }
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             Navegador.decidir(navigationAction, decisionHandler)
         }
