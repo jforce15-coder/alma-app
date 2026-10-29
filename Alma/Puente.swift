@@ -10,6 +10,7 @@ import WebKit
 ///   { accion: "faceGuardar", email, llave }  → guarda la llave del login en el llavero, protegida con Face ID
 ///   { accion: "faceEntrar" }                 → pide Face ID y devuelve la llave → AlmaLogin.face(email, llave)
 ///   { accion: "faceBorrar" }
+///   { accion: "navegador", pos }             → Alma se llevó a una de las 8 posiciones: barra de búsqueda lista ("" = volvió al centro)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
     static let nombre = "alma"
@@ -37,6 +38,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             anillo(d)
         case "voz":
             voz(d)
+        case "navegador":   // llevaste a Alma hacia un lado en el inicio: se abre el navegador con la búsqueda lista
+            NotificationCenter.default.post(name: .modoNavegador, object: d["pos"] as? String ?? "")
         case "health":   // Health es nativo (Health/SaludVista.swift): se abre encima de la página
             NotificationCenter.default.post(name: .abrirSalud, object: nil)
             responder("AlmaHealth.abierto", [true])

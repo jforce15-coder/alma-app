@@ -243,4 +243,6 @@ final class Anillo: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 extension Notification.Name {
     static let almaAnillo = Notification.Name("alma.anillo.evento")
     static let abrirSalud = Notification.Name("alma.salud.abrir")
+    /// Alma se llevó hacia un lado en el inicio: object = la posición ("tl"…"br"), o "" si volvió al centro.
+    static let modoNavegador = Notification.Name("alma.navegador")
 }
