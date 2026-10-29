@@ -51,14 +51,24 @@ struct ContentView: View {
     private var conRoca: some View {
         pantalla
             .onChange(of: nav.enInicio) { _, en in if !en { barraEnInicio = false } }
-            .onChange(of: nav.esSpacio) { _, s in roca.web.isHidden = s; if !s { roca.apartar(de: nil) } }   // al salir: a tu lugar (por si la moviste en el inicio)
-            // Con un cuadro de texto activo, Alma se aparta (a la posición más lejana); al soltarlo, vuelve a su lugar.
-            .onChange(of: nav.campo?.rect) { _, r in roca.apartar(de: r) }
+            .onChange(of: nav.esSpacio) { _, s in roca.web.isHidden = s; if !s { roca.abajo(textoActivo) } }   // al salir: a tu lugar (por si la moviste en el inicio)
+            // Con el teclado arriba (un cuadro de texto de la página o la barra), Alma va abajo al centro; al terminar, vuelve a su lugar.
+            .onChange(of: textoActivo) { _, on in alma(abajo: on) }
             .onChange(of: mejora.estado) { _, e in roca.escuchar(e == .escuchando || e == .pensando) }
             .onAppear {
                 roca.web.isHidden = nav.esSpacio
                 roca.alToques = { n in tocaron(n) }
             }
+    }
+
+    private var textoActivo: Bool { nav.campo != nil || nav.escribiendo }
+
+    /// En las páginas de Spacio AM Alma es la de la página (sa-nav); en las demás, la de la capa de la app.
+    private func alma(abajo on: Bool) {
+        if nav.esSpacio {
+            if !on && nav.enInicio { return }   // en el inicio, al cerrar la búsqueda Alma vuelve al centro (almaAlCentro)
+            nav.web.evaluateJavaScript(on ? "window.SANav && SANav.ir && SANav.ir('bc')" : "window.SANav && SANav.volver && SANav.volver()")
+        } else { roca.abajo(on) }
     }
 
     /// 1 toque: Alma sobre la página · 2: escribe en el cuadro de texto activo · 3: captura
@@ -183,6 +193,7 @@ struct BarraDireccion: View {
         .animation(.easeOut(duration: 0.15), value: enfocado)
         .onChange(of: nav.direccion) { _, nueva in if !enfocado { texto = nueva } }
         .onChange(of: enfocado) { _, foco in
+            nav.escribiendo = foco
             if !foco { texto = nav.direccion }
             // Se abrió para buscar desde el inicio y se cerró sin buscar: Alma vuelve al centro.
             if !foco, nav.pedirBusqueda {

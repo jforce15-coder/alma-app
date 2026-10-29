@@ -57,10 +57,9 @@ final class RocaNavegador: NSObject, ObservableObject, WKScriptMessageHandler, W
         if lista { web.evaluateJavaScript(s) } else { pendiente = s }
     }
 
-    /// Con un cuadro de texto activo, Alma se va a la posición más lejana de él (de paso); sin cuadro, vuelve a tu lugar.
-    func apartar(de r: CGRect?) {
-        if let r { js("window.AlmaRoca && AlmaRoca.apartar(\(r.minX),\(r.minY),\(r.width),\(r.height))") }
-        else { js("window.AlmaRoca && AlmaRoca.volver()") }
+    /// Escribiendo (teclado arriba): Alma va de paso abajo al centro, justo encima del teclado; al terminar, vuelve a tu lugar.
+    func abajo(_ on: Bool) {
+        js(on ? "window.AlmaRoca && (AlmaRoca.ir ? AlmaRoca.ir('bc') : AlmaRoca.apartar())" : "window.AlmaRoca && AlmaRoca.volver()")
     }
 
     /// El brillo de Alma mientras escucha o escribe.
