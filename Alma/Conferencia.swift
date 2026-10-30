@@ -40,19 +40,21 @@ final class Conferencia {
 
     func poner(_ on: Bool) { if on { encender() } else { apagar() } }
 
-    private func encender() {
+    /// `pedido`: viene del Modo Inicio (EscuchaInicio.swift); «Alma, …» (o "" si solo la llamaron) se atiende de una vez.
+    func encender(pedido: String? = nil, alFallar: (() -> Void)? = nil) {
         guard !activa else { emitir(); return }
         SFSpeechRecognizer.requestAuthorization { st in
             AVAudioSession.sharedInstance().requestRecordPermission { mic in
                 DispatchQueue.main.async {
                     guard st == .authorized, mic, self.reconocedor?.isAvailable == true else {
-                        self.alEvento?(["tipo": "conferencia", "activa": false, "error": "Activa el micrófono y el reconocimiento de voz para Alma en Ajustes del iPhone."]); return
+                        self.alEvento?(["tipo": "conferencia", "activa": false, "error": "Activa el micrófono y el reconocimiento de voz para Alma en Ajustes del iPhone."]); alFallar?(); return
                     }
                     EscuchaInicio.shared.detener()   // el modo conferencia tiene su propio despertar
                     self.activa = true; self.id = "cf" + String(Int(Date().timeIntervalSince1970)); self.inicio = Date()
                     self.pendiente = []; self.reciente = []; self.enLlamada = false
                     self.reunion = false; self.parte = 0; self.subidas = 0; self.partes = [:]; self.cerrarArchivo(); self.borrarViejos()
-                    self.escuchar(); VozNativa.shared.senal()
+                    if let pedido { self.despertar(pedido) } else { self.escuchar() }
+                    VozNativa.shared.senal()
                     self.envio = Timer.scheduledTimer(withTimeInterval: 90, repeats: true) { [weak self] _ in self?.mandar(fin: false) }
                     self.emitir()
                 }
@@ -69,7 +71,7 @@ final class Conferencia {
         activa = false; enLlamada = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         emitir()
-        EscuchaInicio.shared.evaluar()   // de vuelta al inicio con escucha activa
+        EscuchaInicio.shared.liberar()   // de vuelta al Modo Inicio (otro minuto de escucha)
     }
 
     private func escuchar() {
