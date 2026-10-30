@@ -10,6 +10,7 @@ import WebKit
 ///   { accion: "faceGuardar", email, llave }  → guarda la llave del login en el llavero, protegida con Face ID
 ///   { accion: "faceEntrar" }                 → pide Face ID y devuelve la llave → AlmaLogin.face(email, llave)
 ///   { accion: "faceBorrar" }
+///   { accion: "escucha", que, on }          → «Inicio con escucha activa» → AlmaEscucha.evento({ activada, escuchando })
 ///   { accion: "navegador", pos }             → Alma se llevó a una de las 8 posiciones: barra de búsqueda lista ("" = volvió al centro)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
@@ -41,6 +42,11 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             c.alEvento = { [weak self] e in self?.responder("AlmaConf.evento", [e]) }
             switch d["que"] as? String ?? "" { case "on": c.poner(true); case "off": c.poner(false); default: break }
             responder("AlmaConf.evento", [c.resumen])
+        case "escucha":   // Inicio con escucha activa (EscuchaInicio.swift): { que: "pagina", on } · { que: "activar", on } · { que: "estado" }
+            let e = EscuchaInicio.shared
+            e.alEvento = { [weak self] x in self?.responder("AlmaEscucha.evento", [x]) }
+            switch d["que"] as? String ?? "" { case "pagina": e.poner(pagina: (d["on"] as? Bool) ?? false); case "activar": e.activar((d["on"] as? Bool) ?? true); default: break }
+            responder("AlmaEscucha.evento", [e.resumen])
         case "voz":
             voz(d)
         case "navegador":   // llevaste a Alma hacia un lado en el inicio: se abre el navegador con la búsqueda lista

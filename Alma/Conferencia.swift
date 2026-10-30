@@ -48,6 +48,7 @@ final class Conferencia {
                     guard st == .authorized, mic, self.reconocedor?.isAvailable == true else {
                         self.alEvento?(["tipo": "conferencia", "activa": false, "error": "Activa el micrófono y el reconocimiento de voz para Alma en Ajustes del iPhone."]); return
                     }
+                    EscuchaInicio.shared.detener()   // el modo conferencia tiene su propio despertar
                     self.activa = true; self.id = "cf" + String(Int(Date().timeIntervalSince1970)); self.inicio = Date()
                     self.pendiente = []; self.reciente = []; self.enLlamada = false
                     self.reunion = false; self.parte = 0; self.subidas = 0; self.partes = [:]; self.cerrarArchivo(); self.borrarViejos()
@@ -68,6 +69,7 @@ final class Conferencia {
         activa = false; enLlamada = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         emitir()
+        EscuchaInicio.shared.evaluar()   // de vuelta al inicio con escucha activa
     }
 
     private func escuchar() {
