@@ -74,6 +74,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var ultimaNovedad = Date.distantPast
     /// La conversación la abrió la roca del inicio (no el anillo): Alma saluda y no lleva las reglas del modo anillo.
     private var desdePantalla = false
+    /// Modo conferencia (Conferencia.swift): la llamada la abrió alguien diciendo «Alma, …» en una reunión. Sin señal ni
+    /// saludo; lo último que se dijo va de contexto y lo que le pidieron, como primer mensaje.
+    private var conferencia: String?
+    private var textoInicial: String?
     /// Modo chat de la roca: no se manda el micrófono y Alma no suena (responde por escrito en la página).
     private var mudo = false
     private var nivelT = Date.distantPast
@@ -134,6 +138,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     func hablarDesdePantalla() {
         guard estado == .lista || estado == .apagada else { avisar(); return }
         desdePantalla = true; hablar()
+    }
+    func hablarDesdeConferencia(contexto: String, texto: String) {
+        guard estado == .lista || estado == .apagada else { return }
+        desdePantalla = true; conferencia = contexto; textoInicial = texto; hablar()
     }
     /// Lo que escribes en el chat de la roca, durante la conversación.
     func escribir(_ t: String) {
@@ -254,7 +262,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         UserDefaults.standard.set([String](), forKey: "voz_pasos"); UserDefaults.standard.set(true, forKey: "voz_abierta"); lineas = []
         inicioLlamada = Date()
         estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false
-        sonido("alma-inicio")   // la señal suena ya: lo que digas se guarda mientras conecta
+        if conferencia == nil { sonido("alma-inicio") }   // la señal suena ya: lo que digas se guarda mientras conecta (en conferencia, en silencio)
         infoBloqueo("Te escucho…")
         if let f = fichaLista, Date().timeIntervalSince(f.t) < 540 {
             fichaLista = nil; paso("Ficha lista de antemano"); conectar(agente: f.j["agent_id"] as? String ?? "", ficha: f.j); return
@@ -304,9 +312,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let empieza: String = retomar == nil ? "Ya sonó la señal: NO saludes ni hables primero. Escucha." : "Empiezas tú con el tema por retomar (ya está en tu primer mensaje); después escucha."
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO ANILLO: Juan te habla desde su anillo, casi siempre con el teléfono bloqueado (solo voz, sin pantalla). " + empieza + " Habla en tramos, con pausas, como quien piensa en voz alta: mientras no haya pedido algo concreto o su idea quede a medias, usa skip_turn y sigue escuchando; junta todo lo que dijo como un solo mensaje. Responde solo cuando ya pidió algo claro o terminó de hablar. Respuestas cortas, claras y cálidas."
         }
+        if let cf = conferencia {
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte. Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. LO ÚLTIMO QUE SE DIJO:\n" + cf
+        }
         var agent: [String: Any] = [:]
         // modo anillo: sin tema por retomar, Alma no saluda (solo suena la señal y escucha). Desde la roca saluda como en la página.
-        agent["first_message"] = desdePantalla ? (ficha["first_message"] as? String ?? "") : (retomar ?? "")
+        agent["first_message"] = conferencia != nil ? "" : desdePantalla ? (ficha["first_message"] as? String ?? "") : (retomar ?? "")
         if let l = ficha["language"] as? String, !l.isEmpty { agent["language"] = l }
         var inicio: [String: Any] = ["type": "conversation_initiation_client_data", "dynamic_variables": dv]
         if !agent.isEmpty { inicio["conversation_config_override"] = ["agent": agent] }
@@ -404,6 +415,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             vigilar()
             paso("Alma conectada · te escucha" + (colaVoz.isEmpty ? "" : String(format: " (%.1f s dichos mientras conectaba)", Double(colaVoz.count) * 0.128)))
             for c in colaVoz { mandar(["user_audio_chunk": c]) }; colaVoz = []
+            if let t = textoInicial, !t.isEmpty { mandar(["type": "user_message", "text": t]) }; textoInicial = nil
             infoBloqueo("Te escucho · dos toques para pausar")
             if let id = ev["conversation_id"] as? String { vincular(id) }
         case "audio":
@@ -499,7 +511,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private func terminar() {
         vigia?.invalidate(); vigia = nil
         pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; mudo = false; player.volume = 1
-        let habia = estado == .hablando || estado == .conectando
+        let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
+        conferencia = nil; textoInicial = nil
         if habia { paso("Pausa") }
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
@@ -507,7 +520,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         player.stop()
         if modoAnillo || unRato { player.play() }   // el micrófono sigue listo para el próximo doble toque
         else { engine.inputNode.removeTap(onBus: 0); if engine.isRunning { engine.stop() } }
-        if habia { sonido("alma-fin"); fichaLista = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.buscarAvisos() } }
+        if habia { if !enConferencia { sonido("alma-fin") }; fichaLista = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.buscarAvisos() } }
         estado = .apagada
         if modoAnillo || unRato { quedarLista(); DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.fichaLista = nil; self?.precargarSiToca() } }
         else { apagar() }

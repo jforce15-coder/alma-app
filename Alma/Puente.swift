@@ -36,6 +36,11 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             Llavero.borrar()
         case "anillo":
             anillo(d)
+        case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" }
+            let c = Conferencia.shared
+            c.alEvento = { [weak self] e in self?.responder("AlmaConf.evento", [e]) }
+            switch d["que"] as? String ?? "" { case "on": c.poner(true); case "off": c.poner(false); default: break }
+            responder("AlmaConf.evento", [c.resumen])
         case "voz":
             voz(d)
         case "navegador":   // llevaste a Alma hacia un lado en el inicio: se abre el navegador con la búsqueda lista
