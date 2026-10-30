@@ -2,10 +2,11 @@ import AVFoundation
 import Speech
 import UIKit
 
-/// «Inicio con escucha activa» (Ajustes, encendido por defecto): con la app abierta en el inicio, el iPhone escucha en el
-/// teléfono (gratis, sin enviar ni guardar audio) y, si dices «Alma, …», abre la conversación. Solo «Alma» la abre con
-/// su saludo; «Alma, …» la abre ya con lo que pediste. El puntito que respira bajo la roca dice que está escuchando y, al
-/// abrir la app (o al encender el ajuste), suena la señal de Alma: empezó a escuchar.
+/// «Modo Inicio» (Ajustes, «Inicio con escucha activa», encendido por defecto): con la app abierta en el inicio, el iPhone
+/// escucha en el teléfono (gratis, sin enviar ni guardar audio) durante 1 minuto. Si dices «Alma, …», pasa al modo
+/// conferencia (escucha sin fin y responde cuando la llaman). Si el minuto pasa sin «Alma», no se manda nada, lo escuchado
+/// se suelta y queda en espera (botón apagado) hasta que vuelvas a abrir la app o el inicio.
+/// El puntito que respira bajo la roca dice que está escuchando y, al abrir la app (o al encender el ajuste), suena la señal de Alma.
 ///   · La página avisa cuándo el inicio está a la vista y quieto (sin chat, Pendientes ni llamada): poner(pagina:).
 ///   · Se detiene con la app en segundo plano, durante la llamada y con el modo conferencia (que tiene su propio despertar).
 final class EscuchaInicio {
@@ -21,6 +22,8 @@ final class EscuchaInicio {
     private var reloj: Timer?
     private var pagina = false, enLlamada = false
     private var alAbrir = true                  // la primera escucha después de abrir la app (o encender el ajuste) suena
+    private var limite: Date?, agotado = false   // el minuto del Modo Inicio; agotado = ya pasó sin «Alma» (en espera)
+    static let minuto: TimeInterval = 60
     private var escuchando = false { didSet { if escuchando != oldValue { emitir() } } }
 
     var activada: Bool { UserDefaults.standard.bool(forKey: "escucha_inicio") }
@@ -30,16 +33,18 @@ final class EscuchaInicio {
         UserDefaults.standard.register(defaults: ["escucha_inicio": true])
         let nc = NotificationCenter.default
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.detener() }
-        nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.alAbrir = true; self?.evaluar() }
+        nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.alAbrir = true; self?.agotado = false; self?.evaluar() }   // abrir la app de nuevo = otro minuto
     }
 
-    func activar(_ on: Bool) { UserDefaults.standard.set(on, forKey: "escucha_inicio"); if on { alAbrir = true }; evaluar() }
-    func poner(pagina on: Bool) { pagina = on; evaluar() }
+    func activar(_ on: Bool) { UserDefaults.standard.set(on, forKey: "escucha_inicio"); agotado = false; if on { alAbrir = true }; evaluar() }
+    func poner(pagina on: Bool) { if on && !pagina { agotado = false }; pagina = on; evaluar() }
+    /// El modo conferencia terminó (o no pudo empezar): el inicio vuelve a su minuto de escucha.
+    func liberar() { enLlamada = false; agotado = false; evaluar() }
 
     /// ¿Debe escuchar ahora? Si sí y no está escuchando, empieza; si no, se detiene.
     func evaluar() {
         let v = VozNativa.shared.estado
-        let puede = activada && pagina && !enLlamada && !Conferencia.shared.activa && (v == .lista || v == .apagada) && UIApplication.shared.applicationState == .active
+        let puede = activada && pagina && !agotado && !enLlamada && !Conferencia.shared.activa && (v == .lista || v == .apagada) && UIApplication.shared.applicationState == .active
         if !puede { detener(); return }
         guard !escuchando else { return }
         SFSpeechRecognizer.requestAuthorization { st in
@@ -64,6 +69,7 @@ final class EscuchaInicio {
         motor.prepare()
         do { try motor.start() } catch { reintentar(); return }
         vuelta += 1; let mia = vuelta
+        if limite == nil { limite = Date().addingTimeInterval(EscuchaInicio.minuto) }
         actual = ""; ultimoCambio = Date(); desde = Date()
         tarea = reconocedor?.recognitionTask(with: p) { [weak self] r, e in
             DispatchQueue.main.async {
@@ -86,6 +92,7 @@ final class EscuchaInicio {
         guard escuchando else { return }
         let quieto = Date().timeIntervalSince(ultimoCambio)
         if !actual.isEmpty, quieto > 1.2, let pide = Conferencia.pedidoAAlma(actual) { despertar(pide); return }
+        if let l = limite, Date() >= l { agotar(); return }
         if (!actual.isEmpty && quieto > 2.5) || Date().timeIntervalSince(desde) > 50 { otraVuelta() }
     }
 
@@ -99,19 +106,16 @@ final class EscuchaInicio {
         motor.inputNode.removeTap(onBus: 0); if motor.isRunning { motor.stop() }
         escuchando = false
     }
-    func detener() { guard escuchando || reloj != nil else { return }; parar() }
+    func detener() { limite = nil; guard escuchando || reloj != nil else { return }; parar() }
 
-    /// Dijiste «Alma…»: se abre la conversación. Al colgar, vuelve a escuchar sola.
+    /// Pasó el minuto sin que nadie dijera «Alma»: se suelta lo escuchado (no se manda ni se guarda nada) y queda en espera.
+    private func agotar() { agotado = true; actual = ""; detener() }
+
+    /// Dijiste «Alma…»: pasa al modo conferencia, que atiende lo que pediste y sigue escuchando sin fin.
     private func despertar(_ pide: String) {
-        parar(); enLlamada = true
+        parar(); limite = nil; enLlamada = true
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        if pide.isEmpty { VozNativa.shared.hablarDesdePantalla() } else { VozNativa.shared.hablarAlOir("Alma, " + pide) }
-        let inicio = Date()
-        reloj = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] t in
-            guard let self else { t.invalidate(); return }
-            let e = VozNativa.shared.estado
-            if (e == .lista || e == .apagada) && Date().timeIntervalSince(inicio) > 6 { t.invalidate(); self.reloj = nil; self.enLlamada = false; self.evaluar() }
-        }
+        Conferencia.shared.encender(pedido: pide) { [weak self] in self?.liberar() }
     }
 
     private func emitir() { alEvento?(resumen) }
