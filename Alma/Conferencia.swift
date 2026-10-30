@@ -2,9 +2,12 @@ import AVFoundation
 import Speech
 import UIKit
 
-/// Modo conferencia (Ajustes → «Modo conferencia»): Alma se queda escuchando una reunión, una conferencia o una llamada
-/// SIN ElevenLabs. El iPhone transcribe en el teléfono (gratis y privado) y solo manda texto: los silencios no cuestan nada.
+/// Modo conferencia (el botón entre Ajustes y la roca del inicio): un solo modo, inteligente. Alma escucha una reunión,
+/// una conferencia, una llamada o un dictado SIN la llamada de ElevenLabs: los silencios no cuestan nada.
+///   · El iPhone transcribe en el teléfono (gratis) y, a la vez, graba el audio en el teléfono en partes de 5 min.
 ///   · Cada tramo dicho (se corta en las pausas) queda con su hora; cada 90 s se manda al Hub (acción «conferencia»).
+///   · El Hub decide con los primeros minutos: una persona → dictado (el audio se borra sin subirse); varias → reunión:
+///     se suben las partes (también las de antes) y ElevenLabs las transcribe distinguiendo las voces.
 ///   · Si alguien dice «Alma, …», se enciende la llamada real sin señal ni saludo, con lo último que se dijo como contexto;
 ///     Alma responde y, al colgar, vuelve a escuchar sola.
 ///   · Al apagarlo, el Hub lo clasifica (reunión, conferencia, llamada o memo · esfera · proyecto), resume los acuerdos y
@@ -26,8 +29,14 @@ final class Conferencia {
     private var reciente: [String] = []         // los últimos tramos: el contexto si llaman a Alma
     private var reloj: Timer?, envio: Timer?
     private var enLlamada = false
+    /// El audio en el teléfono, por partes. Solo sale del teléfono si el Hub dice que es una reunión.
+    private var archivo: AVAudioFile?, archivoDesde = Date(), parte = 0
+    private var partes: [Int: URL] = [:]        // partes cerradas que todavía no se suben
+    private var reunion = false
+    private var subidas = 0                     // partes que ya llegaron al Hub (se las espera antes de cerrar)
+    private let candado = NSLock()
 
-    var resumen: [String: Any] { ["tipo": "conferencia", "activa": activa, "minutos": activa ? Int(Date().timeIntervalSince(inicio) / 60) : 0] }
+    var resumen: [String: Any] { ["tipo": "conferencia", "activa": activa, "voces": reunion, "minutos": activa ? Int(Date().timeIntervalSince(inicio) / 60) : 0] }
 
     func poner(_ on: Bool) { if on { encender() } else { apagar() } }
 
@@ -41,6 +50,7 @@ final class Conferencia {
                     }
                     self.activa = true; self.id = "cf" + String(Int(Date().timeIntervalSince1970)); self.inicio = Date()
                     self.pendiente = []; self.reciente = []; self.enLlamada = false
+                    self.reunion = false; self.parte = 0; self.subidas = 0; self.partes = [:]; self.cerrarArchivo(); self.borrarViejos()
                     self.escuchar()
                     self.envio = Timer.scheduledTimer(withTimeInterval: 90, repeats: true) { [weak self] _ in self?.mandar(fin: false) }
                     self.emitir()
@@ -53,7 +63,8 @@ final class Conferencia {
         guard activa else { emitir(); return }
         reloj?.invalidate(); reloj = nil; envio?.invalidate(); envio = nil
         guardarTramo(); detener()
-        mandar(fin: true)
+        cerrarArchivo()
+        if reunion { subirPartes { [weak self] in self?.mandar(fin: true) } } else { mandar(fin: true); borrarPartes() }
         activa = false; enLlamada = false
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         emitir()
@@ -71,7 +82,12 @@ final class Conferencia {
         let entrada = motor.inputNode, formato = entrada.outputFormat(forBus: 0)
         guard formato.sampleRate > 0 else { reintentar(); return }
         entrada.removeTap(onBus: 0)
-        entrada.installTap(onBus: 0, bufferSize: 1024, format: formato) { [weak p] b, _ in p?.append(b) }
+        if archivo == nil || Date().timeIntervalSince(archivoDesde) > 300 { cerrarArchivo(); abrirArchivo(formato) }
+        entrada.installTap(onBus: 0, bufferSize: 1024, format: formato) { [weak self, weak p] b, _ in
+            p?.append(b)
+            guard let self else { return }
+            self.candado.lock(); try? self.archivo?.write(from: b); self.candado.unlock()
+        }
         motor.prepare()
         do { try motor.start() } catch { reintentar(); return }
         vuelta += 1; let mia = vuelta
@@ -148,26 +164,69 @@ final class Conferencia {
         ultimoCambio = Date()
     }
 
+    // MARK: - El audio (en el teléfono)
+
+    private var carpeta: URL { FileManager.default.temporaryDirectory.appendingPathComponent("conferencia", isDirectory: true) }
+
+    private func abrirArchivo(_ f: AVAudioFormat) {
+        try? FileManager.default.createDirectory(at: carpeta, withIntermediateDirectories: true)
+        let u = carpeta.appendingPathComponent("\(id)-\(parte).m4a")
+        let ajustes: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: f.sampleRate, AVNumberOfChannelsKey: f.channelCount, AVEncoderBitRateKey: 48000]
+        candado.lock(); archivo = try? AVAudioFile(forWriting: u, settings: ajustes, commonFormat: f.commonFormat, interleaved: f.isInterleaved); candado.unlock()
+        archivoDesde = Date()
+    }
+
+    /// Cierra la parte actual; si ya es reunión, se sube enseguida.
+    private func cerrarArchivo() {
+        candado.lock(); let a = archivo; archivo = nil; candado.unlock()
+        guard let a else { return }
+        partes[parte] = a.url; parte += 1
+        if reunion { subirPartes(nil) }
+    }
+
+    private func subirPartes(_ listo: (() -> Void)?) {
+        let lista = partes.sorted { $0.key < $1.key }
+        guard !lista.isEmpty else { listo?(); return }
+        let grupo = DispatchGroup()
+        for (n, u) in lista {
+            guard let d = try? Data(contentsOf: u), d.count > 2000 else { partes[n] = nil; try? FileManager.default.removeItem(at: u); continue }
+            partes[n] = nil; grupo.enter()
+            llamar(["id": id, "n": n, "audio": d.base64EncodedString(), "mime": "audio/mp4"], accion: "conferenciaAudio", timeout: 120) { [weak self] j in
+                if j?["ok"] as? Bool == true { try? FileManager.default.removeItem(at: u); self?.subidas += 1 } else { self?.partes[n] = u }   // se reintenta
+                grupo.leave()
+            }
+        }
+        grupo.notify(queue: .main) { listo?() }
+    }
+
+    private func borrarPartes() { for (_, u) in partes { try? FileManager.default.removeItem(at: u) }; partes = [:] }
+    private func borrarViejos() { try? FileManager.default.removeItem(at: carpeta) }
+
     // MARK: - El Hub
 
     private func mandar(fin: Bool) {
         if pendiente.isEmpty && !fin { return }
         let texto = pendiente.joined(separator: "\n"); let enviados = pendiente; pendiente = []
         let iso = ISO8601DateFormatter()
-        llamar(["que": fin ? "fin" : "trozo", "id": id, "texto": texto, "inicio": iso.string(from: inicio)]) { [weak self] ok in
-            if !ok && !fin { self?.pendiente.insert(contentsOf: enviados, at: 0) }   // se reintenta en la próxima vuelta
+        var b: [String: Any] = ["que": fin ? "fin" : "trozo", "id": id, "texto": texto, "inicio": iso.string(from: inicio)]
+        if fin { b["partes"] = reunion ? subidas : 0 }
+        llamar(b, accion: "conferencia", timeout: 40) { [weak self] j in
+            guard let self else { return }
+            if (j?["ok"] as? Bool) != true { if !fin { self.pendiente.insert(contentsOf: enviados, at: 0) }; return }   // se reintenta en la próxima vuelta
+            // El Hub decidió que son varias personas: desde ya, la reunión va con voces (también las partes de antes).
+            if !fin, (j?["modo"] as? String) == "reunion", !self.reunion { self.reunion = true; self.subirPartes(nil); self.emitir() }
         }
     }
 
-    private func llamar(_ cuerpo: [String: Any], _ listo: @escaping (Bool) -> Void) {
-        guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { listo(false); return }
-        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = 40
+    private func llamar(_ cuerpo: [String: Any], accion: String, timeout: TimeInterval, _ listo: @escaping ([String: Any]?) -> Void) {
+        guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { listo(nil); return }
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = timeout
         r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
-        var b = cuerpo; b["hub"] = 1; b["action"] = "conferencia"; b["token"] = token; b["session"] = sesion
+        var b = cuerpo; b["hub"] = 1; b["action"] = accion; b["token"] = token; b["session"] = sesion
         r.httpBody = try? JSONSerialization.data(withJSONObject: b)
         URLSession.shared.dataTask(with: r) { d, _, _ in
             let j = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-            DispatchQueue.main.async { listo((j?["ok"] as? Bool) == true) }
+            DispatchQueue.main.async { listo(j) }
         }.resume()
     }
 
