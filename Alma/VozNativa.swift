@@ -49,6 +49,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var motorListo = false
     private var formatoMono: AVAudioFormat?
     private var sinEco = false
+    /// Hasta cuándo suena la voz de Alma (lo que ya está en cola en el parlante, no solo lo que llegó).
+    private var finVozAlma = Date.distantPast
     private var vozEnviada = 0.0          // segundos de tu voz mandados a Alma en este tramo
     private var ultimaVoz = Date.distantPast
     private var vigia: Timer?   // si la cancelación de eco falló una vez, ya no se intenta
@@ -348,6 +350,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         dst[0].update(from: src[0], count: Int(buf.frameLength))   // primer canal
         var e: Float = 0; for i in 0..<Int(buf.frameLength) { e += src[0][i] * src[0][i] }
         let rmsTu = sqrt(e / Float(max(1, buf.frameLength)))
+        /* Que Alma no se escuche a sí misma: mientras suena su voz, el parlante entra al micrófono y ella lo toma como si
+           Juan la interrumpiera (se corta a media frase y repite «te iba diciendo…»). Mientras suena, solo pasa lo que
+           suena más fuerte que su eco (Juan hablándole de verdad); lo demás se manda como silencio. Sin cancelación de
+           eco el eco es más fuerte, así que el umbral sube. */
+        let suenaAlma = Date() < finVozAlma.addingTimeInterval(0.35)
+        if suenaAlma && rmsTu < (sinEco ? 0.12 : 0.045) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
         let cap = AVAudioFrameCount(Double(buf.frameLength) * 16000 / buf.format.sampleRate) + 32
         guard let out = AVAudioPCMBuffer(pcmFormat: formatoEntrada, frameCapacity: cap) else { return }
         var dado = false
@@ -402,7 +410,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let ev = j["audio_event"] as? [String: Any] ?? [:]
             if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) { if !sono { sono = true; paso("Alma está hablando") }; sonar(d) }
         case "interruption":
-            player.stop(); player.play()
+            player.stop(); player.play(); finVozAlma = Date()
         case "ping":
             let ev = j["ping_event"] as? [String: Any] ?? [:]
             mandar(["type": "pong", "event_id": ev["event_id"] ?? 0])
@@ -428,6 +436,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Alma habla mientras suena este trozo: el círculo late con su voz
         let dur = Double(n) / formatoSalida.sampleRate, nv = min(1, CGFloat(sqrt(e / Float(n))) * 6)
         almaHabla = true; nivel = nv; ultimoAudioAlma = Date()
+        finVozAlma = max(finVozAlma, Date()).addingTimeInterval(dur)   // los trozos llegan más rápido de lo que suenan
         finHabla?.cancel()
         let w = DispatchWorkItem { [weak self] in self?.almaHabla = false; self?.nivel = 0 }
         finHabla = w; DispatchQueue.main.asyncAfter(deadline: .now() + dur + 0.25, execute: w)
