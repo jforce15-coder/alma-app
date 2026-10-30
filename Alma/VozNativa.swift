@@ -24,7 +24,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static let shared = VozNativa()
 
     enum Estado: String { case apagada, lista, conectando, hablando }
-    @Published private(set) var estado: Estado = .apagada { didSet { avisar(); if estado != .hablando { nivel = 0 } } }
+    @Published private(set) var estado: Estado = .apagada { didSet { avisar(); if estado != .hablando { nivel = 0 }; DispatchQueue.main.async { EscuchaInicio.shared.evaluar() } } }
     /// Para la pantalla de la llamada: cuánto suena la voz (0…1), quién habla y lo último que se dijo.
     @Published private(set) var nivel: CGFloat = 0 { didSet { nivelAPagina() } }
     @Published private(set) var almaHabla = false
@@ -78,6 +78,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// saludo; lo último que se dijo va de contexto y lo que le pidieron, como primer mensaje.
     private var conferencia: String?
     private var textoInicial: String?
+    private var alOir = false
     /// Modo chat de la roca: no se manda el micrófono y Alma no suena (responde por escrito en la página).
     private var mudo = false
     private var nivelT = Date.distantPast
@@ -142,6 +143,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     func hablarDesdePantalla() {
         guard estado == .lista || estado == .apagada else { avisar(); return }
         desdePantalla = true; hablar()
+    }
+    /// «Inicio con escucha activa» (EscuchaInicio.swift): dijiste «Alma, …» en el inicio. Sin saludo: lo que pediste es el
+    /// primer mensaje y Alma responde a eso.
+    func hablarAlOir(_ texto: String) {
+        guard estado == .lista || estado == .apagada else { return }
+        desdePantalla = true; alOir = true; textoInicial = texto; hablar()
     }
     func hablarDesdeConferencia(contexto: String, texto: String) {
         guard estado == .lista || estado == .apagada else { return }
@@ -321,7 +328,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         var agent: [String: Any] = [:]
         // modo anillo: sin tema por retomar, Alma no saluda (solo suena la señal y escucha). Desde la roca saluda como en la página.
-        agent["first_message"] = conferencia != nil ? "" : desdePantalla ? (ficha["first_message"] as? String ?? "") : (retomar ?? "")
+        agent["first_message"] = conferencia != nil || alOir ? "" : desdePantalla ? (ficha["first_message"] as? String ?? "") : (retomar ?? "")
         if let l = ficha["language"] as? String, !l.isEmpty { agent["language"] = l }
         var inicio: [String: Any] = ["type": "conversation_initiation_client_data", "dynamic_variables": dv]
         if !agent.isEmpty { inicio["conversation_config_override"] = ["agent": agent] }
@@ -528,7 +535,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         vigia?.invalidate(); vigia = nil
         pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; mudo = false; player.volume = 1
         let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
-        conferencia = nil; textoInicial = nil
+        conferencia = nil; textoInicial = nil; alOir = false
         if habia { paso("Pausa") }
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil

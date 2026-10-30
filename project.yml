@@ -68,7 +68,7 @@ targets:
             CFBundleURLSchemes:
               - alma
         NSMicrophoneUsageDescription: Alma usa el micrófono para hablar contigo por voz.
-        NSSpeechRecognitionUsageDescription: Alma entiende en tu teléfono lo que le pides para escribirlo por ti y, en modo conferencia, transcribe la reunión sin enviar audio.
+        NSSpeechRecognitionUsageDescription: Alma entiende en tu teléfono lo que le pides para escribirlo por ti, despierta en el inicio cuando dices «Alma» y, en modo conferencia, transcribe la reunión sin enviar audio.
         NSFaceIDUsageDescription: Para entrar a Alma con Face ID, sin escribir tu contraseña.
         NSHealthShareUsageDescription: Alma lee tus pasos, ritmo cardíaco, sueño y ejercicios de Apple Salud para mostrártelos en Health.
         NSHealthUpdateUsageDescription: Alma no escribe en Apple Salud; solo lee lo que tu reloj, tu anillo o tus apps ya guardaron.
