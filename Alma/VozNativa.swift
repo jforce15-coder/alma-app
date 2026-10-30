@@ -26,7 +26,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     enum Estado: String { case apagada, lista, conectando, hablando }
     @Published private(set) var estado: Estado = .apagada { didSet { avisar(); if estado != .hablando { nivel = 0 } } }
     /// Para la pantalla de la llamada: cuánto suena la voz (0…1), quién habla y lo último que se dijo.
-    @Published private(set) var nivel: CGFloat = 0
+    @Published private(set) var nivel: CGFloat = 0 { didSet { nivelAPagina() } }
     @Published private(set) var almaHabla = false
     struct Linea: Identifiable { let id: Int; let alma: Bool; let texto: String }
     @Published private(set) var lineas: [Linea] = []
@@ -70,6 +70,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var unRato = false
     private var trabajando = 0, porRetomar = 0
     private var ultimaNovedad = Date.distantPast
+    /// La conversación la abrió la roca del inicio (no el anillo): Alma saluda y no lleva las reglas del modo anillo.
+    private var desdePantalla = false
+    /// Modo chat de la roca: no se manda el micrófono y Alma no suena (responde por escrito en la página).
+    private var mudo = false
+    private var nivelT = Date.distantPast
 
     // MARK: - Lo que pide la página
 
@@ -112,14 +117,32 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         switch estado {
         case .hablando: if cerrarTrasRespuesta { terminar() } else if pausada { reanudar() } else { pausar() }
         case .conectando: terminar()
-        case .lista, .apagada: hablar()
+        case .lista, .apagada: desdePantalla = false; hablar()
         }
+    }
+
+    /// La roca del inicio (sa-nav en la página): la misma conversación que el anillo, abierta desde la pantalla.
+    func hablarDesdePantalla() {
+        guard estado == .lista || estado == .apagada else { avisar(); return }
+        desdePantalla = true; hablar()
+    }
+    /// Lo que escribes en el chat de la roca, durante la conversación.
+    func escribir(_ t: String) {
+        guard estado == .hablando, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        mandar(["type": "user_message", "text": t])
+    }
+    func silenciar(_ on: Bool) { mudo = on; player.volume = on ? 0 : 1 }
+
+    /// Cuánto suena la voz, para que la roca de la página lata con ella (unas 10 veces por segundo).
+    private func nivelAPagina() {
+        guard estado == .hablando, Date().timeIntervalSince(nivelT) > 0.1 else { return }
+        nivelT = Date(); emitir(["tipo": "nivel", "v": Double(nivel), "alma": almaHabla])
     }
 
     /// «Terminar» en la pantalla: cierra la conversación (el doble toque, en cambio, pausa).
     func colgar() { if estado == .hablando || estado == .conectando { terminar() } }
 
-    var resumen: [String: Any] { ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
+    var resumen: [String: Any] { ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
                                   "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
                                   "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar"] }
     static let opciones: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
@@ -267,10 +290,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         var dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
         // Hay un tema por retomar (lo eligió el Hub, el más importante): Alma empieza por él en lugar de solo escuchar.
         let retomar = (ficha["retomar"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        let empieza: String = retomar == nil ? "Ya sonó la señal: NO saludes ni hables primero. Escucha." : "Empiezas tú con el tema por retomar (ya está en tu primer mensaje); después escucha."
-        dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO ANILLO: Juan te habla desde su anillo, casi siempre con el teléfono bloqueado (solo voz, sin pantalla). " + empieza + " Habla en tramos, con pausas, como quien piensa en voz alta: mientras no haya pedido algo concreto o su idea quede a medias, usa skip_turn y sigue escuchando; junta todo lo que dijo como un solo mensaje. Responde solo cuando ya pidió algo claro o terminó de hablar. Respuestas cortas, claras y cálidas."
+        if !desdePantalla {
+            let empieza: String = retomar == nil ? "Ya sonó la señal: NO saludes ni hables primero. Escucha." : "Empiezas tú con el tema por retomar (ya está en tu primer mensaje); después escucha."
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO ANILLO: Juan te habla desde su anillo, casi siempre con el teléfono bloqueado (solo voz, sin pantalla). " + empieza + " Habla en tramos, con pausas, como quien piensa en voz alta: mientras no haya pedido algo concreto o su idea quede a medias, usa skip_turn y sigue escuchando; junta todo lo que dijo como un solo mensaje. Responde solo cuando ya pidió algo claro o terminó de hablar. Respuestas cortas, claras y cálidas."
+        }
         var agent: [String: Any] = [:]
-        agent["first_message"] = retomar ?? ""   // modo anillo: sin tema por retomar, Alma no saluda; solo suena la señal y escucha
+        // modo anillo: sin tema por retomar, Alma no saluda (solo suena la señal y escucha). Desde la roca saluda como en la página.
+        agent["first_message"] = desdePantalla ? (ficha["first_message"] as? String ?? "") : (retomar ?? "")
         if let l = ficha["language"] as? String, !l.isEmpty { agent["language"] = l }
         var inicio: [String: Any] = ["type": "conversation_initiation_client_data", "dynamic_variables": dv]
         if !agent.isEmpty { inicio["conversation_config_override"] = ["agent": agent] }
@@ -308,7 +334,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     private func microfono(_ buf: AVAudioPCMBuffer) {
-        guard estado == .hablando || estado == .conectando, !pausada, let conv = convertidor, let mf = formatoMono, let src = buf.floatChannelData,
+        guard estado == .hablando || estado == .conectando, !pausada, !mudo, let conv = convertidor, let mf = formatoMono, let src = buf.floatChannelData,
               let mono = AVAudioPCMBuffer(pcmFormat: mf, frameCapacity: buf.frameLength), let dst = mono.floatChannelData else { return }
         mono.frameLength = buf.frameLength
         dst[0].update(from: src[0], count: Int(buf.frameLength))   // primer canal
@@ -452,7 +478,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     private func terminar() {
         vigia?.invalidate(); vigia = nil
-        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []
+        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; mudo = false; player.volume = 1
         let habia = estado == .hablando || estado == .conectando
         if habia { paso("Pausa") }
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
@@ -470,14 +496,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     // MARK: - Pausa
 
     private func pausar() {
-        pausada = true; paso("Pausa · Alma espera")
+        pausada = true; avisar(); paso("Pausa · Alma espera")
         mandar(["type": "contextual_update", "text": "PAUSA: Juan tocó el anillo para pausar (está pensando o lo interrumpieron). No hables ni respondas hasta que retome."])
         sonido("alma-fin"); infoBloqueo("En pausa · dos toques para seguir")
         let w = DispatchWorkItem { [weak self] in self?.pausaVencida() }
         pausaT = w; DispatchQueue.main.asyncAfter(deadline: .now() + 25, execute: w)
     }
     private func reanudar() {
-        pausaT?.cancel(); pausaT = nil; pausada = false; ultimaVoz = Date(); paso("Sigue la conversación")
+        pausaT?.cancel(); pausaT = nil; pausada = false; avisar(); ultimaVoz = Date(); paso("Sigue la conversación")
         mandar(["type": "contextual_update", "text": "SIGUE: Juan retomó; sigue escuchando donde iba."])
         sonido("alma-inicio"); infoBloqueo("Te escucho · dos toques para pausar")
     }

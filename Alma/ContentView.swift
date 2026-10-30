@@ -18,7 +18,8 @@ struct ContentView: View {
     @State private var llamadaOculta = false
     /// La conversación del modo anillo sigue en pantalla al abrir la app (y se puede terminar aquí).
     private var llamada: Binding<Bool> {
-        Binding(get: { (voz.estado == .hablando || voz.estado == .conectando) && !llamadaOculta },
+        // En el inicio la conversación vive en la roca de la página (sa-nav), no en esta pantalla.
+        Binding(get: { (voz.estado == .hablando || voz.estado == .conectando) && !llamadaOculta && !(nav.enInicio && nav.esSpacio) },
                 set: { if !$0 { llamadaOculta = true } })
     }
 
