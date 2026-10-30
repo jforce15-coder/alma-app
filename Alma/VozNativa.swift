@@ -82,6 +82,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var mudo = false
     private var nivelT = Date.distantPast
     private var inicioLlamada = Date.distantPast
+    /// Cuándo Alma quedó conectada: un toque que llega justo al conectar (el mismo gesto, o iOS al tomar el audio) no la pausa.
+    private var conectadaDesde = Date.distantPast
+    /// Cuánto llevas hablando con la conversación en pausa: si hablas, Alma vuelve a escucharte sola.
+    private var vozEnPausa = 0.0
     private var ultimoSonido: [String: Date] = [:]
 
     // MARK: - Lo que pide la página
@@ -124,7 +128,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     func alternar() {
         // Un mismo gesto del anillo puede llegar dos veces: como botón de audífonos (aquí) y como toque en la pantalla (la
         // roca de la página abre la voz). En los primeros segundos de una llamada, otro toque no la cuelga ni la pausa.
-        if (estado == .hablando || estado == .conectando) && Date().timeIntervalSince(inicioLlamada) < 4 {
+        if (estado == .hablando || estado == .conectando) && (Date().timeIntervalSince(inicioLlamada) < 4 || Date().timeIntervalSince(conectadaDesde) < 4) {
             paso("Toque repetido ignorado: la llamada acaba de empezar"); return
         }
         switch estado {
@@ -355,6 +359,18 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     private func microfono(_ buf: AVAudioPCMBuffer) {
+        /* En pausa no se manda tu voz; pero si le hablas (más fuerte que el eco y por casi un segundo), Alma vuelve a escuchar
+           sola: una pausa que no pediste (un toque de más) ya no la deja muda. */
+        if pausada, estado == .hablando, let s = buf.floatChannelData {
+            var e: Float = 0; for i in 0..<Int(buf.frameLength) { e += s[0][i] * s[0][i] }
+            let rms = sqrt(e / Float(max(1, buf.frameLength))), dur = Double(buf.frameLength) / buf.format.sampleRate
+            vozEnPausa = rms > 0.06 && Date() >= finVozAlma ? vozEnPausa + dur : max(0, vozEnPausa - dur)
+            if vozEnPausa > 0.8 {
+                vozEnPausa = 0
+                DispatchQueue.main.async { if self.pausada && self.estado == .hablando { self.paso("Hablaste en pausa: Alma vuelve a escuchar"); self.reanudar() } }
+            }
+            return
+        }
         guard estado == .hablando || estado == .conectando, !pausada, !mudo, let conv = convertidor, let mf = formatoMono, let src = buf.floatChannelData,
               let mono = AVAudioPCMBuffer(pcmFormat: mf, frameCapacity: buf.frameLength), let dst = mono.floatChannelData else { return }
         mono.frameLength = buf.frameLength
@@ -411,7 +427,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                let nuevo = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: hz, channels: 1, interleaved: false) {
                 formatoSalida = nuevo; player.stop(); engine.disconnectNodeOutput(player); engine.connect(player, to: engine.mainMixerNode, format: nuevo); player.play()
             }
-            estado = .hablando
+            estado = .hablando; conectadaDesde = Date(); vozEnPausa = 0
             vigilar()
             paso("Alma conectada · te escucha" + (colaVoz.isEmpty ? "" : String(format: " (%.1f s dichos mientras conectaba)", Double(colaVoz.count) * 0.128)))
             for c in colaVoz { mandar(["user_audio_chunk": c]) }; colaVoz = []
