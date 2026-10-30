@@ -74,7 +74,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var ultimaNovedad = Date.distantPast
     /// La conversación la abrió la roca del inicio (no el anillo): Alma saluda y no lleva las reglas del modo anillo.
     private var desdePantalla = false
-    /// Modo conferencia (Conferencia.swift): la llamada la abrió alguien diciendo «Alma, …» en una reunión. Sin señal ni
+    /// Modo conferencia (Conferencia.swift): la llamada la abrió alguien diciendo «Alma, …» en una reunión. Con la señal, sin
     /// saludo; lo último que se dijo va de contexto y lo que le pidieron, como primer mensaje.
     private var conferencia: String?
     private var textoInicial: String?
@@ -273,7 +273,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         UserDefaults.standard.set([String](), forKey: "voz_pasos"); UserDefaults.standard.set(true, forKey: "voz_abierta"); lineas = []
         inicioLlamada = Date()
         estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false
-        if conferencia == nil { sonido("alma-inicio") }   // la señal suena ya: lo que digas se guarda mientras conecta (en conferencia, en silencio)
+        sonido("alma-inicio")   // la señal suena ya (también en conferencia): lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
         if let f = fichaLista, Date().timeIntervalSince(f.t) < 540 {
             fichaLista = nil; paso("Ficha lista de antemano"); conectar(agente: f.j["agent_id"] as? String ?? "", ficha: f.j); return
@@ -478,6 +478,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         player.scheduleBuffer(buf, completionHandler: nil)
         if !player.isPlaying { player.play() }
     }
+
+    /// La señal de Alma suena siempre que empieza a escuchar: el anillo, la roca, «Alma» en el inicio, el modo conferencia,
+    /// el dictado y la voz de las páginas (que la piden por el puente: suena igual aunque la página esté tomando el micrófono).
+    func sonar(_ n: String) { if n == "alma-inicio" || n == "alma-fin" { sonido(n) } }
+    func senal() { sonido("alma-inicio") }
 
     /// Los sonidos de Alma (Recursos/Sonidos): calma primero, tecnología después.
     private func sonido(_ n: String) {
