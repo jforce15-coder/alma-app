@@ -4,7 +4,8 @@ import UIKit
 
 /// «Inicio con escucha activa» (Ajustes, encendido por defecto): con la app abierta en el inicio, el iPhone escucha en el
 /// teléfono (gratis, sin enviar ni guardar audio) y, si dices «Alma, …», abre la conversación. Solo «Alma» la abre con
-/// su saludo; «Alma, …» la abre ya con lo que pediste. El puntito que respira bajo la roca dice que está escuchando.
+/// su saludo; «Alma, …» la abre ya con lo que pediste. El puntito que respira bajo la roca dice que está escuchando y, al
+/// abrir la app (o al encender el ajuste), suena la señal de Alma: empezó a escuchar.
 ///   · La página avisa cuándo el inicio está a la vista y quieto (sin chat, Pendientes ni llamada): poner(pagina:).
 ///   · Se detiene con la app en segundo plano, durante la llamada y con el modo conferencia (que tiene su propio despertar).
 final class EscuchaInicio {
@@ -19,6 +20,7 @@ final class EscuchaInicio {
     private var actual = "", ultimoCambio = Date(), desde = Date()
     private var reloj: Timer?
     private var pagina = false, enLlamada = false
+    private var alAbrir = true                  // la primera escucha después de abrir la app (o encender el ajuste) suena
     private var escuchando = false { didSet { if escuchando != oldValue { emitir() } } }
 
     var activada: Bool { UserDefaults.standard.bool(forKey: "escucha_inicio") }
@@ -28,10 +30,10 @@ final class EscuchaInicio {
         UserDefaults.standard.register(defaults: ["escucha_inicio": true])
         let nc = NotificationCenter.default
         nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.detener() }
-        nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.evaluar() }
+        nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.alAbrir = true; self?.evaluar() }
     }
 
-    func activar(_ on: Bool) { UserDefaults.standard.set(on, forKey: "escucha_inicio"); evaluar() }
+    func activar(_ on: Bool) { UserDefaults.standard.set(on, forKey: "escucha_inicio"); if on { alAbrir = true }; evaluar() }
     func poner(pagina on: Bool) { pagina = on; evaluar() }
 
     /// ¿Debe escuchar ahora? Si sí y no está escuchando, empieza; si no, se detiene.
@@ -74,6 +76,7 @@ final class EscuchaInicio {
             }
         }
         escuchando = true
+        if alAbrir { alAbrir = false; VozNativa.shared.senal() }
         reloj?.invalidate()
         reloj = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.revisar() }
     }

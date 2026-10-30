@@ -8,7 +8,7 @@ import UIKit
 ///   · Cada tramo dicho (se corta en las pausas) queda con su hora; cada 90 s se manda al Hub (acción «conferencia»).
 ///   · El Hub decide con los primeros minutos: una persona → dictado (el audio se borra sin subirse); varias → reunión:
 ///     se suben las partes (también las de antes) y ElevenLabs las transcribe distinguiendo las voces.
-///   · Si alguien dice «Alma, …», se enciende la llamada real sin señal ni saludo, con lo último que se dijo como contexto;
+///   · Si alguien dice «Alma, …», se enciende la llamada real con la señal y sin saludo, con lo último que se dijo como contexto;
 ///     Alma responde y, al colgar, vuelve a escuchar sola.
 ///   · Al apagarlo, el Hub lo clasifica (reunión, conferencia, llamada o memo · esfera · proyecto), resume los acuerdos y
 ///     lo deja en Pendientes. No se guarda audio: solo el texto.
@@ -52,7 +52,7 @@ final class Conferencia {
                     self.activa = true; self.id = "cf" + String(Int(Date().timeIntervalSince1970)); self.inicio = Date()
                     self.pendiente = []; self.reciente = []; self.enLlamada = false
                     self.reunion = false; self.parte = 0; self.subidas = 0; self.partes = [:]; self.cerrarArchivo(); self.borrarViejos()
-                    self.escuchar()
+                    self.escuchar(); VozNativa.shared.senal()
                     self.envio = Timer.scheduledTimer(withTimeInterval: 90, repeats: true) { [weak self] _ in self?.mandar(fin: false) }
                     self.emitir()
                 }
@@ -148,7 +148,7 @@ final class Conferencia {
         motor.inputNode.removeTap(onBus: 0); if motor.isRunning { motor.stop() }
     }
 
-    /// Alguien dijo «Alma, …»: la llamada real se enciende sin señal ni saludo, con el contexto de la reunión.
+    /// Alguien dijo «Alma, …»: la llamada real se enciende con la señal y sin saludo, con el contexto de la reunión.
     private func despertar(_ pide: String) {
         guardarTramo(); detener(); reloj?.invalidate()
         enLlamada = true; emitir()

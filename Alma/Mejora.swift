@@ -42,6 +42,7 @@ final class MejoraCampo: ObservableObject {
                         self.aviso = "Activa el micrófono y el reconocimiento de voz para Alma en Ajustes."
                         self.terminar(self.hayTexto ? "" : nil); return
                     }
+                    VozNativa.shared.senal()
                     self.escuchar()
                 }
             }
