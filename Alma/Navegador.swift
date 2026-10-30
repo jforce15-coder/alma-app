@@ -29,6 +29,8 @@ final class Navegador: NSObject, ObservableObject {
     @Published var escribiendo = false
     /// La roca tapa una carga en curso (Portal.swift); se destapa al terminar de cargar.
     var cargaTapada = false
+    /// Dónde está la roca de Alma en la pantalla (lo da ContentView): de ahí sale y ahí vuelve la transición.
+    var puntoRoca: (() -> CGPoint?)?
 
     private var observaciones: [NSKeyValueObservation] = []
     /// Entrar con Face ID o Google desde la página de inicio (Puente.swift).
@@ -207,7 +209,7 @@ extension Navegador: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         Navegador.decidir(navigationAction) { [weak self] pol in
             if pol == .allow, navigationAction.targetFrame?.isMainFrame ?? true, let u = navigationAction.request.url, self?.taparCarga(hacia: u) == true {
-                self?.cargaTapada = true; Portal.shared.cubrir()
+                self?.cargaTapada = true; Portal.shared.cubrir(desde: self?.puntoRoca?())
             }
             decisionHandler(pol)
         }
@@ -231,7 +233,7 @@ extension Navegador: WKNavigationDelegate {
     private func destapar() {
         guard cargaTapada else { return }
         cargaTapada = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { Portal.shared.descubrir() }   // un instante para que pinte
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in Portal.shared.descubrir(hacia: self?.puntoRoca?()) }   // un instante para que pinte
     }
 
     /// tel:, mailto:, whatsapp:, maps… se abren con la app del teléfono; lo web se queda aquí.
