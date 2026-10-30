@@ -605,6 +605,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         guard estado == .conectando || estado == .hablando else { return }
         // Cierre normal con la llamada en curso: Alma colgó (end_call), por ejemplo porque sigue el pedido en segundo plano.
         if code == .normalClosure && estado == .hablando { paso("Alma colgó"); terminar(); return }
+        // Sin créditos de voz: decirlo claro, no solo colgar.
+        if por.range(of: "quota_exceeded|credits|quota", options: [.regularExpression, .caseInsensitive]) != nil {
+            fallo("Se acabaron los créditos de voz de Alma en ElevenLabs. Recárgalos y vuelve a llamarla; mientras, escríbele por el chat."); return
+        }
         fallo("ElevenLabs cerró la voz (\(code.rawValue)) \(por)")
     }
 
