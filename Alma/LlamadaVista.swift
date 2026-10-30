@@ -44,8 +44,9 @@ struct LlamadaVista: View {
                     .animation(.easeInOut(duration: 0.3), value: estadoTexto)
                     .padding(.top, 44)
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(voz.lineas.suffix(3))) { l in
-                        Text(l.texto)
+                    // Solo lo último: dos frases, de dos líneas como mucho (la conversación completa queda en el chat).
+                    ForEach(Array(voz.lineas.suffix(2))) { l in
+                        Text(l.texto).lineLimit(2).truncationMode(.head)
                             .font(l.alma ? .custom("Cormorant Garamond", size: 20) : .custom("Montserrat", size: 14))
                             .foregroundStyle(.white.opacity(l.alma ? 0.95 : 0.7))
                             .frame(maxWidth: .infinity, alignment: l.alma ? .leading : .trailing)
@@ -54,7 +55,7 @@ struct LlamadaVista: View {
                     }
                 }
                 .animation(.easeOut(duration: 0.35), value: voz.lineas.count)
-                .frame(maxWidth: 420, minHeight: 120, alignment: .bottom)
+                .frame(maxWidth: 420, minHeight: 96, alignment: .bottom)
                 .padding(.top, 24)
                 Spacer()
                 Button { voz.colgar() } label: {

@@ -64,7 +64,7 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         }
     }
 
-    /// Alma con el teléfono bloqueado (VozNativa.swift): { accion: "voz", que: "configurar" | "anillo" | "alternar" | "estado", … }
+    /// Alma con el teléfono bloqueado (VozNativa.swift): { accion: "voz", que: "configurar" | "anillo" | "alternar" | "hablar" | "colgar" | "texto" | "mudo" | "estado", … }
     /// Lo que pasa (estado, lo que dices, lo que responde Alma) va a la página como AlmaVoz.evento({ tipo, … }).
     private func voz(_ d: [String: Any]) {
         let v = VozNativa.shared
@@ -74,6 +74,10 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             if let u = d["url"] as? String, let t = d["token"] as? String, let s = d["sesion"] as? String { v.configurar(url: u, token: t, sesion: s) }
         case "anillo": v.ponerModoAnillo((d["on"] as? Bool) ?? false)
         case "alternar": v.alternar()
+        case "hablar": v.hablarDesdePantalla()          // la roca del inicio abre la conversación
+        case "colgar": v.colgar()
+        case "texto": v.escribir(d["texto"] as? String ?? "")
+        case "mudo": v.silenciar((d["on"] as? Bool) ?? false)
         default: break
         }
         responder("AlmaVoz.evento", [v.resumen])
