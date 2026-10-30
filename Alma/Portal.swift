@@ -9,6 +9,8 @@ import UIKit
 final class Portal: ObservableObject {
     static let shared = Portal()
     @Published private(set) var cubierto = false
+    /// De dónde sale la roca al cubrir y adónde vuelve al descubrir (en la pantalla); nil = el centro.
+    @Published private(set) var punto: CGPoint?
     private var ventana: UIWindow?
     private var cubiertoDesde = Date.distantPast
     private var pendiente: DispatchWorkItem?
@@ -37,6 +39,17 @@ final class Portal: ObservableObject {
             withTransaction(t) { cambio() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.descubrir() }
         }
+    }
+
+    /// Cubre saliendo desde un punto (p. ej. donde está la roca de Alma).
+    func cubrir(desde p: CGPoint?) {
+        if !cubierto { var t = Transaction(); t.disablesAnimations = true; withTransaction(t) { punto = p } }
+        cubrir()
+    }
+    /// Descubre encogiéndose hacia un punto (p. ej. donde quedó la roca en la página nueva).
+    func descubrir(hacia p: CGPoint?) {
+        punto = p
+        descubrir()
     }
 
     func cubrir() {
@@ -85,6 +98,8 @@ struct PortalVista: View {
                 Image(systemName: "sparkle").font(.system(size: 30)).foregroundStyle(Color(red: 0.79, green: 0.76, blue: 0.72))
                     .opacity(portal.cubierto ? 1 : 0).scaleEffect(portal.cubierto ? 1 : 0.6)
             }
+            // sale de la roca y vuelve a la roca: fuera del cambio, en su punto; cubriendo, en el centro
+            .position(portal.cubierto || portal.punto == nil ? CGPoint(x: g.size.width / 2, y: g.size.height / 2) : portal.punto!)
             .frame(width: g.size.width, height: g.size.height)
             .opacity(quieto ? (portal.cubierto ? 1 : 0) : 1)
         }

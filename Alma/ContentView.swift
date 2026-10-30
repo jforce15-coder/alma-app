@@ -58,6 +58,7 @@ struct ContentView: View {
             .onAppear {
                 roca.web.isHidden = nav.esSpacio
                 roca.alToques = { n in tocaron(n) }
+                nav.puntoRoca = { puntoRoca() }
             }
     }
 
@@ -71,11 +72,22 @@ struct ContentView: View {
         } else { roca.abajo(on) }
     }
 
-    /// 1 toque: Alma sobre la página · 2: escribe en el cuadro de texto activo · 3: captura
+    /// 1 toque: al inicio (en el navegador no hay menú que abrir) · 2: escribe en el cuadro de texto activo, o Alma sobre
+    /// la página · 3: captura
     private func tocaron(_ n: Int) {
         if n >= 3 { capturar() }
-        else if n == 2, let c = nav.campo, !c.clave { mejorar() }
-        else { captura = nil; almaAbierta = true }
+        else if n == 2 { if let c = nav.campo, !c.clave { mejorar() } else { captura = nil; almaAbierta = true } }
+        else { UIImpactFeedbackGenerator(style: .light).impactOccurred(); nav.irAlInicio() }
+    }
+
+    /// Dónde está la roca en la pantalla: en el navegador, la de la capa (a la derecha); en el inicio, abajo al centro
+    /// (ahí queda mientras se escribe la búsqueda).
+    private func puntoRoca() -> CGPoint? {
+        let v = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+        let arriba = v?.safeAreaInsets.top ?? 0, tam = v?.bounds.size ?? .zero
+        if !nav.esSpacio, roca.zona.width > 0 { return CGPoint(x: roca.zona.midX, y: roca.zona.midY + arriba) }
+        if nav.enInicio { return CGPoint(x: tam.width / 2, y: tam.height - 150) }
+        return nil
     }
 
     private var pantalla: some View {
