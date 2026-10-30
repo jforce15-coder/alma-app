@@ -75,6 +75,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Modo chat de la roca: no se manda el micrófono y Alma no suena (responde por escrito en la página).
     private var mudo = false
     private var nivelT = Date.distantPast
+    private var inicioLlamada = Date.distantPast
+    private var ultimoSonido: [String: Date] = [:]
 
     // MARK: - Lo que pide la página
 
@@ -114,6 +116,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     /// Doble toque del anillo (o el botón de la página): habla o pausa.
     func alternar() {
+        // Un mismo gesto del anillo puede llegar dos veces: como botón de audífonos (aquí) y como toque en la pantalla (la
+        // roca de la página abre la voz). En los primeros segundos de una llamada, otro toque no la cuelga ni la pausa.
+        if (estado == .hablando || estado == .conectando) && Date().timeIntervalSince(inicioLlamada) < 4 {
+            paso("Toque repetido ignorado: la llamada acaba de empezar"); return
+        }
         switch estado {
         case .hablando: if cerrarTrasRespuesta { terminar() } else if pausada { reanudar() } else { pausar() }
         case .conectando: terminar()
@@ -243,6 +250,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             emitir(["tipo": "error", "mensaje": "Abre Alma una vez con tu sesión para que pueda hablar con el teléfono bloqueado."]); return
         }
         UserDefaults.standard.set([String](), forKey: "voz_pasos"); UserDefaults.standard.set(true, forKey: "voz_abierta"); lineas = []
+        inicioLlamada = Date()
         estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false
         sonido("alma-inicio")   // la señal suena ya: lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
@@ -429,6 +437,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     /// Los sonidos de Alma (Recursos/Sonidos): calma primero, tecnología después.
     private func sonido(_ n: String) {
+        // nunca el mismo sonido dos veces seguidas (dos avisos de un mismo gesto)
+        if let t = ultimoSonido[n], Date().timeIntervalSince(t) < 2.5 { return }
+        ultimoSonido[n] = Date()
         if campanas[n] == nil, let u = Bundle.main.url(forResource: n, withExtension: "wav") { campanas[n] = try? AVAudioPlayer(contentsOf: u) }
         campanas[n]?.volume = 0.9; campanas[n]?.currentTime = 0; campanas[n]?.play()
     }
