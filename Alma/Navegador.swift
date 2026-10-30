@@ -228,6 +228,12 @@ extension Navegador: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { destapar() }
+    /// iOS cerró el proceso de la página (memoria, o el audio de la voz en la página): se vuelve a cargar sola en vez de
+    /// quedar en blanco o parecer que la app se cerró. Queda anotado en Ajustes («voz_ultimo_error»).
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        UserDefaults.standard.set("La página se cerró sola (iOS) y se volvió a abrir", forKey: "voz_ultimo_error")
+        if webView.url != nil { webView.reload() } else { webView.load(URLRequest(url: Navegador.inicio)) }
+    }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { destapar() }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { destapar() }
     private func destapar() {
