@@ -24,6 +24,10 @@ final class EscuchaInicio {
     private var alAbrir = true                  // la primera escucha después de abrir la app (o encender el ajuste) suena
     private var limite: Date?, agotado = false   // el minuto del Modo Inicio; agotado = ya pasó sin «Alma» (en espera)
     static let minuto: TimeInterval = 60
+    /// Lo último que se dijo en este minuto (solo en memoria, nunca se manda): si te llaman con «Alma», va de contexto.
+    private var previo: [String] = []
+    /// Escucha por el micrófono de la voz (VozNativa, ya abierto con «Alma con el anillo») en vez de abrir otro.
+    private var compartido = false
     private var escuchando = false { didSet { if escuchando != oldValue { emitir() } } }
 
     var activada: Bool { UserDefaults.standard.bool(forKey: "escucha_inicio") }
@@ -57,18 +61,26 @@ final class EscuchaInicio {
 
     private func escuchar() {
         guard !escuchando, activada, pagina, !enLlamada, !Conferencia.shared.activa else { return }
-        let s = AVAudioSession.sharedInstance()
-        try? s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
-        try? s.setActive(true)
         let p = SFSpeechAudioBufferRecognitionRequest(); p.shouldReportPartialResults = true
         if reconocedor?.supportsOnDeviceRecognition == true { p.requiresOnDeviceRecognition = true }
         pedido = p
-        let entrada = motor.inputNode, formato = entrada.outputFormat(forBus: 0)
-        guard formato.sampleRate > 0 else { reintentar(); return }
-        entrada.removeTap(onBus: 0)
-        entrada.installTap(onBus: 0, bufferSize: 1024, format: formato) { [weak p] b, _ in p?.append(b) }
-        motor.prepare()
-        do { try motor.start() } catch { reintentar(); return }
+        let voz = VozNativa.shared
+        if voz.microfonoListo {
+            // El micrófono de la voz ya está abierto: se escucha por él (dos micrófonos a la vez dejan mudo a uno).
+            compartido = true
+            voz.ponerOyente("inicio") { [weak p] b in p?.append(b) }
+        } else {
+            compartido = false
+            let s = AVAudioSession.sharedInstance()
+            try? s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
+            try? s.setActive(true)
+            let entrada = motor.inputNode, formato = entrada.outputFormat(forBus: 0)
+            guard formato.sampleRate > 0 else { reintentar(); return }
+            entrada.removeTap(onBus: 0)
+            entrada.installTap(onBus: 0, bufferSize: 1024, format: formato) { [weak p] b, _ in p?.append(b) }
+            motor.prepare()
+            do { try motor.start() } catch { reintentar(); return }
+        }
         vuelta += 1; let mia = vuelta
         if limite == nil { limite = Date().addingTimeInterval(EscuchaInicio.minuto) }
         actual = ""; ultimoCambio = Date(); desde = Date()
@@ -91,35 +103,47 @@ final class EscuchaInicio {
         reloj = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.revisar() }
     }
 
-    /// Cada medio segundo: ¿la llamaron? Lo que no la nombra se suelta en las pausas (no se guarda nada).
+    /// Cada medio segundo: ¿la llamaron? Lo que no la nombra solo queda en memoria este minuto (de contexto si la llaman; no se manda ni se guarda).
     private func revisar() {
         guard escuchando else { return }
         let quieto = Date().timeIntervalSince(ultimoCambio)
         if !actual.isEmpty, quieto > 1.2, let pide = Conferencia.pedidoAAlma(actual) { despertar(pide); return }
         if let l = limite, Date() >= l { agotar(); return }
+        // El micrófono de la voz se abrió (o se cerró) mientras escuchaba: se cambia al que corresponde.
+        if compartido != VozNativa.shared.microfonoListo { otraVuelta(); return }
         if (!actual.isEmpty && quieto > 2.5) || Date().timeIntervalSince(desde) > 50 { otraVuelta() }
     }
 
-    private func otraVuelta() { parar(); escuchar() }
+    private func otraVuelta() {
+        let t = actual.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !t.isEmpty { previo.append(t); if previo.count > 4 { previo.removeFirst(previo.count - 4) } }
+        parar(); escuchar()
+    }
     private func reintentar() { parar(); DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.evaluar() } }
 
     private func parar() {
         reloj?.invalidate(); reloj = nil
         tarea?.cancel(); tarea = nil
         pedido?.endAudio(); pedido = nil
-        motor.inputNode.removeTap(onBus: 0); if motor.isRunning { motor.stop() }
+        VozNativa.shared.quitarOyente("inicio")
+        if motor.isRunning { motor.inputNode.removeTap(onBus: 0); motor.stop() }
+        compartido = false
         escuchando = false
     }
-    func detener() { limite = nil; guard escuchando || reloj != nil else { return }; parar() }
+    func detener() { limite = nil; previo = []; guard escuchando || reloj != nil else { return }; parar() }
 
     /// Pasó el minuto sin que nadie dijera «Alma»: se suelta lo escuchado (no se manda ni se guarda nada) y queda en espera.
-    private func agotar() { agotado = true; actual = ""; detener() }
+    private func agotar() { agotado = true; actual = ""; previo = []; detener() }
 
     /// Dijiste «Alma…»: pasa al modo conferencia, que atiende lo que pediste y sigue escuchando sin fin.
     private func despertar(_ pide: String) {
-        parar(); limite = nil; enLlamada = true
+        // Lo que se dijo justo antes de «Alma» (en este minuto) va de contexto, como en el modo conferencia.
+        var ctx = previo
+        let antes = Conferencia.antesDeAlma(actual)
+        if !antes.isEmpty { ctx.append(antes) }
+        parar(); limite = nil; previo = []; enLlamada = true
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        Conferencia.shared.encender(pedido: pide) { [weak self] in self?.liberar() }
+        Conferencia.shared.encender(pedido: pide, contexto: ctx) { [weak self] in self?.liberar() }
     }
 
     private func emitir() { alEvento?(resumen) }

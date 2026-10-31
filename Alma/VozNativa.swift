@@ -146,8 +146,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     /// Doble toque del anillo: enciende o apaga el modo conferencia (ya no abre una llamada propia). Si Alma está
     /// hablando (por ejemplo, la despertaron en la reunión), el doble toque sigue pausando o retomando, como siempre.
+    private var ultimoCambioConf = Date.distantPast
     private func toqueAnillo() {
         if estado == .hablando || estado == .conectando { alternar(); return }
+        // Un mismo gesto puede llegar dos veces (o iOS manda «reproducir» al tomar el audio): no se prende y apaga de golpe.
+        if Date().timeIntervalSince(ultimoCambioConf) < 3 { paso("Toque repetido ignorado: el modo conferencia acaba de cambiar"); return }
+        ultimoCambioConf = Date()
         let c = Conferencia.shared
         paso(c.activa ? "El anillo apagó el modo conferencia" : "El anillo encendió el modo conferencia")
         c.poner(!c.activa)
@@ -156,6 +160,27 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// bloqueado iOS no deja volver a tomarlo) y Alma queda lista otra vez.
     var anilloListo: Bool { modoAnillo || unRato }
     func listaTrasConferencia() { if modoAnillo || unRato { quedarLista() } }
+
+    /// Un solo micrófono a la vez. Con «Alma con el anillo» (o lista «un rato») el micrófono de la voz queda abierto, con
+    /// cancelación de eco; si el Modo Inicio o el modo conferencia abrieran otro, iOS deja mudo a uno de los dos y Alma no
+    /// oye «Alma». Por eso, mientras está lista, la voz le pasa lo que oye a quien escucha (EscuchaInicio o Conferencia).
+    private let candadoOyente = NSLock()
+    private var oyente: (id: String, f: (AVAudioPCMBuffer) -> Void)?
+    func ponerOyente(_ id: String, _ f: @escaping (AVAudioPCMBuffer) -> Void) { candadoOyente.lock(); oyente = (id, f); candadoOyente.unlock() }
+    func quitarOyente(_ id: String) { candadoOyente.lock(); if oyente?.id == id { oyente = nil }; candadoOyente.unlock() }
+    /// ¿El micrófono de la voz está abierto y libre (sin llamada)? Entonces se escucha por él.
+    var microfonoListo: Bool { estado == .lista && engine.isRunning && formatoMono != nil }
+    var formatoOyente: AVAudioFormat? { formatoMono }
+    /// Lo último de la llamada (para que el modo conferencia sepa de qué se hablaba).
+    var charlaReciente: [String] { lineas.map { ($0.alma ? "Alma: " : "Juan: ") + $0.texto } }
+    private func darAOyente(_ buf: AVAudioPCMBuffer) {
+        candadoOyente.lock(); let o = oyente; candadoOyente.unlock()
+        guard let o, let mf = formatoMono, let src = buf.floatChannelData,
+              let mono = AVAudioPCMBuffer(pcmFormat: mf, frameCapacity: buf.frameLength), let dst = mono.floatChannelData else { return }
+        mono.frameLength = buf.frameLength
+        dst[0].update(from: src[0], count: Int(buf.frameLength))   // primer canal, como lo que se manda a Alma
+        o.f(mono)
+    }
 
     /// Botón de la página (y el anillo durante una llamada): habla o pausa.
     func alternar() {
@@ -399,6 +424,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     private func microfono(_ buf: AVAudioPCMBuffer) {
+        if estado == .lista { darAOyente(buf); return }   // sin llamada: lo oye el Modo Inicio o el modo conferencia
         /* En pausa no se manda tu voz; pero si le hablas (más fuerte que el eco y por casi un segundo), Alma vuelve a escuchar
            sola: una pausa que no pediste (un toque de más) ya no la deja muda. */
         if pausada, estado == .hablando, let s = buf.floatChannelData {
@@ -437,6 +463,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if self.estado == .conectando { if self.colaVoz.count < 80 { self.colaVoz.append(datos.base64EncodedString()) }; return }
             self.vozEnviada += seg; self.ultimaVoz = Date(); self.mandar(["user_audio_chunk": datos.base64EncodedString()])
             if !self.almaHabla { self.nivel = min(1, CGFloat(rmsTu) * 9) }
+            if rmsTu > 0.05 && !suenaAlma { self.ultimaActividad = Date() }   // Juan hablando también cuenta (no es pausa larga)
         }
     }
 
@@ -480,7 +507,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                     // Respaldo: si tras la pausa nadie dijo nada en 16 s (7 s de espera + la despedida), la app cuelga y pasa a conferencia.
                     self.vigiaLargo = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
                         guard let self, self.estado == .hablando, !self.pausada, !self.herramienta else { return }
-                        if Date().timeIntervalSince(self.ultimaActividad) > 16 { self.paso("Pausa larga sin respuesta: pasa al modo conferencia"); self.terminar() }
+                        if Date().timeIntervalSince(max(self.ultimaActividad, self.finVozAlma)) > 16 { self.paso("Pausa larga sin respuesta: pasa al modo conferencia"); self.terminar() }
                     }
                 }
             }
@@ -621,6 +648,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         vigia?.invalidate(); vigia = nil
         relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil
         let pasarAConferencia = aConferencia && (estado == .hablando || estado == .conectando); aConferencia = false
+        let charla = pasarAConferencia ? charlaReciente : []   // de qué se hablaba: el modo conferencia lo lleva de contexto
         pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; mudo = false; player.volume = 1
         let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
         conferencia = nil; textoInicial = nil; alOir = false
@@ -638,7 +666,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // la llamada larga terminó: queda el modo conferencia, escuchando hasta que digan «Alma»
         if pasarAConferencia && !Conferencia.shared.activa {
             paso("La llamada larga pasó al modo conferencia")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { Conferencia.shared.encender(apagarTras: 7 * 60) }   // si en 7 min nadie dice «Alma», se apaga
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { Conferencia.shared.encender(contexto: charla, apagarTras: 7 * 60) }   // si en 7 min nadie dice «Alma», se apaga
         }
     }
 
