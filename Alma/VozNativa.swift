@@ -78,9 +78,19 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// saludo; lo último que se dijo va de contexto y lo que le pidieron, como primer mensaje.
     private var conferencia: String?
     /// Llamada larga: pasados unos minutos, al terminar de responder Alma se despide y la llamada pasa al modo conferencia
-    /// (escucha en silencio hasta que la vuelvan a llamar con «Alma»). Los minutos se ajustan en «voz_min_conferencia».
-    private var aConferencia = false, relojLargo: Timer?
-    private var minutosLargo: Double { let m = UserDefaults.standard.double(forKey: "voz_min_conferencia"); return m > 0 ? m : 5 }
+    /// (escucha en silencio hasta que la vuelvan a llamar con «Alma»).
+    private var aConferencia = false, relojLargo: Timer?, vigiaLargo: Timer?, ultimaActividad = Date()
+    /// T: desde cuándo una llamada «larga» deja de rendir (lo calcula el Hub con los datos de las llamadas y lo manda en la
+    /// ficha como `conferencia_tras`, en segundos). Pasado T la llamada sigue igual; solo cambia la primera pausa larga.
+    private var segundosLargo: Double = 180
+    /// Las despedidas para la pausa larga, en vez de «¿sigues ahí?»; rotan para no repetir siempre la misma.
+    static let despedidas = ["Estaré aquí; si necesitas algo más, solo llámame.", "Aquí sigo. Cuando me necesites, solo di «Alma».",
+                             "Te dejo seguir; si se te ofrece algo, me llamas.", "Quedo atenta; dime «Alma» cuando quieras.",
+                             "Sigo cerca. Si necesitas algo, solo llámame."]
+    private func despedida() -> String {
+        let i = UserDefaults.standard.integer(forKey: "voz_despedida_i"); UserDefaults.standard.set(i + 1, forKey: "voz_despedida_i")
+        return VozNativa.despedidas[i % VozNativa.despedidas.count]
+    }
     private var textoInicial: String?
     private var alOir = false
     /// Modo chat de la roca: no se manda el micrófono y Alma no suena (responde por escrito en la página).
@@ -337,6 +347,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Si en 12 s Alma no contestó, se avisa (y no queda «Conectando…» para siempre).
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in if self?.estado == .conectando { self?.fallo("Alma no contestó. Revisa tu internet.") } }
         var dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
+        segundosLargo = (ficha["conferencia_tras"] as? NSNumber).map { max(30, $0.doubleValue) } ?? 180
         // Hay un tema por retomar (lo eligió el Hub, el más importante): Alma empieza por él en lugar de solo escuchar.
         let retomar = (ficha["retomar"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         if !desdePantalla {
@@ -456,13 +467,21 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             estado = .hablando; conectadaDesde = Date(); vozEnPausa = 0
             vigilar()
-            aConferencia = false; relojLargo?.invalidate(); relojLargo = nil
+            aConferencia = false; relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; ultimaActividad = Date()
             if conferencia == nil {
-                relojLargo = Timer.scheduledTimer(withTimeInterval: minutosLargo * 60, repeats: false) { [weak self] _ in
+                relojLargo = Timer.scheduledTimer(withTimeInterval: segundosLargo, repeats: false) { [weak self] _ in
                     guard let self, self.estado == .hablando else { return }
-                    self.aConferencia = true; self.paso("Llamada larga: al terminar pasa al modo conferencia")
-                    self.mandar(["type": "contextual_update", "text": "LLAMADA LARGA: desde ahora, cuando termines de responder lo que te pidan, despídete en una frase amable y sin pregunta («Te dejo escuchando; si me necesitas, solo di Alma») y cuelga con end_call: la app queda en modo conferencia, escuchando en silencio hasta que te vuelvan a llamar. \(VozNativa.sinPregunta)"])
+                    self.aConferencia = true; self.paso("Llamada larga: en la próxima pausa larga pasa al modo conferencia")
+                    let d = self.despedida()
+                    // La llamada sigue igual. Solo la próxima pausa larga cambia: en vez de preguntar si sigue ahí, Alma se despide y cuelga.
+                    self.mandar(["type": "contextual_update", "text": "LLAMADA LARGA: sigue la conversación con normalidad y no la cortes tú. Pero desde ahora, NUNCA preguntes si Juan sigue ahí. En la próxima pausa larga (cuando antes preguntarías si sigue ahí), di solo esta frase: «\(d)» y cuelga con end_call; la app queda escuchando en modo conferencia."])
+                    // Respaldo: si tras la pausa nadie dijo nada en 16 s (7 s de espera + la despedida), la app cuelga y pasa a conferencia.
+                    self.vigiaLargo = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+                        guard let self, self.estado == .hablando, !self.pausada else { return }
+                        if Date().timeIntervalSince(self.ultimaActividad) > 16 { self.paso("Pausa larga sin respuesta: pasa al modo conferencia"); self.terminar() }
+                    }
                 }
+            }
             }
             paso("Alma conectada · te escucha" + (colaVoz.isEmpty ? "" : String(format: " (%.1f s dichos mientras conectaba)", Double(colaVoz.count) * 0.128)))
             for c in colaVoz { mandar(["user_audio_chunk": c]) }; colaVoz = []
@@ -471,6 +490,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let id = ev["conversation_id"] as? String { vincular(id) }
         case "audio":
             let ev = j["audio_event"] as? [String: Any] ?? [:]
+            ultimaActividad = Date()
             if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) { if !sono { sono = true; paso("Alma está hablando") }; sonar(d) }
         case "interruption":
             player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
@@ -482,7 +502,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let t = ev["agent_response"] as? String { emitir(["tipo": "alma", "texto": t]); linea(true, t) }
         case "user_transcript":
             let ev = j["user_transcription_event"] as? [String: Any] ?? [:]
-            if let t = ev["user_transcript"] as? String { emitir(["tipo": "yo", "texto": t]); linea(false, t) }
+            if let t = ev["user_transcript"] as? String { ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t) }
         default: break
         }
     }
@@ -594,7 +614,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static let sinPregunta = "En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call."
     private func terminar() {
         vigia?.invalidate(); vigia = nil
-        relojLargo?.invalidate(); relojLargo = nil
+        relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil
         let pasarAConferencia = aConferencia && (estado == .hablando || estado == .conectando); aConferencia = false
         pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; mudo = false; player.volume = 1
         let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
@@ -613,7 +633,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // la llamada larga terminó: queda el modo conferencia, escuchando hasta que digan «Alma»
         if pasarAConferencia && !Conferencia.shared.activa {
             paso("La llamada larga pasó al modo conferencia")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { Conferencia.shared.poner(true) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { Conferencia.shared.encender(apagarTras: 7 * 60) }   // si en 7 min nadie dice «Alma», se apaga
         }
     }
 
