@@ -82,6 +82,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Modo chat de la roca: no se manda el micrófono y Alma no suena (responde por escrito en la página).
     private var mudo = false
     private var nivelT = Date.distantPast
+    /// Nivel de la voz de Alma en ventanas de 50 ms, con la hora en que suena cada una (la roca late con lo que se oye ahora).
+    private var ventanasAlma: [(inicio: Date, nivel: CGFloat)] = []
+    private var relojAlma: Timer?
     private var inicioLlamada = Date.distantPast
     /// Cuándo Alma quedó conectada: un toque que llega justo al conectar (el mismo gesto, o iOS al tomar el audio) no la pausa.
     private var conectadaDesde = Date.distantPast
@@ -163,7 +166,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     /// Cuánto suena la voz, para que la roca de la página lata con ella (unas 10 veces por segundo).
     private func nivelAPagina() {
-        guard estado == .hablando, Date().timeIntervalSince(nivelT) > 0.1 else { return }
+        guard estado == .hablando, Date().timeIntervalSince(nivelT) > 0.045 else { return }
         nivelT = Date(); emitir(["tipo": "nivel", "v": Double(nivel), "alma": almaHabla])
     }
 
@@ -445,7 +448,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let ev = j["audio_event"] as? [String: Any] ?? [:]
             if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) { if !sono { sono = true; paso("Alma está hablando") }; sonar(d) }
         case "interruption":
-            player.stop(); player.play(); finVozAlma = Date()
+            player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         case "ping":
             let ev = j["ping_event"] as? [String: Any] ?? [:]
             mandar(["type": "pong", "event_id": ev["event_id"] ?? 0])
@@ -471,12 +474,39 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Alma habla mientras suena este trozo: el círculo late con su voz
         let dur = Double(n) / formatoSalida.sampleRate, nv = min(1, CGFloat(sqrt(e / Float(n))) * 6)
         almaHabla = true; nivel = nv; ultimoAudioAlma = Date()
-        finVozAlma = max(finVozAlma, Date()).addingTimeInterval(dur)   // los trozos llegan más rápido de lo que suenan
+        let inicio = max(finVozAlma, Date())
+        finVozAlma = inicio.addingTimeInterval(dur)   // los trozos llegan más rápido de lo que suenan
+        agendarNivelAlma(ch[0], n: n, inicio: inicio)
         finHabla?.cancel()
-        let w = DispatchWorkItem { [weak self] in self?.almaHabla = false; self?.nivel = 0 }
+        let w = DispatchWorkItem { [weak self] in self?.almaHabla = false; self?.nivel = 0; self?.ventanasAlma = [] }
         finHabla = w; DispatchQueue.main.asyncAfter(deadline: .now() + dur + 0.25, execute: w)
         player.scheduleBuffer(buf, completionHandler: nil)
         if !player.isPlaying { player.play() }
+    }
+
+    /// Parte el trozo en ventanas de 50 ms y las pone a la hora en que van a sonar: así el nivel que ve la roca sigue la voz
+    /// siempre (antes llegaba un solo valor por trozo y el límite de envío tiraba los demás: la roca a veces no se movía).
+    private func agendarNivelAlma(_ x: UnsafePointer<Float>, n: Int, inicio: Date) {
+        let paso = max(1, Int(formatoSalida.sampleRate * 0.05))
+        var i = 0
+        while i < n {
+            let fin = min(n, i + paso); var e: Float = 0
+            for k in i..<fin { e += x[k] * x[k] }
+            ventanasAlma.append((inicio.addingTimeInterval(Double(i) / formatoSalida.sampleRate), min(1, CGFloat(sqrt(e / Float(fin - i))) * 6)))
+            i = fin
+        }
+        if relojAlma == nil {
+            relojAlma = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in self?.tickNivelAlma() }
+        }
+    }
+    private func tickNivelAlma() {
+        let ahora = Date()
+        while ventanasAlma.count > 1, ventanasAlma[1].inicio <= ahora { ventanasAlma.removeFirst() }
+        guard almaHabla, let v = ventanasAlma.first, v.inicio <= ahora else {
+            if ventanasAlma.isEmpty { relojAlma?.invalidate(); relojAlma = nil }
+            return
+        }
+        nivel = v.nivel
     }
 
     /// La señal de Alma suena siempre que empieza a escuchar: el anillo, la roca, «Alma» en el inicio, el modo conferencia,
