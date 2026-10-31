@@ -128,7 +128,20 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         emitir(["tipo": "paso", "texto": t])
     }
 
-    /// Doble toque del anillo (o el botón de la página): habla o pausa.
+    /// Doble toque del anillo: enciende o apaga el modo conferencia (ya no abre una llamada propia). Si Alma está
+    /// hablando (por ejemplo, la despertaron en la reunión), el doble toque sigue pausando o retomando, como siempre.
+    private func toqueAnillo() {
+        if estado == .hablando || estado == .conectando { alternar(); return }
+        let c = Conferencia.shared
+        paso(c.activa ? "El anillo apagó el modo conferencia" : "El anillo encendió el modo conferencia")
+        c.poner(!c.activa)
+    }
+    /// ¿El micrófono queda listo para el anillo? Al apagar el modo conferencia no se suelta el audio (con el teléfono
+    /// bloqueado iOS no deja volver a tomarlo) y Alma queda lista otra vez.
+    var anilloListo: Bool { modoAnillo || unRato }
+    func listaTrasConferencia() { if modoAnillo || unRato { quedarLista() } }
+
+    /// Botón de la página (y el anillo durante una llamada): habla o pausa.
     func alternar() {
         // Un mismo gesto del anillo puede llegar dos veces: como botón de audífonos (aquí) y como toque en la pantalla (la
         // roca de la página abre la voz). En los primeros segundos de una llamada, otro toque no la cuelga ni la pausa.
@@ -201,12 +214,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Por eso, con «Alma con el anillo», el micrófono queda abierto desde que la app está a la vista (no se manda nada
     /// hasta el doble toque) y sigue listo al bloquear.
     private func encenderMicrofono() {
-        if engine.isRunning { infoBloqueo("Toca dos veces tu anillo para hablar"); return }
+        if engine.isRunning { infoBloqueo("Dos toques del anillo: modo conferencia"); return }
         guard UIApplication.shared.applicationState != .background else {
             paso("Esperando a que abras Alma para dejar el micrófono listo")
             infoBloqueo("Abre Alma una vez para dejarla lista"); return
         }
-        do { try prepararMotor(); paso("Micrófono listo para el anillo"); infoBloqueo("Toca dos veces tu anillo para hablar") }
+        do { try prepararMotor(); paso("Micrófono listo para el anillo"); infoBloqueo("Dos toques del anillo: modo conferencia") }
         catch { paso("No pude dejar listo el micrófono (\((error as NSError).code))"); infoBloqueo("Abre Alma para dejarla lista") }
     }
 
@@ -253,7 +266,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             DispatchQueue.main.async {
                 // Lista «un rato» (sin el modo anillo): el toque del anillo enciende «Alma con el anillo» y habla.
                 if !self.modoAnillo && self.unRato { UserDefaults.standard.set(true, forKey: "voz_modo_anillo"); self.unRato = false; self.paso("El anillo encendió «Alma con el anillo»") }
-                self.alternar()
+                self.toqueAnillo()
             }
             return .success
         }
@@ -657,7 +670,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         guard !modoAnillo, estado == .lista || estado == .apagada else { return }
         let esperar = trabajando > 0 || Date().timeIntervalSince(ultimaNovedad) < 900
         if esperar && !unRato {
-            unRato = true; paso("Alma trabaja en segundo plano · dos toques del anillo para retomar"); quedarLista()
+            unRato = true; paso("Alma trabaja en segundo plano · dos toques del anillo: modo conferencia"); quedarLista()
             infoBloqueo(trabajando > 0 ? "Alma está trabajando · dos toques para hablar" : "Alma tiene algo para ti · dos toques para hablar")
         } else if !esperar && unRato { apagar() }
     }
@@ -668,7 +681,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         emitir(["tipo": "error", "mensaje": m])
         terminar()
         infoBloqueo(m)   // se ve en la pantalla de bloqueo
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in if self?.estado == .lista { self?.infoBloqueo("Toca dos veces tu anillo para hablar") } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in if self?.estado == .lista { self?.infoBloqueo("Dos toques del anillo: modo conferencia") } }
     }
 
     func urlSession(_ s: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith code: URLSessionWebSocketTask.CloseCode, reason: Data?) {
