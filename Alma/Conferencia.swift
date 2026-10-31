@@ -53,8 +53,7 @@ final class Conferencia {
                     self.activa = true; self.id = "cf" + String(Int(Date().timeIntervalSince1970)); self.inicio = Date()
                     self.pendiente = []; self.reciente = []; self.enLlamada = false
                     self.reunion = false; self.parte = 0; self.subidas = 0; self.partes = [:]; self.cerrarArchivo(); self.borrarViejos()
-                    if let pedido { self.despertar(pedido) } else { self.escuchar() }
-                    VozNativa.shared.senal()
+                    if let pedido { self.despertar(pedido) } else { self.escuchar(); VozNativa.shared.senal() }   // con pedido, la señal es la de la llamada (un solo beep)
                     self.envio = Timer.scheduledTimer(withTimeInterval: 90, repeats: true) { [weak self] _ in self?.mandar(fin: false) }
                     self.emitir()
                 }

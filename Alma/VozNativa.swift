@@ -276,7 +276,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         UserDefaults.standard.set([String](), forKey: "voz_pasos"); UserDefaults.standard.set(true, forKey: "voz_abierta"); lineas = []
         inicioLlamada = Date()
         estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false
-        sonido("alma-inicio")   // la señal suena ya (también en conferencia): lo que digas se guarda mientras conecta
+        sonido("alma-inicio", llamada: true)   // el segundo beep: el de la llamada a Alma, suena siempre (también en conferencia): lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
         if let f = fichaLista, Date().timeIntervalSince(f.t) < 540 {
             fichaLista = nil; paso("Ficha lista de antemano"); conectar(agente: f.j["agent_id"] as? String ?? "", ficha: f.j); return
@@ -515,9 +515,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     func senal() { sonido("alma-inicio") }
 
     /// Los sonidos de Alma (Recursos/Sonidos): calma primero, tecnología después.
-    private func sonido(_ n: String) {
-        // nunca el mismo sonido dos veces seguidas (dos avisos de un mismo gesto)
-        if let t = ultimoSonido[n], Date().timeIntervalSince(t) < 2.5 { return }
+    private func sonido(_ n: String, llamada: Bool = false) {
+        // nunca el mismo sonido dos veces seguidas (dos avisos de un mismo gesto), salvo el beep de la llamada tras el del inicio
+        if !llamada, let t = ultimoSonido[n], Date().timeIntervalSince(t) < 2.5 { return }
         ultimoSonido[n] = Date()
         if campanas[n] == nil, let u = Bundle.main.url(forResource: n, withExtension: "wav") { campanas[n] = try? AVAudioPlayer(contentsOf: u) }
         campanas[n]?.volume = 0.9; campanas[n]?.currentTime = 0; campanas[n]?.play()
