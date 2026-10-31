@@ -80,9 +80,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Llamada larga: pasados unos minutos, al terminar de responder Alma se despide y la llamada pasa al modo conferencia
     /// (escucha en silencio hasta que la vuelvan a llamar con «Alma»).
     private var aConferencia = false, relojLargo: Timer?, vigiaLargo: Timer?, ultimaActividad = Date()
+    /// Alma espera una herramienta (la secretaria tarda de 15 a 57 s): ese silencio no es una pausa larga.
+    private var herramienta = false
     /// T: desde cuándo una llamada «larga» deja de rendir (lo calcula el Hub con los datos de las llamadas y lo manda en la
     /// ficha como `conferencia_tras`, en segundos). Pasado T la llamada sigue igual; solo cambia la primera pausa larga.
-    private var segundosLargo: Double = 180
+    private var segundosLargo: Double = 240
     /// Las despedidas para la pausa larga, en vez de «¿sigues ahí?»; rotan para no repetir siempre la misma.
     static let despedidas = ["Estaré aquí; si necesitas algo más, solo llámame.", "Aquí sigo. Cuando me necesites, solo di «Alma».",
                              "Te dejo seguir; si se te ofrece algo, me llamas.", "Quedo atenta; dime «Alma» cuando quieras.",
@@ -347,7 +349,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Si en 12 s Alma no contestó, se avisa (y no queda «Conectando…» para siempre).
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in if self?.estado == .conectando { self?.fallo("Alma no contestó. Revisa tu internet.") } }
         var dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
-        segundosLargo = (ficha["conferencia_tras"] as? NSNumber).map { max(30, $0.doubleValue) } ?? 180
+        segundosLargo = (ficha["conferencia_tras"] as? NSNumber).map { max(30, $0.doubleValue) } ?? 240
         // Hay un tema por retomar (lo eligió el Hub, el más importante): Alma empieza por él en lugar de solo escuchar.
         let retomar = (ficha["retomar"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         if !desdePantalla {
@@ -467,7 +469,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             estado = .hablando; conectadaDesde = Date(); vozEnPausa = 0
             vigilar()
-            aConferencia = false; relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; ultimaActividad = Date()
+            aConferencia = false; relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; ultimaActividad = Date(); herramienta = false
             if conferencia == nil {
                 relojLargo = Timer.scheduledTimer(withTimeInterval: segundosLargo, repeats: false) { [weak self] _ in
                     guard let self, self.estado == .hablando else { return }
@@ -477,7 +479,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                     self.mandar(["type": "contextual_update", "text": "LLAMADA LARGA: sigue la conversación con normalidad y no la cortes tú. Pero desde ahora, NUNCA preguntes si Juan sigue ahí. En la próxima pausa larga (cuando antes preguntarías si sigue ahí), di solo esta frase: «\(d)» y cuelga con end_call; la app queda escuchando en modo conferencia."])
                     // Respaldo: si tras la pausa nadie dijo nada en 16 s (7 s de espera + la despedida), la app cuelga y pasa a conferencia.
                     self.vigiaLargo = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-                        guard let self, self.estado == .hablando, !self.pausada else { return }
+                        guard let self, self.estado == .hablando, !self.pausada, !self.herramienta else { return }
                         if Date().timeIntervalSince(self.ultimaActividad) > 16 { self.paso("Pausa larga sin respuesta: pasa al modo conferencia"); self.terminar() }
                     }
                 }
@@ -491,6 +493,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let ev = j["audio_event"] as? [String: Any] ?? [:]
             ultimaActividad = Date()
             if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) { if !sono { sono = true; paso("Alma está hablando") }; sonar(d) }
+        case "agent_tool_request", "client_tool_call":
+            herramienta = true; ultimaActividad = Date()
+        case "agent_tool_response":
+            herramienta = false; ultimaActividad = Date()
         case "interruption":
             player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         case "ping":
