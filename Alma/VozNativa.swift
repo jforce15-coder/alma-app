@@ -77,6 +77,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Modo conferencia (Conferencia.swift): la llamada la abrió alguien diciendo «Alma, …» en una reunión. Con la señal, sin
     /// saludo; lo último que se dijo va de contexto y lo que le pidieron, como primer mensaje.
     private var conferencia: String?
+    /// Llamada larga: pasados unos minutos, al terminar de responder Alma se despide y la llamada pasa al modo conferencia
+    /// (escucha en silencio hasta que la vuelvan a llamar con «Alma»). Los minutos se ajustan en «voz_min_conferencia».
+    private var aConferencia = false, relojLargo: Timer?
+    private var minutosLargo: Double { let m = UserDefaults.standard.double(forKey: "voz_min_conferencia"); return m > 0 ? m : 5 }
     private var textoInicial: String?
     private var alOir = false
     /// Modo chat de la roca: no se manda el micrófono y Alma no suena (responde por escrito en la página).
@@ -340,7 +344,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO ANILLO: Juan te habla desde su anillo, casi siempre con el teléfono bloqueado (solo voz, sin pantalla). " + empieza + " Habla en tramos, con pausas, como quien piensa en voz alta: mientras no haya pedido algo concreto o su idea quede a medias, usa skip_turn y sigue escuchando; junta todo lo que dijo como un solo mensaje. Responde solo cuando ya pidió algo claro o terminó de hablar. Respuestas cortas, claras y cálidas."
         }
         if let cf = conferencia {
-            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte. Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. LO ÚLTIMO QUE SE DIJO:\n" + cf
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte. Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
         }
         var agent: [String: Any] = [:]
         // modo anillo: sin tema por retomar, Alma no saluda (solo suena la señal y escucha). Desde la roca saluda como en la página.
@@ -452,6 +456,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             estado = .hablando; conectadaDesde = Date(); vozEnPausa = 0
             vigilar()
+            aConferencia = false; relojLargo?.invalidate(); relojLargo = nil
+            if conferencia == nil {
+                relojLargo = Timer.scheduledTimer(withTimeInterval: minutosLargo * 60, repeats: false) { [weak self] _ in
+                    guard let self, self.estado == .hablando else { return }
+                    self.aConferencia = true; self.paso("Llamada larga: al terminar pasa al modo conferencia")
+                    self.mandar(["type": "contextual_update", "text": "LLAMADA LARGA: desde ahora, cuando termines de responder lo que te pidan, despídete en una frase amable y sin pregunta («Te dejo escuchando; si me necesitas, solo di Alma») y cuelga con end_call: la app queda en modo conferencia, escuchando en silencio hasta que te vuelvan a llamar. \(VozNativa.sinPregunta)"])
+                }
+            }
             paso("Alma conectada · te escucha" + (colaVoz.isEmpty ? "" : String(format: " (%.1f s dichos mientras conectaba)", Double(colaVoz.count) * 0.128)))
             for c in colaVoz { mandar(["user_audio_chunk": c]) }; colaVoz = []
             if let t = textoInicial, !t.isEmpty { mandar(["type": "user_message", "text": t]) }; textoInicial = nil
@@ -579,8 +591,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
     }
 
+    static let sinPregunta = "En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call."
     private func terminar() {
         vigia?.invalidate(); vigia = nil
+        relojLargo?.invalidate(); relojLargo = nil
+        let pasarAConferencia = aConferencia && (estado == .hablando || estado == .conectando); aConferencia = false
         pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; mudo = false; player.volume = 1
         let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
         conferencia = nil; textoInicial = nil; alOir = false
@@ -595,6 +610,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         estado = .apagada
         if modoAnillo || unRato { quedarLista(); DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.fichaLista = nil; self?.precargarSiToca() } }
         else { apagar() }
+        // la llamada larga terminó: queda el modo conferencia, escuchando hasta que digan «Alma»
+        if pasarAConferencia && !Conferencia.shared.activa {
+            paso("La llamada larga pasó al modo conferencia")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { Conferencia.shared.poner(true) }
+        }
     }
 
     // MARK: - Pausa
