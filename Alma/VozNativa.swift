@@ -482,7 +482,6 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                     }
                 }
             }
-            }
             paso("Alma conectada · te escucha" + (colaVoz.isEmpty ? "" : String(format: " (%.1f s dichos mientras conectaba)", Double(colaVoz.count) * 0.128)))
             for c in colaVoz { mandar(["user_audio_chunk": c]) }; colaVoz = []
             if let t = textoInicial, !t.isEmpty { mandar(["type": "user_message", "text": t]) }; textoInicial = nil
