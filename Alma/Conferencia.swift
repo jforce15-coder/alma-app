@@ -68,7 +68,9 @@ final class Conferencia {
         cerrarArchivo()
         if reunion { subirPartes { [weak self] in self?.mandar(fin: true) } } else { mandar(fin: true); borrarPartes() }
         activa = false; enLlamada = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // Con «Alma con el anillo» el audio no se suelta: así el próximo doble toque llega aunque el teléfono esté bloqueado.
+        if VozNativa.shared.anilloListo { VozNativa.shared.listaTrasConferencia() }
+        else { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
         emitir()
         EscuchaInicio.shared.liberar()   // de vuelta al Modo Inicio (otro minuto de escucha)
     }
