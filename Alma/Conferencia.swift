@@ -35,14 +35,26 @@ final class Conferencia {
     private var reunion = false
     private var subidas = 0                     // partes que ya llegaron al Hub (se las espera antes de cerrar)
     private let candado = NSLock()
+    /// Encendida por una llamada larga: si en `apagarTras` segundos nadie dice «Alma», se apaga sola. (Encendida a mano o con
+    /// el anillo queda prendida hasta que la apaguen.) El reloj vuelve a empezar después de cada vez que la llaman.
+    private var apagarTras: TimeInterval?, relojApagar: Timer?
+    private func armarApagado() {
+        relojApagar?.invalidate(); relojApagar = nil
+        guard let t = apagarTras else { return }
+        relojApagar = Timer.scheduledTimer(withTimeInterval: t, repeats: false) { [weak self] _ in
+            guard let self, self.activa, !self.enLlamada else { return }
+            self.apagar()
+        }
+    }
 
     var resumen: [String: Any] { ["tipo": "conferencia", "activa": activa, "voces": reunion, "minutos": activa ? Int(Date().timeIntervalSince(inicio) / 60) : 0] }
 
     func poner(_ on: Bool) { if on { encender() } else { apagar() } }
 
     /// `pedido`: viene del Modo Inicio (EscuchaInicio.swift); «Alma, …» (o "" si solo la llamaron) se atiende de una vez.
-    func encender(pedido: String? = nil, alFallar: (() -> Void)? = nil) {
+    func encender(pedido: String? = nil, alFallar: (() -> Void)? = nil, apagarTras: TimeInterval? = nil) {
         guard !activa else { emitir(); return }
+        self.apagarTras = apagarTras
         SFSpeechRecognizer.requestAuthorization { st in
             AVAudioSession.sharedInstance().requestRecordPermission { mic in
                 DispatchQueue.main.async {
@@ -55,6 +67,7 @@ final class Conferencia {
                     self.reunion = false; self.parte = 0; self.subidas = 0; self.partes = [:]; self.cerrarArchivo(); self.borrarViejos()
                     if let pedido { self.despertar(pedido) } else { self.escuchar(); VozNativa.shared.senal() }   // con pedido, la señal es la de la llamada (un solo beep)
                     self.envio = Timer.scheduledTimer(withTimeInterval: 90, repeats: true) { [weak self] _ in self?.mandar(fin: false) }
+                    self.armarApagado()
                     self.emitir()
                 }
             }
@@ -64,6 +77,7 @@ final class Conferencia {
     private func apagar() {
         guard activa else { emitir(); return }
         reloj?.invalidate(); reloj = nil; envio?.invalidate(); envio = nil
+        relojApagar?.invalidate(); relojApagar = nil; apagarTras = nil
         guardarTramo(); detener()
         cerrarArchivo()
         if reunion { subirPartes { [weak self] in self?.mandar(fin: true) } } else { mandar(fin: true); borrarPartes() }
@@ -153,7 +167,7 @@ final class Conferencia {
 
     /// Alguien dijo «Alma, …»: la llamada real se enciende con la señal y sin saludo, con el contexto de la reunión.
     private func despertar(_ pide: String) {
-        guardarTramo(); detener(); reloj?.invalidate()
+        guardarTramo(); detener(); reloj?.invalidate(); relojApagar?.invalidate()
         enLlamada = true; emitir()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let ctx = reciente.suffix(6).joined(separator: "\n")
@@ -163,7 +177,7 @@ final class Conferencia {
             guard let self, self.enLlamada else { return }
             let e = VozNativa.shared.estado
             if (e == .lista || e == .apagada) && Date().timeIntervalSince(self.ultimoCambio) > 4 {
-                self.enLlamada = false; self.reloj?.invalidate(); self.escuchar(); self.emitir()
+                self.enLlamada = false; self.reloj?.invalidate(); self.escuchar(); self.armarApagado(); self.emitir()
             }
         }
         ultimoCambio = Date()
