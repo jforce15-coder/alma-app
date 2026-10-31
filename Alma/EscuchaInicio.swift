@@ -36,6 +36,7 @@ final class EscuchaInicio {
         nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.alAbrir = true; self?.agotado = false; self?.evaluar() }   // abrir la app de nuevo = otro minuto
     }
 
+    private var ultimaSenal = Date.distantPast
     func activar(_ on: Bool) { UserDefaults.standard.set(on, forKey: "escucha_inicio"); agotado = false; if on { alAbrir = true }; evaluar() }
     func poner(pagina on: Bool) { if on && !pagina { agotado = false }; pagina = on; evaluar() }
     /// El modo conferencia terminó (o no pudo empezar): el inicio vuelve a su minuto de escucha.
@@ -82,7 +83,10 @@ final class EscuchaInicio {
             }
         }
         escuchando = true
-        if alAbrir { alAbrir = false; VozNativa.shared.senal() }
+        if alAbrir {   // la señal suena al abrir la app, no cada vez que la escucha se reacomoda ni durante una llamada
+            alAbrir = false
+            if Date().timeIntervalSince(ultimaSenal) > 30 { ultimaSenal = Date(); VozNativa.shared.senal() }
+        }
         reloj?.invalidate()
         reloj = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.revisar() }
     }
