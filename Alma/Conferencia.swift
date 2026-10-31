@@ -30,7 +30,9 @@ final class Conferencia {
     private var reloj: Timer?, envio: Timer?
     private var enLlamada = false
     /// El audio en el teléfono, por partes. Solo sale del teléfono si el Hub dice que es una reunión.
-    private var archivo: AVAudioFile?, archivoDesde = Date(), parte = 0
+    private var archivo: AVAudioFile?, archivoDesde = Date(), parte = 0, archivoFormato: AVAudioFormat?
+    /// Escucha por el micrófono de la voz (VozNativa, ya abierto con «Alma con el anillo») en vez de abrir otro.
+    private var compartido = false
     private var partes: [Int: URL] = [:]        // partes cerradas que todavía no se suben
     private var reunion = false
     private var subidas = 0                     // partes que ya llegaron al Hub (se las espera antes de cerrar)
@@ -52,7 +54,8 @@ final class Conferencia {
     func poner(_ on: Bool) { if on { encender() } else { apagar() } }
 
     /// `pedido`: viene del Modo Inicio (EscuchaInicio.swift); «Alma, …» (o "" si solo la llamaron) se atiende de una vez.
-    func encender(pedido: String? = nil, alFallar: (() -> Void)? = nil, apagarTras: TimeInterval? = nil) {
+    /// `contexto`: lo que se venía hablando (el Modo Inicio o la llamada larga): si llaman a Alma, lo lleva de contexto.
+    func encender(pedido: String? = nil, contexto: [String] = [], alFallar: (() -> Void)? = nil, apagarTras: TimeInterval? = nil) {
         guard !activa else { emitir(); return }
         self.apagarTras = apagarTras
         SFSpeechRecognizer.requestAuthorization { st in
@@ -63,7 +66,7 @@ final class Conferencia {
                     }
                     EscuchaInicio.shared.detener()   // el modo conferencia tiene su propio despertar
                     self.activa = true; self.id = "cf" + String(Int(Date().timeIntervalSince1970)); self.inicio = Date()
-                    self.pendiente = []; self.reciente = []; self.enLlamada = false
+                    self.pendiente = []; self.reciente = Array(contexto.suffix(8)); self.enLlamada = false
                     self.reunion = false; self.parte = 0; self.subidas = 0; self.partes = [:]; self.cerrarArchivo(); self.borrarViejos()
                     if let pedido { self.despertar(pedido) } else { self.escuchar(); VozNativa.shared.senal() }   // con pedido, la señal es la de la llamada (un solo beep)
                     self.envio = Timer.scheduledTimer(withTimeInterval: 90, repeats: true) { [weak self] _ in self?.mandar(fin: false) }
@@ -91,24 +94,37 @@ final class Conferencia {
 
     private func escuchar() {
         guard activa, !enLlamada else { return }
-        let s = AVAudioSession.sharedInstance()
-        try? s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
-        try? s.setActive(true)
         let p = SFSpeechAudioBufferRecognitionRequest(); p.shouldReportPartialResults = true
         if reconocedor?.supportsOnDeviceRecognition == true { p.requiresOnDeviceRecognition = true }
         if #available(iOS 16, *) { p.addsPunctuation = true }
         pedido = p
-        let entrada = motor.inputNode, formato = entrada.outputFormat(forBus: 0)
-        guard formato.sampleRate > 0 else { reintentar(); return }
-        entrada.removeTap(onBus: 0)
-        if archivo == nil || Date().timeIntervalSince(archivoDesde) > 300 { cerrarArchivo(); abrirArchivo(formato) }
-        entrada.installTap(onBus: 0, bufferSize: 1024, format: formato) { [weak self, weak p] b, _ in
-            p?.append(b)
-            guard let self else { return }
-            self.candado.lock(); try? self.archivo?.write(from: b); self.candado.unlock()
+        let voz = VozNativa.shared
+        if voz.microfonoListo, let formato = voz.formatoOyente {
+            // El micrófono de la voz ya está abierto: se escucha por él (dos micrófonos a la vez dejan mudo a uno).
+            compartido = true
+            if archivo == nil || archivoFormato != formato || Date().timeIntervalSince(archivoDesde) > 300 { cerrarArchivo(); abrirArchivo(formato) }
+            voz.ponerOyente("conferencia") { [weak self, weak p] b in
+                p?.append(b)
+                guard let self else { return }
+                self.candado.lock(); try? self.archivo?.write(from: b); self.candado.unlock()
+            }
+        } else {
+            compartido = false
+            let s = AVAudioSession.sharedInstance()
+            try? s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
+            try? s.setActive(true)
+            let entrada = motor.inputNode, formato = entrada.outputFormat(forBus: 0)
+            guard formato.sampleRate > 0 else { reintentar(); return }
+            entrada.removeTap(onBus: 0)
+            if archivo == nil || archivoFormato != formato || Date().timeIntervalSince(archivoDesde) > 300 { cerrarArchivo(); abrirArchivo(formato) }
+            entrada.installTap(onBus: 0, bufferSize: 1024, format: formato) { [weak self, weak p] b, _ in
+                p?.append(b)
+                guard let self else { return }
+                self.candado.lock(); try? self.archivo?.write(from: b); self.candado.unlock()
+            }
+            motor.prepare()
+            do { try motor.start() } catch { reintentar(); return }
         }
-        motor.prepare()
-        do { try motor.start() } catch { reintentar(); return }
         vuelta += 1; let mia = vuelta
         actual = ""; inicioTramo = Date(); ultimoCambio = Date()
         tarea = reconocedor?.recognitionTask(with: p) { [weak self] r, e in
@@ -135,6 +151,9 @@ final class Conferencia {
         guard activa, !enLlamada else { return }
         let quieto = Date().timeIntervalSince(ultimoCambio)
         if !actual.isEmpty, quieto > 1.2, let pide = Conferencia.pedidoAAlma(actual) { despertar(pide); return }
+        // El micrófono de la voz se abrió (o se cerró) mientras escuchaba: se cambia al que corresponde.
+        let v = VozNativa.shared
+        if compartido != v.microfonoListo, v.estado == .lista || v.estado == .apagada { siguienteTramo(); return }
         if (!actual.isEmpty && quieto > 2.5) || Date().timeIntervalSince(inicioTramo) > 50 { siguienteTramo() }
     }
 
@@ -145,6 +164,14 @@ final class Conferencia {
         let i = llano.distance(from: llano.startIndex, to: r.upperBound)
         let resto = String(t.dropFirst(i)).trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.whitespacesAndNewlines))
         return resto
+    }
+
+    /// Lo que se dijo antes de «Alma» en el mismo tramo ("" si nada).
+    static func antesDeAlma(_ t: String) -> String {
+        let llano = t.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "es"))
+        guard let r = llano.range(of: "\\balma\\b", options: [.regularExpression, .backwards]) else { return "" }
+        let i = llano.distance(from: llano.startIndex, to: r.lowerBound)
+        return String(t.prefix(i)).trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.whitespacesAndNewlines))
     }
 
     private func siguienteTramo() {
@@ -160,9 +187,11 @@ final class Conferencia {
     }
 
     private func detener() {
+        VozNativa.shared.quitarOyente("conferencia")
         tarea?.cancel(); tarea = nil
         pedido?.endAudio(); pedido = nil
-        motor.inputNode.removeTap(onBus: 0); if motor.isRunning { motor.stop() }
+        if motor.isRunning { motor.inputNode.removeTap(onBus: 0); motor.stop() }
+        compartido = false
     }
 
     /// Alguien dijo «Alma, …»: la llamada real se enciende con la señal y sin saludo, con el contexto de la reunión.
@@ -192,7 +221,7 @@ final class Conferencia {
         let u = carpeta.appendingPathComponent("\(id)-\(parte).m4a")
         let ajustes: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: f.sampleRate, AVNumberOfChannelsKey: f.channelCount, AVEncoderBitRateKey: 48000]
         candado.lock(); archivo = try? AVAudioFile(forWriting: u, settings: ajustes, commonFormat: f.commonFormat, interleaved: f.isInterleaved); candado.unlock()
-        archivoDesde = Date()
+        archivoDesde = Date(); archivoFormato = f
     }
 
     /// Cierra la parte actual; si ya es reunión, se sube enseguida.
