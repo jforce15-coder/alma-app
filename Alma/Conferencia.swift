@@ -15,6 +15,9 @@ import UIKit
 final class Conferencia {
     static let shared = Conferencia()
     private(set) var activa = false
+    /// Silenciada (el botón del micrófono en el inicio): el modo sigue encendido —el reloj de apagado, lo ya oído, el
+    /// envío al Hub—, pero el micrófono no oye. Al apagar la conferencia se quita sola.
+    private(set) var mudo = false
     var alEvento: (([String: Any]) -> Void)?
 
     private let reconocedor = SFSpeechRecognizer(locale: Locale(identifier: "es-MX"))
@@ -49,9 +52,25 @@ final class Conferencia {
         }
     }
 
-    var resumen: [String: Any] { ["tipo": "conferencia", "activa": activa, "voces": reunion, "minutos": activa ? Int(Date().timeIntervalSince(inicio) / 60) : 0] }
+    var resumen: [String: Any] { ["tipo": "conferencia", "activa": activa, "voces": reunion, "minutos": activa ? Int(Date().timeIntervalSince(inicio) / 60) : 0, "mudo": mudo] }
 
     func poner(_ on: Bool) { if on { encender() } else { apagar() } }
+
+    /// Silenciar o volver a escuchar sin apagar el modo. Con `on`: cierra el tramo (no se pierde), deja de oír (el
+    /// reconocedor y el motor o el oyente de VozNativa, como al apagar) y conserva todo lo demás. Con `off`: escucha otra vez.
+    func silenciar(_ on: Bool) {
+        guard activa else { mudo = false; emitir(); return }
+        guard on != mudo else { emitir(); return }
+        mudo = on
+        if on {
+            vuelta += 1   // los avisos del reconocimiento que se corta se ignoran (que no reintente ni pase al siguiente tramo)
+            if !enLlamada { reloj?.invalidate(); reloj = nil }   // en llamada, ese reloj es el que espera que cuelguen: se queda
+            guardarTramo(); detener()
+        } else {
+            escuchar()   // si Alma está en una llamada, volverá a escuchar sola al colgar
+        }
+        emitir()
+    }
 
     /// `pedido`: viene del Modo Inicio (EscuchaInicio.swift); «Alma, …» (o "" si solo la llamaron) se atiende de una vez.
     /// `contexto`: lo que se venía hablando (el Modo Inicio o la llamada larga): si llaman a Alma, lo lleva de contexto.
@@ -65,7 +84,7 @@ final class Conferencia {
                         self.alEvento?(["tipo": "conferencia", "activa": false, "error": "Activa el micrófono y el reconocimiento de voz para Alma en Ajustes del iPhone."]); alFallar?(); return
                     }
                     EscuchaInicio.shared.detener()   // el modo conferencia tiene su propio despertar
-                    self.activa = true; self.id = "cf" + String(Int(Date().timeIntervalSince1970)); self.inicio = Date()
+                    self.activa = true; self.mudo = false; self.id = "cf" + String(Int(Date().timeIntervalSince1970)); self.inicio = Date()
                     self.pendiente = []; self.reciente = Array(contexto.suffix(8)); self.enLlamada = false
                     self.reunion = false; self.parte = 0; self.subidas = 0; self.partes = [:]; self.cerrarArchivo(); self.borrarViejos()
                     if let pedido { self.despertar(pedido) } else { self.escuchar(); VozNativa.shared.senal() }   // con pedido, la señal es la de la llamada (un solo beep)
@@ -79,6 +98,7 @@ final class Conferencia {
 
     private func apagar() {
         guard activa else { emitir(); return }
+        mudo = false
         reloj?.invalidate(); reloj = nil; envio?.invalidate(); envio = nil
         relojApagar?.invalidate(); relojApagar = nil; apagarTras = nil
         guardarTramo(); detener()
@@ -93,7 +113,7 @@ final class Conferencia {
     }
 
     private func escuchar() {
-        guard activa, !enLlamada else { return }
+        guard activa, !enLlamada, !mudo else { return }
         let p = SFSpeechAudioBufferRecognitionRequest(); p.shouldReportPartialResults = true
         if reconocedor?.supportsOnDeviceRecognition == true { p.requiresOnDeviceRecognition = true }
         if #available(iOS 16, *) { p.addsPunctuation = true }
@@ -129,7 +149,7 @@ final class Conferencia {
         actual = ""; inicioTramo = Date(); ultimoCambio = Date()
         tarea = reconocedor?.recognitionTask(with: p) { [weak self] r, e in
             DispatchQueue.main.async {
-                guard let self, self.vuelta == mia, self.activa, !self.enLlamada else { return }
+                guard let self, self.vuelta == mia, self.activa, !self.enLlamada, !self.mudo else { return }
                 if let r {
                     let t = r.bestTranscription.formattedString
                     if t != self.actual { self.actual = t; self.ultimoCambio = Date() }
@@ -148,7 +168,7 @@ final class Conferencia {
 
     /// Cada medio segundo: ¿llamaron a Alma?, ¿terminó una frase (pausa)?, ¿el tramo ya es largo?
     private func revisar() {
-        guard activa, !enLlamada else { return }
+        guard activa, !enLlamada, !mudo else { return }
         let quieto = Date().timeIntervalSince(ultimoCambio)
         if !actual.isEmpty, quieto > 1.2, let pide = Conferencia.pedidoAAlma(actual) { despertar(pide); return }
         // El micrófono de la voz se abrió (o se cerró) mientras escuchaba: se cambia al que corresponde.
