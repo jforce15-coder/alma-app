@@ -37,10 +37,15 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             Llavero.borrar()
         case "anillo":
             anillo(d)
-        case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" }
+        case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" } · { que: "mudo", on }
             let c = Conferencia.shared
             c.alEvento = { [weak self] e in self?.responder("AlmaConf.evento", [e]) }
-            switch d["que"] as? String ?? "" { case "on": c.poner(true); case "off": c.poner(false); default: break }
+            switch d["que"] as? String ?? "" {
+            case "on": c.poner(true)
+            case "off": c.poner(false)
+            case "mudo": c.silenciar((d["on"] as? Bool) ?? false)   // el botón del micrófono: deja de oír sin apagar el modo
+            default: break
+            }
             responder("AlmaConf.evento", [c.resumen])
         case "escucha":   // Inicio con escucha activa (EscuchaInicio.swift): { que: "pagina", on } · { que: "activar", on } · { que: "estado" }
             let e = EscuchaInicio.shared
