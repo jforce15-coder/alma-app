@@ -70,6 +70,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var avisosT: Timer?
     /// Lista para el anillo «un rato» sin tener el modo anillo: mientras Alma trabaja en segundo plano o hay temas por retomar.
     private var unRato = false
+    /// ¿Se queda lista «un rato» sin el modo anillo? Apagado: tomaría el audio que no se mezcla con el anillo apagado.
+    static let listaUnRato = false
     private var trabajando = 0, porRetomar = 0
     private var ultimaNovedad = Date.distantPast
     /// La conversación la abrió la roca del inicio (no el anillo): Alma saluda y no lleva las reglas del modo anillo.
@@ -92,6 +94,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private func despedida() -> String {
         let i = UserDefaults.standard.integer(forKey: "voz_despedida_i"); UserDefaults.standard.set(i + 1, forKey: "voz_despedida_i")
         return VozNativa.despedidas[i % VozNativa.despedidas.count]
+    }
+    /// El saludo al despertarla solo con «Alma» o el anillo: el `saludo_corto` de la ficha del Hub (p. ej. «Dime, Juan») o «Dime».
+    static func saludoCorto(_ ficha: [String: Any]) -> String {
+        let dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
+        let s = ((ficha["saludo_corto"] as? String) ?? (dv["saludo_corto"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return s.isEmpty ? "Dime" : s
     }
     private var textoInicial: String?
     private var alOir = false
@@ -233,7 +241,44 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     var resumen: [String: Any] { ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
                                   "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
                                   "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar"] }
+    /// La sesión de la llamada (y la del anillo): no se mezcla, así que pausa la música o los videos de otras apps.
     static let opciones: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
+    /// La sesión para solo escuchar (Modo Inicio, conferencia, Mejora): se mezcla con las otras apps (TikTok, Facebook, la voz
+    /// de Claude siguen sonando). Sin `.allowBluetooth` (manos libres): así los audífonos siguen en alta calidad para la otra
+    /// app y se escucha por el micrófono del teléfono.
+    static let opcionesEscucha: AVAudioSession.CategoryOptions = [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP]
+
+    /// Abre el audio para solo escuchar, sin quitarle el sonido a las otras apps. Si quedó la sesión de la llamada (que no se
+    /// mezcla), primero se suelta avisando a las otras apps, para que retomen solas lo que sonaba.
+    /// Con «Alma con el anillo» (o lista «un rato») no se toca: esa sesión tiene que seguir para el anillo con el teléfono bloqueado.
+    static func sesionEscucha() {
+        let s = AVAudioSession.sharedInstance()
+        let v = VozNativa.shared
+        if v.anilloListo || v.estado == .hablando || v.estado == .conectando {
+            try? s.setCategory(.playAndRecord, mode: .default, options: opciones)
+            try? s.setActive(true); return
+        }
+        if s.category == .playAndRecord && !s.categoryOptions.contains(.mixWithOthers) {
+            try? s.setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        try? s.setCategory(.playAndRecord, mode: .default, options: opcionesEscucha)
+        try? s.setActive(true)
+    }
+
+    /// Suelta el audio cuando ya nadie lo usa (ni llamada, ni anillo, ni Modo Inicio, ni conferencia, ni Mejora), avisando a las
+    /// otras apps para que sigan con lo suyo. Espera un momento y vuelve a mirar: así no corta un sonido que está terminando ni
+    /// suelta el audio justo cuando otro modo lo va a tomar.
+    static func soltarAudio() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            let v = VozNativa.shared
+            guard !v.anilloListo, v.estado == .apagada, !Conferencia.shared.activa, !EscuchaInicio.shared.escuchando,
+                  MejoraCampo.shared.estado == .apagada, !v.campanas.values.contains(where: { $0.isPlaying }) else { return }
+            let s = AVAudioSession.sharedInstance()
+            try? s.setActive(false, options: .notifyOthersOnDeactivation)
+            // Queda la sesión que se mezcla: un sonido suelto (la señal de la voz de las páginas) ya no pausa a las otras apps.
+            try? s.setCategory(.playAndRecord, mode: .default, options: opcionesEscucha)
+        }
+    }
 
     // MARK: - Estar lista (audio en silencio + mandos de la pantalla de bloqueo)
 
@@ -271,7 +316,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         precarga?.invalidate(); precarga = nil; fichaLista = nil; unRato = false
         silencio?.stop()
         engine.inputNode.removeTap(onBus: 0); player.stop(); if engine.isRunning { engine.stop() }
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // Sin anillo no queda nada que no se mezcle: se suelta el audio en cuanto nadie más escucha (las otras apps siguen).
+        VozNativa.soltarAudio()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         estado = .apagada
     }
@@ -287,6 +333,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             self.buscarAvisos()
+            self.precargarSiToca()   // al abrir la app ya se pide la ficha: si la llaman, no espera al Hub
             guard self.modoAnillo || self.unRato, self.estado == .lista || self.estado == .apagada else { return }
             self.quedarLista()
         }
@@ -332,6 +379,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         UserDefaults.standard.set([String](), forKey: "voz_pasos"); UserDefaults.standard.set(true, forKey: "voz_abierta"); lineas = []
         inicioLlamada = Date()
+        // Un solo micrófono: el Modo Inicio se calla ya (con la ficha pedida de antemano, la llamada abre el suyo enseguida).
+        EscuchaInicio.shared.detener()
         estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false
         sonido("alma-inicio", llamada: true)   // el segundo beep: el de la llamada a Alma, suena siempre (también en conferencia): lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
@@ -380,16 +429,21 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         segundosLargo = (ficha["conferencia_tras"] as? NSNumber).map { max(30, $0.doubleValue) } ?? 240
         // Hay un tema por retomar (lo eligió el Hub, el más importante): Alma empieza por él en lugar de solo escuchar.
         let retomar = (ficha["retomar"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        // La despertaron solo con «Alma» (el anillo, o «Alma» en la conferencia o el Modo Inicio, sin pedido): saluda corto y
+        // al instante («Dime» o «Dime, <nombre>» si el Hub manda `saludo_corto`). Si ya dijeron el pedido junto con «Alma»,
+        // no saluda: va directo a eso.
+        let sinPedido = (textoInicial ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let corto = VozNativa.saludoCorto(ficha)
         if !desdePantalla {
-            let empieza: String = retomar == nil ? "Ya sonó la señal: NO saludes ni hables primero. Escucha." : "Empiezas tú con el tema por retomar (ya está en tu primer mensaje); después escucha."
+            let empieza: String = retomar == nil ? "Ya sonó la señal y ya dijiste «\(corto)»: NO saludes otra vez ni hables más. Escucha." : "Empiezas tú con el tema por retomar (ya está en tu primer mensaje); después escucha."
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO ANILLO: Juan te habla desde su anillo, casi siempre con el teléfono bloqueado (solo voz, sin pantalla). " + empieza + " Habla en tramos, con pausas, como quien piensa en voz alta: mientras no haya pedido algo concreto o su idea quede a medias, usa skip_turn y sigue escuchando; junta todo lo que dijo como un solo mensaje. Responde solo cuando ya pidió algo claro o terminó de hablar. Respuestas cortas, claras y cálidas."
         }
         if let cf = conferencia {
-            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte. Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste «\(corto)»; escucha lo que te piden." : "") + " Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
         }
         var agent: [String: Any] = [:]
-        // modo anillo: sin tema por retomar, Alma no saluda (solo suena la señal y escucha). Desde la roca saluda como en la página.
-        agent["first_message"] = conferencia != nil || alOir ? "" : desdePantalla ? (ficha["first_message"] as? String ?? "") : (retomar ?? "")
+        // modo anillo: sin tema por retomar, Alma dice solo el saludo corto y escucha. Desde la roca saluda como en la página.
+        agent["first_message"] = conferencia != nil || alOir ? (sinPedido ? corto : "") : desdePantalla ? (ficha["first_message"] as? String ?? "") : (retomar ?? corto)
         if let l = ficha["language"] as? String, !l.isEmpty { agent["language"] = l }
         var inicio: [String: Any] = ["type": "conversation_initiation_client_data", "dynamic_variables": dv]
         if !agent.isEmpty { inicio["conversation_config_override"] = ["agent": agent] }
@@ -413,6 +467,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     private func armarMotor(eco: Bool) throws {
         if engine.inputNode.isVoiceProcessingEnabled != eco { try engine.inputNode.setVoiceProcessingEnabled(eco) }
+        // La cancelación de eco baja el volumen de las otras apps; se deja en lo mínimo (iOS 17+, el mínimo de la app).
+        if eco { engine.inputNode.voiceProcessingOtherAudioDuckingConfiguration = AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min) }
         engine.connect(player, to: engine.mainMixerNode, format: formatoSalida)
         let fIn = engine.inputNode.outputFormat(forBus: 0)
         guard fIn.sampleRate > 0, fIn.channelCount > 0, let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: fIn.sampleRate, channels: 1, interleaved: false) else {
@@ -698,8 +754,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     // MARK: - Más rápido: la ficha pedida de antemano
 
-    private func precargarSiToca() {
-        guard modoAnillo || unRato, !pidiendoFicha, estado == .lista || estado == .apagada else { return }
+    /// También mientras escucha el Modo Inicio o la conferencia, y con la app abierta: así, al despertarla, no espera al Hub.
+    func precargarSiToca() {
+        let escucha = Conferencia.shared.activa || EscuchaInicio.shared.escuchando || UIApplication.shared.applicationState == .active
+        guard modoAnillo || unRato || escucha, !pidiendoFicha, estado == .lista || estado == .apagada else { return }
         if let f = fichaLista, Date().timeIntervalSince(f.t) < 480 { return }
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
         pidiendoFicha = true
@@ -745,7 +803,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // del anillo te reconecten. Después de 15 min sin nada que esperar, se apaga sola.
         guard !modoAnillo, estado == .lista || estado == .apagada else { return }
         let esperar = trabajando > 0 || Date().timeIntervalSince(ultimaNovedad) < 900
-        if esperar && !unRato {
+        // Juan (audio libre): con el modo anillo apagado no se toma el audio que no se mezcla (pausaría TikTok o la música
+        // hasta 15 min). Por eso «un rato» queda apagado; el código sigue para cuando el anillo pase a su nuevo modo.
+        if esperar && !unRato && VozNativa.listaUnRato {
             unRato = true; paso("Alma trabaja en segundo plano · dos toques del anillo: modo conferencia"); quedarLista()
             infoBloqueo(trabajando > 0 ? "Alma está trabajando · dos toques para hablar" : "Alma tiene algo para ti · dos toques para hablar")
         } else if !esperar && unRato { apagar() }
