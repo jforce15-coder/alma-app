@@ -95,7 +95,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
     private var textoInicial: String?
     private var alOir = false
-    /// Modo chat de la roca: no se manda el micrófono y Alma no suena (responde por escrito en la página).
+    /// Micrófono en mudo (el botón del micrófono): no se manda nada de lo que oyes.
     private var mudo = false
     private var nivelT = Date.distantPast
     /// Nivel de la voz de Alma en ventanas de 50 ms, con la hora en que suena cada una (la roca late con lo que se oye ahora).
@@ -216,7 +216,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         guard estado == .hablando, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         mandar(["type": "user_message", "text": t])
     }
-    func silenciar(_ on: Bool) { mudo = on; player.volume = on ? 0 : 1 }
+    private var enChat = false
+    func silenciar(_ on: Bool) { mudo = on; player.volume = (on || enChat) ? 0 : 1 }
+    /// Modo chat de la roca: Alma sigue oyendo (el micrófono sigue) pero no suena; responde por escrito en la página.
+    func sinVoz(_ on: Bool) { enChat = on; player.volume = (on || mudo) ? 0 : 1 }
 
     /// Cuánto suena la voz, para que la roca de la página lata con ella (unas 10 veces por segundo).
     private func nivelAPagina() {
@@ -649,7 +652,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil
         let pasarAConferencia = aConferencia && (estado == .hablando || estado == .conectando); aConferencia = false
         let charla = pasarAConferencia ? charlaReciente : []   // de qué se hablaba: el modo conferencia lo lleva de contexto
-        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; mudo = false; player.volume = 1
+        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; mudo = false; enChat = false; player.volume = 1
         let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
         conferencia = nil; textoInicial = nil; alOir = false
         if habia { paso("Pausa") }

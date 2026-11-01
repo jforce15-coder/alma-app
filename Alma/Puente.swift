@@ -94,6 +94,7 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         case "colgar": v.colgar()
         case "texto": v.escribir(d["texto"] as? String ?? "")
         case "mudo": v.silenciar((d["on"] as? Bool) ?? false)
+        case "sinvoz": v.sinVoz((d["on"] as? Bool) ?? false)   // modo chat: Alma oye pero no habla
         case "sonido": v.sonar(d["n"] as? String ?? ""); return   // la señal de la voz de las páginas (alma-voz.js)
         default: break
         }
