@@ -7,6 +7,7 @@ import SwiftUI
 ///   · con texto en el cuadro, lo mejora (ortografía, claridad) a los pocos segundos;
 ///   · con el cuadro vacío, pregunta «¿En qué te ayudo?» con su voz y escucha otro rato; si sigue sin oír nada, se apaga.
 /// Lo que dices se reconoce en el teléfono; el Hub (mejorarCampo) escribe la respuesta.
+/// Escuchar no le quita el sonido a las otras apps (la sesión se mezcla) y, al terminar, el audio se suelta.
 final class MejoraCampo: ObservableObject {
     static let shared = MejoraCampo()
     enum Estado { case apagada, escuchando, pensando, diciendo }
@@ -52,16 +53,17 @@ final class MejoraCampo: ObservableObject {
     /// Alma respondió (o falló): vuelve a su estado normal. Si contestó en voz, primero lo dice (y se ve) y luego se apaga.
     func listo(decir: String? = nil, audio: Data? = nil) {
         oido = ""
-        guard let decir, !decir.isEmpty else { estado = .apagada; respuesta = ""; return }
+        guard let decir, !decir.isEmpty else { estado = .apagada; respuesta = ""; VozNativa.soltarAudio(); return }
         respuesta = decir; estado = .diciendo
         var dura = max(3.5, Double(decir.count) / 14)
         if let a = audio, let pl = try? AVAudioPlayer(data: a) {
-            try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
+            VozNativa.sesionEscucha()   // se mezcla con las otras apps
             reproductor = pl; pl.volume = 1; pl.play(); dura = pl.duration + 1.5
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + dura) { [weak self] in
             guard let self, self.estado == .diciendo, self.respuesta == decir else { return }
             self.estado = .apagada; self.respuesta = ""
+            VozNativa.soltarAudio()   // terminó: las otras apps siguen con lo suyo
         }
     }
 
@@ -76,9 +78,7 @@ final class MejoraCampo: ObservableObject {
     }
 
     private func escuchar() {
-        let s = AVAudioSession.sharedInstance()
-        try? s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
-        try? s.setActive(true)
+        VozNativa.sesionEscucha()   // se mezcla: las otras apps siguen sonando
         let p = SFSpeechAudioBufferRecognitionRequest(); p.shouldReportPartialResults = true
         if reconocedor?.supportsOnDeviceRecognition == true { p.requiresOnDeviceRecognition = true }
         pedido = p
@@ -144,6 +144,7 @@ final class MejoraCampo: ObservableObject {
         estado = dicho == nil ? .apagada : .pensando
         if dicho == nil { oido = "" }
         f?(dicho)
+        VozNativa.soltarAudio()   // si ya no queda nada por decir, se suelta el audio (mira de nuevo en un momento)
     }
 
     // MARK: - El Hub
