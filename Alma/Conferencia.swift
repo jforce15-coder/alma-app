@@ -54,6 +54,9 @@ final class Conferencia {
     /// Encendida por una llamada larga: si en `apagarTras` segundos nadie dice «Alma», se apaga sola. (Encendida a mano o con
     /// el anillo queda prendida hasta que la apaguen.) El reloj vuelve a empezar después de cada vez que la llaman.
     private var apagarTras: TimeInterval?, relojApagar: Timer?
+    /// Alma acaba de decir un aviso (lo que terminó en segundo plano: «Ya quedó listo… ¿Quieres verlo ahora?»): lo que
+    /// contesten en estos segundos abre la llamada con el aviso de contexto, sin tener que decir «Alma». «No» o «luego»: nada.
+    private var respuestaHasta: Date?, respuestaAviso = ""
     private func armarApagado() {
         relojApagar?.invalidate(); relojApagar = nil
         guard let t = apagarTras else { return }
@@ -148,7 +151,7 @@ final class Conferencia {
         guard activa else { emitir(); return }
         mudo = false
         reloj?.invalidate(); reloj = nil; envio?.invalidate(); envio = nil
-        relojApagar?.invalidate(); relojApagar = nil; apagarTras = nil; porVoz = false; interrumpida = false
+        relojApagar?.invalidate(); relojApagar = nil; apagarTras = nil; porVoz = false; interrumpida = false; respuestaHasta = nil
         guardarTramo(); detener()
         cerrarArchivo()
         if reunion { subirPartes { [weak self] in self?.mandar(fin: true) } } else { mandar(fin: true); borrarPartes() }
@@ -237,7 +240,8 @@ final class Conferencia {
         guard activa, !enLlamada, !mudo, !interrumpida else { return }
         let quieto = Date().timeIntervalSince(ultimoCambio)
         // Solo «Alma» (sin pedido): despierta rápido (0,7 s quieto). Con pedido, espera 1,2 s para no cortar lo que piden.
-        if let a = conAlma, let pide = Conferencia.pedidoAAlma(a), quieto > (pide.isEmpty ? 0.7 : 1.2) { despertar(pide, texto: a); return }
+        if let a = conAlma, let pide = Conferencia.pedidoAAlma(a), quieto > (pide.isEmpty ? 0.7 : 1.2) { respuestaHasta = nil; despertar(pide, texto: a); return }
+        if respondio(quieto: 1.2) { return }
         // El micrófono de la voz se abrió (o se cerró) mientras escuchaba, o iOS apagó el propio: se cambia al que corresponde.
         let v = VozNativa.shared
         if compartido != v.microfonoListo, v.estado == .lista || v.estado == .apagada { siguienteTramo(); return }
@@ -245,10 +249,35 @@ final class Conferencia {
         if (!actual.isEmpty && quieto > 2.5) || Date().timeIntervalSince(inicioTramo) > 50 { siguienteTramo() }
     }
 
-    /// ¿Llamaron a Alma en este tramo? Entonces despierta y no se empieza otro.
+    /// ¿Llamaron a Alma en este tramo (o contestaron su aviso)? Entonces despierta y no se empieza otro.
     private func llamaron() -> Bool {
+        if respondio(quieto: 0) { return true }
         guard let a = conAlma, let pide = Conferencia.pedidoAAlma(a) else { return false }
         despertar(pide, texto: a); return true
+    }
+
+    /// Alma dijo un aviso (ModoCalle.procesarAvisos): durante 8 s lo que digas es la respuesta, sin «Alma».
+    func esperarRespuesta(aviso: String) {
+        guard activa, !enLlamada, !mudo, !interrumpida else { return }
+        guardarTramo()   // lo que se venía diciendo (y la voz de Alma) queda en su tramo; la respuesta empieza limpia
+        respuestaAviso = aviso; respuestaHasta = Date().addingTimeInterval(8)
+        escuchar()
+    }
+
+    /// ¿Contestaron el aviso? Con una pausa de `quieto` s tras hablar: «no», «luego» o «después» solo cierran la espera;
+    /// cualquier otra cosa abre la llamada con el aviso de contexto. Si empezaron a hablar a tiempo, se espera a que terminen.
+    private func respondio(quieto: TimeInterval) -> Bool {
+        guard let h = respuestaHasta else { return false }
+        let dicho = actual.trimmingCharacters(in: .whitespacesAndNewlines)
+        if dicho.isEmpty { if Date() > h { respuestaHasta = nil }; return false }
+        if Date() > h.addingTimeInterval(15) { respuestaHasta = nil; return false }
+        guard Date().timeIntervalSince(ultimoCambio) >= quieto else { return false }
+        respuestaHasta = nil
+        let llano = dicho.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "es"))
+        if llano.range(of: "^\\W*(no|ahorita no|ahora no|luego|despues|mas tarde|al rato)\\b", options: .regularExpression) != nil { return false }
+        reciente.append("[Alma te avisó] " + respuestaAviso)
+        despertar(conAlma.flatMap { Conferencia.pedidoAAlma($0) } ?? dicho, texto: conAlma ?? "")
+        return true
     }
 
     /// Busca «Alma» en todas las versiones que propone el reconocedor (no solo la más probable): devuelve esa versión.
@@ -314,6 +343,7 @@ final class Conferencia {
     private func despertar(_ pide: String, texto: String) {
         if !texto.isEmpty { actual = texto }   // el tramo queda con la versión donde se oyó «Alma»
         guardarTramo(); detener(); reloj?.invalidate(); relojApagar?.invalidate()
+        respuestaHasta = nil
         enLlamada = true; emitir()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let ctx = reciente.suffix(6).joined(separator: "\n")

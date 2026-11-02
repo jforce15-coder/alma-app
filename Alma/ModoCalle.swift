@@ -66,6 +66,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private var reloj: Timer?
     private var reintentos = 0
     private var hubSinCalle = false              // el Hub todavía no tiene la acción «calle»: se usa el chat
+    private var hubSinAviso = false              // el Hub todavía no tiene «avisoHablar»: se dice con la voz del iPhone
     private var llamadaVista = false, llamadaDesde = Date()
 
     // MARK: - La voz
@@ -85,7 +86,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     // MARK: - Avisos hablados
 
-    private var colaAvisos: [(id: String, texto: String)] = []
+    private var colaAvisos: [(id: String, texto: String, resultado: Bool)] = []
     private var relojAvisos: Timer?
 
     private override init() {
@@ -609,24 +610,26 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     // MARK: - Avisos hablados
 
-    /// Llegó un aviso importante (VozNativa.novedades, ya filtrado por NivelAvisos): Alma lo dice al oído con el Modo calle
-    /// o con la app abierta; si no, queda solo la notificación. Nunca interrumpe una llamada: espera y lo dice después.
-    func avisoHablado(id: String, texto: String) {
+    /// Llegó un aviso importante (VozNativa.novedades, ya filtrado por NivelAvisos): Alma lo dice al oído con el Modo calle,
+    /// con la app abierta o en modo conferencia (también con el teléfono bloqueado); si no, queda solo la notificación.
+    /// Nunca interrumpe una llamada: espera y lo dice después. `resultado`: terminó algo que Alma trabajaba en segundo plano.
+    func avisoHablado(id: String, texto: String, resultado: Bool = false) {
         let t = texto.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, encendido || UIApplication.shared.applicationState == .active else { return }
+        guard !t.isEmpty, encendido || Conferencia.shared.activa || UIApplication.shared.applicationState == .active else { return }
         let dichos = UserDefaults.standard.stringArray(forKey: "avisos_dichos") ?? []
         guard !dichos.contains(id), !colaAvisos.contains(where: { $0.id == id }) else { return }
-        colaAvisos.append((id, t))
+        colaAvisos.append((id, t, resultado))
         procesarAvisos()
     }
 
     private func procesarAvisos() {
         guard let a = colaAvisos.first else { relojAvisos?.invalidate(); relojAvisos = nil; return }
-        let app = UIApplication.shared.applicationState == .active
-        if !encendido && !app && !temporal { colaAvisos = []; relojAvisos?.invalidate(); relojAvisos = nil; return }   // ya no: queda la notificación
+        let app = UIApplication.shared.applicationState == .active, conf = Conferencia.shared.activa
+        if !encendido && !app && !temporal && !conf { colaAvisos = []; relojAvisos?.invalidate(); relojAvisos = nil; return }   // ya no: queda la notificación
         let v = VozNativa.shared.estado
         let vozLibre = v == .lista || v == .apagada
-        let puede = encendido ? (fase == .esperando && vozLibre) : (!temporal && fase == .quieta && app && vozLibre && MejoraCampo.shared.estado == .apagada)
+        // En modo conferencia no hace falta la app abierta: la conferencia ya tiene el micrófono (también bloqueado).
+        let puede = encendido ? (fase == .esperando && vozLibre) : (!temporal && fase == .quieta && (app || conf) && vozLibre && MejoraCampo.shared.estado == .apagada)
         guard puede else {
             if relojAvisos == nil { relojAvisos = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.procesarAvisos() } }
             return
@@ -639,9 +642,14 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             decirAviso(a) { [weak self] in self?.empezarEscucha(conAlma: false, aviso: a.id) }
             return
         }
-        if Conferencia.shared.activa {
-            // El modo conferencia ya escucha (y atiende «Alma, …»): solo se dice; la respuesta se la das a ella.
-            decirAviso(a) { [weak self] in self?.fase = .quieta; self?.procesarAvisos() }
+        if conf {
+            // El modo conferencia ya escucha: se dice y, durante unos segundos, lo que contestes («sí», «dime») abre la
+            // llamada con el aviso de contexto, sin tener que decir «Alma».
+            decirAviso(a) { [weak self] in
+                self?.fase = .quieta
+                Conferencia.shared.esperarRespuesta(aviso: a.texto)
+                self?.procesarAvisos()
+            }
             return
         }
         temporal = true
@@ -653,21 +661,24 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         }
     }
 
-    /// Lo dice con la voz de Alma si el Hub la manda (acción «calle» con el aviso); si no, con la voz del iPhone, corto.
-    private func decirAviso(_ a: (id: String, texto: String), luego: @escaping () -> Void) {
-        let limpio = ModoCalle.corto(a.texto, palabras: 22)
-        guard !hubSinCalle else { decir(limpio, audio: nil, luego: luego); return }
+    /// Lo dice con la voz de Alma si el Hub la manda (acción «avisoHablar»: solo arma la frase y su audio, no responde
+    /// el aviso); si no, con la voz del iPhone, corto. Lo que terminó en segundo plano suena «Ya quedó listo… ¿Quieres verlo?».
+    private func decirAviso(_ a: (id: String, texto: String, resultado: Bool), luego: @escaping () -> Void) {
+        let limpio = a.resultado ? "Ya quedó listo: " + ModoCalle.corto(a.texto, palabras: 16) + " ¿Quieres verlo ahora?" : ModoCalle.corto(a.texto, palabras: 22)
+        guard !hubSinAviso else { decir(limpio, audio: nil, luego: luego); return }
         fase = .pensando
-        llamarHub(["texto": "__aviso__", "aviso_id": a.id, "canal": "calle"], accion: "calle", timeout: 12) { [weak self] j in
+        var cuerpo: [String: Any] = ["aviso_id": a.id]
+        if a.resultado { cuerpo["resultado"] = true }
+        llamarHub(cuerpo, accion: "avisoHablar", timeout: 12) { [weak self] j in
             guard let self else { return }
-            if (j?["error"] as? String) == "accion" { self.hubSinCalle = true }
+            if (j?["error"] as? String) == "accion" { self.hubSinAviso = true }
             let ok = (j?["ok"] as? Bool) == true
             let hablar = ok ? ((j?["hablar"] as? String) ?? "") : ""
             self.decir(hablar.isEmpty ? limpio : hablar, audio: ok ? j?["audio"] as? String : nil, luego: luego)
         }
     }
 
-    private func marcarDicho(_ a: (id: String, texto: String)) {
+    private func marcarDicho(_ a: (id: String, texto: String, resultado: Bool)) {
         let d = UserDefaults.standard
         d.set(Array(((d.stringArray(forKey: "avisos_dichos") ?? []) + [a.id]).suffix(60)), forKey: "avisos_dichos")
         var textos = d.dictionary(forKey: "avisos_textos") ?? [:]
