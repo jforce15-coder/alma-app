@@ -66,7 +66,7 @@ final class EscuchaInicio {
     /// ¿Debe escuchar ahora? Si sí y no está escuchando, empieza; si no, se detiene.
     func evaluar() {
         let v = VozNativa.shared.estado
-        let puede = activada && pagina && !agotado && !enLlamada && !Conferencia.shared.activa && (v == .lista || v == .apagada) && UIApplication.shared.applicationState == .active
+        let puede = activada && pagina && !agotado && !enLlamada && !Conferencia.shared.activa && !ModoCalle.shared.ocupaMicrofono && (v == .lista || v == .apagada) && UIApplication.shared.applicationState == .active
         if !puede { detener(); return }
         guard !escuchando else { return }
         SFSpeechRecognizer.requestAuthorization { st in

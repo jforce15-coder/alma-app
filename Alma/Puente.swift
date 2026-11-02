@@ -11,6 +11,8 @@ import WebKit
 ///   { accion: "faceEntrar" }                 → pide Face ID y devuelve la llave → AlmaLogin.face(email, llave)
 ///   { accion: "faceBorrar" }
 ///   { accion: "escucha", que, on }          → «Inicio con escucha activa» → AlmaEscucha.evento({ activada, escuchando })
+///   { accion: "calle", que }                → Modo calle (ModoCalle.swift) → AlmaCalle.evento({ activa, fase, … })
+///   { accion: "avisos", que, tipo, nivel, por } → niveles de las notificaciones → AlmaAvisos.evento({ hablado, telefono })
 ///   { accion: "navegador", pos }             → Alma se llevó a una de las 8 posiciones: barra de búsqueda lista ("" = volvió al centro)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
@@ -52,6 +54,22 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             e.alEvento = { [weak self] x in self?.responder("AlmaEscucha.evento", [x]) }
             switch d["que"] as? String ?? "" { case "pagina": e.poner(pagina: (d["on"] as? Bool) ?? false); case "activar": e.activar((d["on"] as? Bool) ?? true); default: break }
             responder("AlmaEscucha.evento", [e.resumen])
+        case "calle":   // Modo calle (ModoCalle.swift): { que: "on" | "off" | "estado" } · { que: "calibrar", linea, umbral, puntaje }
+            let m = ModoCalle.shared
+            m.alEvento = { [weak self] e in self?.responder("AlmaCalle.evento", [e]) }
+            switch d["que"] as? String ?? "" {
+            case "on": m.poner(true)
+            case "off": m.poner(false)
+            case "calibrar": m.calibrar(linea: d["linea"] as? String, umbral: (d["umbral"] as? NSNumber)?.doubleValue, puntaje: (d["puntaje"] as? NSNumber)?.doubleValue)
+            default: break
+            }
+            responder("AlmaCalle.evento", [m.resumen])
+        case "avisos":   // Ajustes → «Notificaciones habladas» y «Notificaciones del teléfono» (NivelAvisos, ModoCalle.swift):
+            // { que: "poner", tipo: "hablado" | "telefono", nivel: 0…3, por: "1h" | "4h" | "manana" } · { que: "estado" }
+            if (d["que"] as? String) == "poner", let t = d["tipo"] as? String, let n = d["nivel"] as? NSNumber {
+                NivelAvisos.poner(t, nivel: n.intValue, por: d["por"] as? String ?? "4h")
+            }
+            responder("AlmaAvisos.evento", [NivelAvisos.resumen])
         case "voz":
             voz(d)
         case "navegador":   // llevaste a Alma hacia un lado en el inicio: se abre el navegador con la búsqueda lista
