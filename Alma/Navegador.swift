@@ -54,6 +54,7 @@ final class Navegador: NSObject, ObservableObject {
         web.allowsBackForwardNavigationGestures = true
         if #available(iOS 16.4, *) { web.isInspectable = true }
         puente.web = web
+        ManosAlma.shared.nav = self   // Manos de Alma (navegador): la voz lee y actúa en esta página (ManosAlma.swift)
         web.configuration.userContentController.add(PuenteDebil(puente), name: Puente.nombre)
         web.configuration.userContentController.add(PuenteDebil(self), name: "almaCampo")
         web.configuration.userContentController.addUserScript(WKUserScript(source: Navegador.scriptCampo, injectionTime: .atDocumentEnd, forMainFrameOnly: true))

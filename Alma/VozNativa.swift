@@ -477,6 +477,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if let cf = conferencia {
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste «\(corto)»; escucha lo que te piden." : "") + " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
         }
+        // Manos de Alma (navegador): qué tiene abierto el navegador de la app (las reglas están en el Hub, voz.js).
+        let manos = ManosAlma.shared.ficha
+        if !manos.isEmpty { dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\n" + manos }
         if let pt = pantalla {
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO PANTALLA: Juan está en el navegador de la app de Alma viendo " + pt + " y tocó tres veces la roca para hablar contigo de lo que ve. Ya le dijiste «\(VozNativa.saludoPantalla)»: no saludes otra vez; escucha. En unos segundos te llega LO QUE SE VE EN LA PANTALLA (lo que muestra su captura): úsalo como contexto. Si pregunta antes de que llegue, dile que lo estás mirando."
         }
@@ -647,13 +650,26 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
     }
 
-    /// Herramientas del lado de la app (client tools de ElevenLabs). Hoy solo mostrar_en_chat: abre el chat con lo que Alma
+    /// Herramientas del lado de la app (client tools de ElevenLabs). mostrar_en_chat: abre el chat con lo que Alma
     /// pone en pantalla y la llamada sigue. Sin pantalla a la vista (teléfono bloqueado, modo anillo) no se muestra y se le
-    /// dice a Alma que lo diga por voz. Siempre se contesta: así Alma nunca se queda esperando.
+    /// dice a Alma que lo diga por voz. Las Manos de Alma (leer_pagina, senalar, tocar, escribir, bajar, abrir: ManosAlma.swift)
+    /// y correr_atajo (AtajosIOS.swift) contestan cuando terminan. Siempre se contesta: así Alma nunca se queda esperando.
     private func herramientaCliente(_ ev: [String: Any]) {
         guard let id = ev["tool_call_id"] as? String else { return }
         let nombre = ev["tool_name"] as? String ?? ""
         let p = ev["parameters"] as? [String: Any] ?? [:]
+        if ManosAlma.herramientas.contains(nombre) || nombre == "correr_atajo" {
+            herramienta = true; paso("Alma usa " + nombre)
+            let llamada = inicioLlamada
+            let contestar: (String, Bool) -> Void = { [weak self] res, error in
+                guard let self, self.inicioLlamada == llamada else { return }   // la respuesta de una llamada anterior se ignora
+                self.herramienta = false; self.ultimaActividad = Date()
+                self.mandar(["type": "client_tool_result", "tool_call_id": id, "result": res, "is_error": error])
+            }
+            if nombre == "correr_atajo" { AtajosPermitidos.correr(ManosAlma.texto(p["nombre"]), contestar) }
+            else { ManosAlma.shared.correr(nombre, p, contestar) }
+            return
+        }
         var res = "Esta herramienta no existe en la app.", error = true
         if nombre == "mostrar_en_chat" {
             let titulo = (p["titulo"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
