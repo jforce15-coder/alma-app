@@ -43,6 +43,8 @@ struct ContentView: View {
             .background { Color.clear.fullScreenCover(isPresented: llamada) { LlamadaVista(voz: voz) { llamadaOculta = true } } }
             .onChange(of: voz.estado) { _, e in if e == .apagada || e == .lista { llamadaOculta = false } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in Portal.shared.pasar { salud = true } }
+            // Manos de Alma (navegador): Alma lee o actúa en la página; la pantalla de la llamada se baja para que la veas.
+            .onReceive(NotificationCenter.default.publisher(for: .manosAlma)) { _ in llamadaOculta = true }
             .onAppear { Portal.shared.instalar() }
             .sheet(isPresented: $almaAbierta, onDismiss: chatCerrado) {
                 PanelAlma(titulo: chatDeVoz == nil ? nav.titulo : "", desde: chatDeVoz == nil ? nav.direccion : "", captura: captura, mostrar: chatDeVoz)
