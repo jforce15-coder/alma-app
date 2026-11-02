@@ -14,18 +14,36 @@ settings:
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1,2"
     ENABLE_PREVIEWS: NO
+# Modo calle (ModoCalle.swift): el detector de «Alma» en el teléfono. sherpa-onnx (Apache-2.0) por Swift Package, versión
+# fija; trae su propio onnxruntime (csukuangfj/onnxruntime-libs 1.28.2) y las sumas de comprobación de sus binarios.
+packages:
+  SherpaOnnx:
+    url: https://github.com/k2-fsa/sherpa-onnx
+    exactVersion: 1.13.8
 targets:
   Alma:
     type: application
     platform: iOS
     sources:
       - Alma
+      # El modelo del detector (~5 MB): el robot lo baja con su suma de comprobación (testflight.yml) y va dentro de la
+      # app como la carpeta «Calle». No se guarda en el repo; sin él, el Modo calle avisa que falta.
+      - path: Modelos/Calle
+        type: folder
+        buildPhase: resources
+        optional: true
+    dependencies:
+      - package: SherpaOnnx
+        product: sherpa-onnx
+      # onnxruntime (estático) usa Core ML y la biblioteca de C++.
+      - sdk: CoreML.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spacioam.alma
         PRODUCT_NAME: Alma
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        OTHER_LDFLAGS: $(inherited) -lc++
     # Apple Salud (solo lectura). El robot de TestFlight le pone estos permisos a la app antes de firmarla.
     entitlements:
       path: Alma/Alma.entitlements
@@ -67,8 +85,8 @@ targets:
           - CFBundleURLName: com.spacioam.alma
             CFBundleURLSchemes:
               - alma
-        NSMicrophoneUsageDescription: Alma usa el micrófono para hablar contigo por voz.
-        NSSpeechRecognitionUsageDescription: Alma entiende en tu teléfono lo que le pides para escribirlo por ti, despierta en el inicio cuando dices «Alma» y, en modo conferencia, transcribe la reunión sin enviar audio.
+        NSMicrophoneUsageDescription: Alma usa el micrófono para hablar contigo por voz y, en el Modo calle, para esperar en tu teléfono a que digas «Alma» (sin grabar ni enviar audio).
+        NSSpeechRecognitionUsageDescription: Alma entiende en tu teléfono lo que le pides para escribirlo por ti, despierta en el inicio cuando dices «Alma», en el Modo calle escribe solo lo que le pides después de «Alma» y, en modo conferencia, transcribe la reunión sin enviar audio.
         NSFaceIDUsageDescription: Para entrar a Alma con Face ID, sin escribir tu contraseña.
         NSHealthShareUsageDescription: Alma lee tus pasos, ritmo cardíaco, sueño y ejercicios de Apple Salud para mostrártelos en Health.
         NSHealthUpdateUsageDescription: Alma no escribe en Apple Salud; solo lee lo que tu reloj, tu anillo o tus apps ya guardaron.

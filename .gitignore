@@ -3,3 +3,5 @@ Alma/Info.plist
 build/
 .DS_Store
 DerivedData/
+# El modelo del Modo calle lo baja el robot (testflight.yml)
+Modelos/

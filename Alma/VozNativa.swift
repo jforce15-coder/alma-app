@@ -115,6 +115,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Cuánto llevas hablando con la conversación en pausa: si hablas, Alma vuelve a escucharte sola.
     private var vozEnPausa = 0.0
     private var ultimoSonido: [String: Date] = [:]
+    /// La llamada la abre el Modo calle (ModoCalle.swift) con el teléfono bloqueado: el micrófono del Modo calle acaba de
+    /// soltarse y la sesión sigue activa, así que se intenta abrir el de la llamada aunque la app esté en segundo plano.
+    var desdeCalle = false
 
     // MARK: - Lo que pide la página
 
@@ -272,7 +275,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             let v = VozNativa.shared
             guard !v.anilloListo, v.estado == .apagada, !Conferencia.shared.activa, !EscuchaInicio.shared.escuchando,
-                  MejoraCampo.shared.estado == .apagada, !v.campanas.values.contains(where: { $0.isPlaying }) else { return }
+                  !ModoCalle.shared.ocupaMicrofono, MejoraCampo.shared.estado == .apagada, !v.campanas.values.contains(where: { $0.isPlaying }) else { return }
             let s = AVAudioSession.sharedInstance()
             try? s.setActive(false, options: .notifyOthersOnDeactivation)
             // Queda la sesión que se mezcla: un sonido suelto (la señal de la voz de las páginas) ya no pausa a las otras apps.
@@ -407,7 +410,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let s = AVAudioSession.sharedInstance()
             guard s.recordPermission == .granted else { fallo("Falta el permiso del micrófono: Ajustes del iPhone → Alma → Micrófono."); return }
             if !engine.isRunning {
-                guard UIApplication.shared.applicationState != .background else {
+                guard UIApplication.shared.applicationState != .background || desdeCalle else {
                     fallo("Abre Alma una vez para dejar el micrófono listo; después funciona bloqueado."); return
                 }
                 paso("Abriendo el micrófono")
@@ -795,7 +798,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let l = j["avisos"] as? [[String: Any]] ?? []
         if !l.isEmpty {
             ultimaNovedad = Date(); fichaLista = nil   // la próxima llamada ya empieza por lo nuevo
-            for a in l { Notificaciones.shared.mostrar(id: a["id"] as? String ?? UUID().uuidString, texto: a["texto"] as? String ?? "") }
+            // Cada selector de Ajustes filtra por el nivel del aviso (NivelAvisos, ModoCalle.swift): la notificación del
+            // teléfono y lo que Alma dice al oído (con el Modo calle o la app abierta).
+            for a in l {
+                let id = a["id"] as? String ?? UUID().uuidString, texto = a["texto"] as? String ?? "", n = NivelAvisos.deAviso(a)
+                if n <= NivelAvisos.nivel("telefono") { Notificaciones.shared.mostrar(id: id, texto: texto) }
+                if n <= NivelAvisos.nivel("hablado") { ModoCalle.shared.avisoHablado(id: id, texto: texto) }
+            }
             paso("Aviso: " + String((l.first?["texto"] as? String ?? "").prefix(60)))
         }
         Notificaciones.shared.globo(porRetomar)

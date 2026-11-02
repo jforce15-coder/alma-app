@@ -34,6 +34,26 @@ jobs:
           sudo xcode-select -s "$X"
           xcodebuild -version
 
+      # Modo calle: el modelo del detector de «Alma» (sherpa-onnx KWS zipformer zh-en 3M, Apache-2.0). Se baja de la
+      # versión publicada por sherpa-onnx y solo se usa si cada archivo coincide con su suma de comprobación.
+      - name: Modelo del detector de «Alma» (Modo calle)
+        run: |
+          set -euo pipefail
+          M=sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20
+          curl -fsSL --retry 3 -o /tmp/kws.tar.bz2 "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/$M.tar.bz2"
+          tar xjf /tmp/kws.tar.bz2 -C /tmp
+          mkdir -p Modelos/Calle
+          while read -r SUMA NOMBRE; do
+            cp "/tmp/$M/$NOMBRE" "Modelos/Calle/$NOMBRE"
+            echo "$SUMA  Modelos/Calle/$NOMBRE" | shasum -a 256 -c - || { shasum -a 256 "/tmp/$M/$NOMBRE"; exit 1; }
+          done <<'SUMAS'
+          408bbd740838c42d5bf6d1c5b80b3c88b616c7860b92d980328b5b068c76ae48 encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx
+          63a22dd60f40fff082ac3e09afa507f6787da36df76ded2fbe145fa233e22c21 decoder-epoch-13-avg-2-chunk-16-left-64.onnx
+          190d4067b4cc20b72a42a1916e69d92052000fb7051a427ebb1bc72a69207dc1 joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx
+          2d3f32311f9b692b964da3c90e830258d3e78e013cb0c992dbfb15cd5a1a71b0 tokens.txt
+          SUMAS
+          ls -l Modelos/Calle
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen

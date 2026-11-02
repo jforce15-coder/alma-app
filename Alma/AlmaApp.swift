@@ -17,8 +17,10 @@ struct AlmaApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(navegador)
-                // alma://abrir?u=<enlace> (atajo de Compartir de iOS) o alma://https://…
-                .onOpenURL { navegador.abrir(desdeEnlace: $0) }
+                // alma://abrir?u=<enlace> (atajo de Compartir de iOS) o alma://https://… · alma://calle?on=1|0 (Modo calle)
+                .onOpenURL { u in
+                    if u.host?.lowercased() == "calle" { ModoCalle.shared.abrirEnlace(u) } else { navegador.abrir(desdeEnlace: u) }
+                }
         }
     }
 }
