@@ -118,6 +118,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// La llamada la abre el Modo calle (ModoCalle.swift) con el teléfono bloqueado: el micrófono del Modo calle acaba de
     /// soltarse y la sesión sigue activa, así que se intenta abrir el de la llamada aunque la app esté en segundo plano.
     var desdeCalle = false
+    /// Tres toques a la roca del navegador (hablarSobrePantalla): la página que se ve («título» (dirección)). La lectura de la
+    /// captura llega después; si la llamada aún conecta, espera aquí y se manda al conectar.
+    private var pantalla: String?
+    private var vistaPendiente: String?
+    /// «Mostrar en el chat» (herramienta de cliente mostrar_en_chat): lo que Alma pone en pantalla durante la llamada.
+    /// ContentView abre el chat con esto y la llamada sigue; al cerrar ese chat se cuelga y la app vuelve al inicio.
+    struct Mostrado: Equatable { let id: Int; let titulo: String; let contenido: String }
+    @Published private(set) var mostrado: Mostrado?
 
     // MARK: - Lo que pide la página
 
@@ -218,6 +226,29 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         guard estado == .lista || estado == .apagada else { return }
         desdePantalla = true; alOir = true; textoInicial = texto; hablar()
     }
+    /// Tres toques a la roca del navegador: Alma solo por voz (sin el chat), sobre lo que se ve. La página (título y dirección)
+    /// va en la ficha de la llamada; la captura la lee el Hub (almaFoto, la misma del chat) y llega como contexto en unos
+    /// segundos. Con la llamada ya abierta, la captura nueva va como contexto («mira esto ahora»).
+    func hablarSobrePantalla(captura: String?, titulo: String, direccion: String) {
+        let donde = titulo.isEmpty ? direccion : "«" + titulo + "»" + (direccion.isEmpty ? "" : " (" + direccion + ")")
+        if estado == .hablando || estado == .conectando {
+            if let captura { describir(captura, aviso: "Juan te muestra otra pantalla: " + donde + ".") }
+            return
+        }
+        // Sin el permiso del micrófono (nunca se preguntó), se pide ahora con la app abierta y después se llama.
+        if AVAudioSession.sharedInstance().recordPermission == .undetermined {
+            AVAudioSession.sharedInstance().requestRecordPermission { [weak self] ok in
+                DispatchQueue.main.async { if ok { self?.hablarSobrePantalla(captura: captura, titulo: titulo, direccion: direccion) } }
+            }
+            return
+        }
+        desdePantalla = true; pantalla = donde
+        hablar()
+        guard estado == .conectando else { pantalla = nil; return }
+        if let captura { describir(captura, aviso: nil) }
+    }
+    /// ¿Ya tiene cómo pedir la ficha al Hub? (la guarda el inicio la primera vez que se abre la app con sesión)
+    var puedeHablar: Bool { Llave.leer("voz_url") != nil && Llave.leer("voz_token") != nil && Llave.leer("voz_sesion") != nil }
     func hablarDesdeConferencia(contexto: String, texto: String) {
         guard estado == .lista || estado == .apagada else { return }
         desdePantalla = true; conferencia = contexto; textoInicial = texto; hablar()
@@ -444,9 +475,18 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if let cf = conferencia {
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste «\(corto)»; escucha lo que te piden." : "") + " Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
         }
+        if let pt = pantalla {
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO PANTALLA: Juan está en el navegador de la app de Alma viendo " + pt + " y tocó tres veces la roca para hablar contigo de lo que ve. Ya le dijiste «\(corto)»: no saludes otra vez; escucha. En unos segundos te llega LO QUE SE VE EN LA PANTALLA (lo que muestra su captura): úsalo como contexto. Si pregunta antes de que llegue, dile que lo estás mirando."
+        }
         var agent: [String: Any] = [:]
         // modo anillo: sin tema por retomar, Alma dice solo el saludo corto y escucha. Desde la roca saluda como en la página.
-        agent["first_message"] = conferencia != nil || alOir ? (sinPedido ? corto : "") : desdePantalla ? (ficha["first_message"] as? String ?? "") : (retomar ?? corto)
+        // Tres toques en el navegador (pantalla): solo el saludo corto; Alma escucha lo que preguntas de la pantalla.
+        let primero: String
+        if pantalla != nil { primero = corto }
+        else if conferencia != nil || alOir { primero = sinPedido ? corto : "" }
+        else if desdePantalla { primero = ficha["first_message"] as? String ?? "" }
+        else { primero = retomar ?? corto }
+        agent["first_message"] = primero
         if let l = ficha["language"] as? String, !l.isEmpty { agent["language"] = l }
         var inicio: [String: Any] = ["type": "conversation_initiation_client_data", "dynamic_variables": dv]
         if !agent.isEmpty { inicio["conversation_config_override"] = ["agent": agent] }
@@ -576,14 +616,18 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             paso("Alma conectada · te escucha" + (colaVoz.isEmpty ? "" : String(format: " (%.1f s dichos mientras conectaba)", Double(colaVoz.count) * 0.128)))
             for c in colaVoz { mandar(["user_audio_chunk": c]) }; colaVoz = []
             if let t = textoInicial, !t.isEmpty { mandar(["type": "user_message", "text": t]) }; textoInicial = nil
+            if let v = vistaPendiente { vistaPendiente = nil; mandar(["type": "contextual_update", "text": v]) }   // la captura llegó mientras conectaba
             infoBloqueo("Te escucho · dos toques para pausar")
             if let id = ev["conversation_id"] as? String { vincular(id) }
         case "audio":
             let ev = j["audio_event"] as? [String: Any] ?? [:]
             ultimaActividad = Date()
             if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) { if !sono { sono = true; paso("Alma está hablando") }; sonar(d) }
-        case "agent_tool_request", "client_tool_call":
+        case "agent_tool_request":
             herramienta = true; ultimaActividad = Date()
+        case "client_tool_call":
+            ultimaActividad = Date()
+            herramientaCliente(j["client_tool_call"] as? [String: Any] ?? [:])
         case "agent_tool_response":
             herramienta = false; ultimaActividad = Date()
         case "interruption":
@@ -599,6 +643,52 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let t = ev["user_transcript"] as? String { ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t) }
         default: break
         }
+    }
+
+    /// Herramientas del lado de la app (client tools de ElevenLabs). Hoy solo mostrar_en_chat: abre el chat con lo que Alma
+    /// pone en pantalla y la llamada sigue. Sin pantalla a la vista (teléfono bloqueado, modo anillo) no se muestra y se le
+    /// dice a Alma que lo diga por voz. Siempre se contesta: así Alma nunca se queda esperando.
+    private func herramientaCliente(_ ev: [String: Any]) {
+        guard let id = ev["tool_call_id"] as? String else { return }
+        let nombre = ev["tool_name"] as? String ?? ""
+        let p = ev["parameters"] as? [String: Any] ?? [:]
+        var res = "Esta herramienta no existe en la app.", error = true
+        if nombre == "mostrar_en_chat" {
+            let titulo = (p["titulo"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let contenido = (p["contenido"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if contenido.isEmpty { res = "Falta el contenido: no se mostró nada." }
+            else if UIApplication.shared.applicationState != .active {
+                res = "Juan no tiene la pantalla a la vista (teléfono bloqueado): no se mostró. Díselo por voz, en corto, solo lo más importante."
+            } else {
+                contador += 1
+                mostrado = Mostrado(id: contador, titulo: titulo.isEmpty ? "Alma" : titulo, contenido: contenido)
+                paso("Alma lo puso en el chat: " + String(titulo.prefix(40)))
+                res = "Listo: ya está en el chat, en la pantalla de Juan. Resúmelo por voz en una sola frase; no lo leas completo."; error = false
+            }
+        }
+        mandar(["type": "client_tool_result", "tool_call_id": id, "result": res, "is_error": error])
+    }
+
+    /// La captura de la pantalla, leída por el Hub (almaFoto con captura, la misma lectura del chat; `voz` pide la versión
+    /// rápida). Llega a la llamada como contexto; si todavía conecta, espera en vistaPendiente. Una respuesta de una llamada
+    /// anterior se ignora.
+    private func describir(_ captura: String, aviso: String?) {
+        guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
+        let llamada = inicioLlamada
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 40
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "almaFoto", "foto": captura, "captura": true, "voz": true, "token": token, "session": sesion])
+        paso("Leyendo la captura de la pantalla")
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+            let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let texto = (j?["ok"] as? Bool) == true ? ((j?["texto"] as? String) ?? "") : ""
+            DispatchQueue.main.async {
+                guard let self, self.inicioLlamada == llamada, self.estado == .conectando || self.estado == .hablando else { return }
+                self.paso(texto.isEmpty ? "No pude leer la captura" : "Captura leída")
+                let t = texto.isEmpty ? "LO QUE SE VE EN LA PANTALLA: no se pudo leer la captura. Si Juan pregunta por algo de la pantalla, pídele que te diga qué ve."
+                    : (aviso.map { $0 + " " } ?? "") + "LO QUE SE VE EN LA PANTALLA (la captura que te mandó Juan): " + texto
+                if self.estado == .hablando { self.mandar(["type": "contextual_update", "text": t]) } else { self.vistaPendiente = t }
+            }
+        }.resume()
     }
 
     private func sonar(_ pcm16: Data) {
@@ -713,7 +803,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let charla = pasarAConferencia ? charlaReciente : []   // de qué se hablaba: el modo conferencia lo lleva de contexto
         pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; mudo = false; enChat = false; player.volume = 1
         let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
-        conferencia = nil; textoInicial = nil; alOir = false
+        conferencia = nil; textoInicial = nil; alOir = false; pantalla = nil; vistaPendiente = nil
         if habia { paso("Pausa") }
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
