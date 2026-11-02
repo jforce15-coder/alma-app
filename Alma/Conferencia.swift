@@ -130,6 +130,7 @@ final class Conferencia {
                         self.alEvento?(["tipo": "conferencia", "activa": false, "error": "Activa el micrófono y el reconocimiento de voz para Alma en Ajustes del iPhone."]); alFallar?(); return
                     }
                     EscuchaInicio.shared.detener()   // el modo conferencia tiene su propio despertar
+                    if ModoCalle.shared.encendido { ModoCalle.shared.poner(false) }   // uno u otro: no van juntos
                     self.activa = true; self.mudo = false; self.id = "cf" + String(Int(Date().timeIntervalSince1970)); self.inicio = Date()
                     self.pendiente = []; self.reciente = Array(contexto.suffix(8)); self.enLlamada = false
                     self.reunion = false; self.parte = 0; self.subidas = 0; self.partes = [:]; self.cerrarArchivo(); self.borrarViejos()
