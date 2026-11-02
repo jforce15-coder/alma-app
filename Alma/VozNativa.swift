@@ -95,6 +95,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let i = UserDefaults.standard.integer(forKey: "voz_despedida_i"); UserDefaults.standard.set(i + 1, forKey: "voz_despedida_i")
         return VozNativa.despedidas[i % VozNativa.despedidas.count]
     }
+    /// El saludo al abrirla con tres toques a la roca del navegador (hablarSobrePantalla), pedido de Juan: «Hola, ahora lo veo».
+    static let saludoPantalla = "Hola, ahora lo veo."
     /// El saludo al despertarla solo con «Alma» o el anillo: el `saludo_corto` de la ficha del Hub (p. ej. «Dime, Juan») o «Dime».
     static func saludoCorto(_ ficha: [String: Any]) -> String {
         let dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
@@ -476,13 +478,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste «\(corto)»; escucha lo que te piden." : "") + " Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
         }
         if let pt = pantalla {
-            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO PANTALLA: Juan está en el navegador de la app de Alma viendo " + pt + " y tocó tres veces la roca para hablar contigo de lo que ve. Ya le dijiste «\(corto)»: no saludes otra vez; escucha. En unos segundos te llega LO QUE SE VE EN LA PANTALLA (lo que muestra su captura): úsalo como contexto. Si pregunta antes de que llegue, dile que lo estás mirando."
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO PANTALLA: Juan está en el navegador de la app de Alma viendo " + pt + " y tocó tres veces la roca para hablar contigo de lo que ve. Ya le dijiste «\(VozNativa.saludoPantalla)»: no saludes otra vez; escucha. En unos segundos te llega LO QUE SE VE EN LA PANTALLA (lo que muestra su captura): úsalo como contexto. Si pregunta antes de que llegue, dile que lo estás mirando."
         }
         var agent: [String: Any] = [:]
         // modo anillo: sin tema por retomar, Alma dice solo el saludo corto y escucha. Desde la roca saluda como en la página.
-        // Tres toques en el navegador (pantalla): solo el saludo corto; Alma escucha lo que preguntas de la pantalla.
+        // Tres toques en el navegador (pantalla): «Hola, ahora lo veo» y Alma escucha lo que preguntas de la pantalla.
         let primero: String
-        if pantalla != nil { primero = corto }
+        if pantalla != nil { primero = VozNativa.saludoPantalla }
         else if conferencia != nil || alOir { primero = sinPedido ? corto : "" }
         else if desdePantalla { primero = ficha["first_message"] as? String ?? "" }
         else { primero = retomar ?? corto }
