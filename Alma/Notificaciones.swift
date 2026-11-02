@@ -21,11 +21,24 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// Registra la categoría con el botón «Abrir» (sale al expandir la notificación).
+    func registrarCategorias() {
+        let abrir = UNNotificationAction(identifier: "alma.abrir", title: "Abrir", options: [.foreground])
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: "alma.aviso", actions: [abrir], intentIdentifiers: [], options: [])])
+    }
+
     func mostrar(id: String, texto: String) {
         guard !texto.isEmpty else { return }
         conPermiso {
             let n = UNMutableNotificationContent()
-            n.title = "Alma"; n.body = texto; n.sound = .default; n.threadIdentifier = "alma.retomar"
+            n.title = "Alma"; n.sound = .default; n.threadIdentifier = "alma.retomar"
+            // Notificación expandible: en el banner se ve el resumen (subtítulo) y al mantenerla presionada se abre el texto completo.
+            let t = texto.trimmingCharacters(in: .whitespacesAndNewlines)
+            let primera = t.components(separatedBy: CharacterSet(charactersIn: ".!?\n")).first ?? t
+            if t.count > 90, !primera.isEmpty, primera.count <= 90 { n.subtitle = primera }
+            n.body = String(t.prefix(1000))
+            n.categoryIdentifier = "alma.aviso"; n.userInfo = ["id": id]
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: n, trigger: nil))
         }
     }

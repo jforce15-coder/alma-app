@@ -138,7 +138,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             d.set("Alma se cerró sola en el paso: " + (d.string(forKey: "voz_paso") ?? "?"), forKey: "voz_ultimo_error"); d.set(false, forKey: "voz_abierta")
         }
         prepararMandos()
-        UNUserNotificationCenter.current().delegate = Notificaciones.shared
+        UNUserNotificationCenter.current().delegate = Notificaciones.shared; Notificaciones.shared.registrarCategorias()
         if modoAnillo { quedarLista() }
         empezarAvisos()
     }
