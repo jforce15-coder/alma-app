@@ -8,9 +8,11 @@ struct PanelAlma: View {
     let desde: String
     /// Captura de la pantalla (triple toque a Alma): la página la recibe con AlmaCaptura(dataURL) al cargar.
     var captura: String? = nil
+    /// «Mostrar en el chat»: lo que Alma puso en pantalla durante la llamada; la página lo pinta con AlmaMostrar({ titulo, contenido }).
+    var mostrar: VozNativa.Mostrado? = nil
 
     var body: some View {
-        PanelWeb(url: PanelAlma.direccion(titulo: titulo, desde: desde), captura: captura)
+        PanelWeb(url: PanelAlma.direccion(titulo: titulo, desde: desde), captura: captura, mostrar: mostrar)
             .ignoresSafeArea(edges: .bottom)
             .background(Color.almaFondo)
     }
@@ -31,6 +33,7 @@ struct PanelAlma: View {
 struct PanelWeb: UIViewRepresentable {
     let url: URL
     var captura: String? = nil
+    var mostrar: VozNativa.Mostrado? = nil
 
     func makeCoordinator() -> Coordinador { Coordinador(captura: captura) }
 
@@ -41,19 +44,40 @@ struct PanelWeb: UIViewRepresentable {
         w.isOpaque = false
         w.backgroundColor = UIColor(Color.almaFondo)
         if #available(iOS 16.4, *) { w.isInspectable = true }
+        context.coordinator.web = w
         w.load(URLRequest(url: url))
         return w
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    /// Alma puso algo nuevo en pantalla con el chat ya abierto: va a la página (o espera a que cargue).
+    func updateUIView(_ uiView: WKWebView, context: Context) { context.coordinator.poner(mostrar) }
 
     final class Coordinador: NSObject, WKUIDelegate, WKNavigationDelegate {
         private var captura: String?
+        weak var web: WKWebView?
+        private var cargada = false
+        private var ultimo = 0
+        private var pendiente: VozNativa.Mostrado?
         init(captura: String?) { self.captura = captura }
 
-        /// Ya cargó la página de Alma: se le pasa la captura (una sola vez).
+        /// Cada «mostrar en el chat» va una sola vez a la página; si aún no carga, espera a didFinish.
+        func poner(_ m: VozNativa.Mostrado?) {
+            guard let m, m.id != ultimo else { return }
+            ultimo = m.id
+            if cargada { pasar(m) } else { pendiente = m }
+        }
+        private func pasar(_ m: VozNativa.Mostrado) {
+            guard let d = try? JSONSerialization.data(withJSONObject: [["titulo": m.titulo, "contenido": m.contenido]]),
+                  let j = String(data: d, encoding: .utf8) else { return }
+            web?.evaluateJavaScript("window.AlmaMostrar && AlmaMostrar(\(j)[0])")
+        }
+
+        /// Ya cargó la página de Alma: se le pasa lo que Alma puso en pantalla y la captura (una sola vez).
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            guard let c = captura, webView.url?.path.hasPrefix("/alma") == true,
+            guard webView.url?.path.hasPrefix("/alma") == true else { return }
+            cargada = true
+            if let m = pendiente { pendiente = nil; pasar(m) }
+            guard let c = captura,
                   let d = try? JSONSerialization.data(withJSONObject: [c]), let j = String(data: d, encoding: .utf8) else { return }
             captura = nil
             webView.evaluateJavaScript("window.AlmaCaptura && AlmaCaptura(\(j)[0])")

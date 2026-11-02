@@ -16,7 +16,15 @@ final class Navegador: NSObject, ObservableObject {
     @Published var puedeAtras = false
     @Published var puedeAdelante = false
     @Published var progreso: Double = 0
-    @Published var cargando = false
+    @Published var cargando = false {
+        // Al empezar a cargar la barra se ve (con su línea de progreso); al terminar, se esconde sola en unos segundos.
+        didSet { guard cargando != oldValue else { return }; if cargando { mostrarBarra(esconder: false) } else { esconderBarraLuego() } }
+    }
+    /// La barra de dirección se esconde sola al leer (al bajar la página, o unos segundos quieta después de cargar) y abajo
+    /// queda la pestañita (ContentView), que la trae con un toque o deslizando hacia arriba. Nunca en el inicio.
+    @Published var barraOculta = false
+    private var relojBarra: DispatchWorkItem?
+    private var ultimoY: CGFloat = 0
     /// Dónde vive Alma en el navegador: una de las 8 posiciones del Hub (tl tc tr ml mr bl bc br).
     /// Es la misma que usan las web apps (cookie sa_nav_pos de .spacioam.com), así Alma está en el mismo lugar en todas.
     @Published var posAlma = "br"
@@ -26,7 +34,9 @@ final class Navegador: NSObject, ObservableObject {
     struct Campo: Equatable { var rect: CGRect; var texto: String; var etiqueta: String; var clave: Bool }
     @Published var campo: Campo?
     /// La barra de dirección tiene el teclado (se escribe una dirección o una búsqueda).
-    @Published var escribiendo = false
+    @Published var escribiendo = false {
+        didSet { guard escribiendo != oldValue else { return }; if escribiendo { mostrarBarra(esconder: false) } else { esconderBarraLuego() } }
+    }
     /// La roca tapa una carga en curso (Portal.swift); se destapa al terminar de cargar.
     var cargaTapada = false
     /// Dónde está la roca de Alma en la pantalla (lo da ContentView): de ahí sale y ahí vuelve la transición.
@@ -53,7 +63,12 @@ final class Navegador: NSObject, ObservableObject {
             web.observe(\.canGoBack, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.puedeAtras = w.canGoBack } },
             web.observe(\.canGoForward, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.puedeAdelante = w.canGoForward } },
             web.observe(\.estimatedProgress, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.progreso = w.estimatedProgress } },
-            web.observe(\.isLoading, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.cargando = w.isLoading } }
+            web.observe(\.isLoading, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.cargando = w.isLoading } },
+            // Bajar la página con el dedo esconde la barra (como en Chrome).
+            web.scrollView.observe(\.contentOffset, options: [.new]) { [weak self] sv, _ in
+                let y = sv.contentOffset.y, dedo = sv.isDragging || sv.isDecelerating
+                DispatchQueue.main.async { self?.desplazo(y: y, dedo: dedo) }
+            }
         ]
         web.load(URLRequest(url: Navegador.inicio))
         leerPosicion()
@@ -189,6 +204,33 @@ final class Navegador: NSObject, ObservableObject {
     }
 
     func irAlInicio() { web.load(URLRequest(url: Navegador.inicio)) }
+
+    // MARK: - La barra que se esconde sola
+
+    /// La pestañita (o lo que necesita la barra) la trae; si `esconder`, se vuelve a esconder sola si no la usas.
+    func mostrarBarra(esconder: Bool = true) {
+        relojBarra?.cancel(); relojBarra = nil
+        if barraOculta { barraOculta = false }
+        if esconder { esconderBarraLuego(6) }
+    }
+
+    /// En unos segundos, si nadie la está usando (no carga, no escribes, no se pidió buscar), la barra se esconde.
+    func esconderBarraLuego(_ segundos: Double = 4) {
+        relojBarra?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            guard let self, !self.cargando, !self.escribiendo, !self.pedirBusqueda, !self.enInicio else { return }
+            self.barraOculta = true
+        }
+        relojBarra = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + segundos, execute: w)
+    }
+
+    /// Bajar la página con el dedo (más de unos puntos, ya lejos de arriba) esconde la barra. Subir no la trae: eso es la pestañita.
+    private func desplazo(y: CGFloat, dedo: Bool) {
+        defer { ultimoY = y }
+        guard dedo, !barraOculta, !escribiendo, !pedirBusqueda, !enInicio else { return }
+        if y - ultimoY > 8 && y > 40 { relojBarra?.cancel(); relojBarra = nil; barraOculta = true }
+    }
 }
 
 // MARK: - El cuadro de texto activo
