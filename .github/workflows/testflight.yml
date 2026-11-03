@@ -65,9 +65,11 @@ jobs:
           set -o pipefail
           # Si falla, se muestran primero los errores del compilador (con tail solo se veía el final del registro).
           xcodebuild -project Alma.xcodeproj -scheme Alma -configuration Release \
-            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 \
+            -destination 'generic/platform=iOS' -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 \
             || { grep -E "error:" -A3 build.log | head -80; tail -20 build.log; exit 1; }
           tail -20 build.log
+          # El mismo arreglo de la subida (ver abajo), para probarlo en cada PR.
+          bash .github/quitar-frameworks-estaticos.sh build/dd/Build/Products/Release-iphoneos/Alma.app
 
       - name: Llave de App Store Connect
         if: env.SUBIR == 'true'
@@ -93,6 +95,9 @@ jobs:
           xcodebuild -project Alma.xcodeproj -scheme Alma -configuration Release \
             -destination 'generic/platform=iOS' -archivePath build/Alma.xcarchive archive \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} CODE_SIGNING_ALLOWED=NO | tail -40
+          # sherpa-onnx y onnxruntime (Modo calle) son estáticos: su código ya va dentro de Alma, pero Xcode copia sus
+          # carpetas a Alma.app/Frameworks y Apple rechaza la subida porque no se pueden firmar («Invalid Signature»).
+          bash .github/quitar-frameworks-estaticos.sh build/Alma.xcarchive/Products/Applications/Alma.app
           # El archivo sin firmar no lleva los permisos (Apple Salud): se le ponen con una firma provisional y la
           # exportación los conserva al firmar para distribución (y los activa en el App ID con -allowProvisioningUpdates).
           codesign --force --sign - --entitlements Alma/Alma.entitlements build/Alma.xcarchive/Products/Applications/Alma.app
