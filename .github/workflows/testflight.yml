@@ -102,8 +102,18 @@ jobs:
           # exportación los conserva al firmar para distribución (y los activa en el App ID con -allowProvisioningUpdates).
           # Los frameworks de dentro (sherpa-onnx y onnxruntime, dinámicos) también se firman: si van sin firma, la
           # exportación no los vuelve a firmar y Apple rechaza la subida («Invalid Signature»).
+          # Apple también exige que el MinimumOSVersion del Info.plist de cada framework sea el mismo con el que se
+          # compiló su binario (ITMS-90208 en onnxruntime): se lee el «minos» del binario y se escribe en su Info.plist.
           for f in build/Alma.xcarchive/Products/Applications/Alma.app/Frameworks/*.framework; do
-            [ -d "$f" ] && codesign --force --sign - "$f"
+            [ -d "$f" ] || continue
+            bin="$f/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$f/Info.plist")"
+            minos=$(otool -l "$bin" | awk '/LC_BUILD_VERSION/{b=1} /LC_VERSION_MIN_IPHONEOS/{v=1} b && $1=="minos" && m==""{m=$2} v && $1=="version" && m==""{m=$2} END{print m}')
+            if [ -n "$minos" ]; then
+              /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion $minos" "$f/Info.plist" 2>/dev/null \
+                || /usr/libexec/PlistBuddy -c "Add :MinimumOSVersion string $minos" "$f/Info.plist"
+              echo "$(basename "$f"): MinimumOSVersion = $minos"
+            fi
+            codesign --force --sign - "$f"
           done
           codesign --force --sign - --entitlements Alma/Alma.entitlements build/Alma.xcarchive/Products/Applications/Alma.app
           xcodebuild -exportArchive -archivePath build/Alma.xcarchive -exportOptionsPlist ExportOptions.plist \
