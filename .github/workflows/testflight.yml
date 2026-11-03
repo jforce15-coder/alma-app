@@ -68,6 +68,12 @@ jobs:
             -destination 'generic/platform=iOS' -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 \
             || { grep -E "error:" -A3 build.log | head -80; tail -20 build.log; exit 1; }
           tail -20 build.log
+          # El modelo del Modo calle tiene que ir dentro de la app (carpeta «Calle»): sin él, el detector de «Alma» no carga.
+          APP=build/dd/Build/Products/Release-iphoneos/Alma.app
+          for n in encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx decoder-epoch-13-avg-2-chunk-16-left-64.onnx joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx tokens.txt; do
+            test -s "$APP/Calle/$n" || { echo "::error::Alma.app no trae Calle/$n (el modelo del Modo calle)."; exit 1; }
+          done
+          ls -l "$APP/Calle"
           # El mismo arreglo de la subida (ver abajo), para probarlo en cada PR.
           bash .github/quitar-frameworks-estaticos.sh build/dd/Build/Products/Release-iphoneos/Alma.app
 
