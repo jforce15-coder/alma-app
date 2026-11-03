@@ -162,3 +162,84 @@ enum PistaCalle {
         return p < minimo
     }
 }
+
+/// La revisión de «Alma» por el dictado (Juan, 3-nov-2026, TestFlight 142 con audífonos Bluetooth): la mitad de las veces
+/// que el detector se disparó, el dictado no contestó en 3,5 s y ese «Alma» de verdad se perdía. Ahora:
+///   · el dictado recibe solo los últimos segundos y se le cierra el audio enseguida (contesta lo que oyó sin esperar a
+///     que la calle se calle);
+///   · si el detector se disparó y el dictado no contesta a tiempo (o falla), se acepta igual: suena la señal y escucha.
+///     Un falso despertar cuesta poco; un «Alma» perdido cuesta mucho. El respaldo (voces cortas que el detector no oyó)
+///     sí necesita que el dictado confirme: sin eso despertaría con cada tos.
+enum VerificacionCalle {
+    static let plazo = 3.5
+
+    /// En qué va el dictado: sigue · terminó (dio su resultado final, o dijo que no oyó voz) · falló (otro error).
+    enum Fin: Equatable { case sigue, termino, fallo }
+    enum Decision: Equatable { case esperar, confirmar, aceptarSinConfirmar, descartar }
+
+    /// `oyoAlma`: algún resultado trae «Alma». `oyoOtraCosa`: el dictado ya dio palabras, sin «Alma». `lleva`: segundos
+    /// desde que el dictado recibió el audio.
+    static func decidir(oyoAlma: Bool, oyoOtraCosa: Bool, fin: Fin, porRespaldo: Bool, lleva: Double) -> Decision {
+        if oyoAlma { return .confirmar }
+        if fin == .termino { return .descartar }               // contestó, y no era «Alma»
+        guard fin == .fallo || lleva > plazo else { return .esperar }
+        if oyoOtraCosa && fin != .fallo { return .descartar }  // contestó otras palabras: no era «Alma»
+        return porRespaldo ? .descartar : .aceptarSinConfirmar  // dictado lento o con error
+    }
+}
+
+/// Cuánto tarda el dictado en dar su primer resultado al revisar «Alma» (ms), para el diagnóstico.
+struct LatenciaCalle {
+    private(set) var ultima: Int?
+    private(set) var cuenta = 0, suma = 0, lentas = 0
+
+    mutating func anotar(ms: Int) { ultima = max(0, ms); cuenta += 1; suma += max(0, ms) }
+    /// No contestó a tiempo (cuenta aparte: no entra en la media).
+    mutating func anotarLenta() { lentas += 1 }
+    var media: Int? { cuenta > 0 ? Int((Double(suma) / Double(cuenta)).rounded()) : nil }
+
+    /// «el dictado tarda 640 ms (media 700 ms de 3) · 1 sin contestar a tiempo»
+    var texto: String {
+        var t: String
+        if let u = ultima, let m = media { t = "el dictado tarda \(u) ms" + (cuenta > 1 ? " (media \(m) ms de \(cuenta))" : "") }
+        else { t = "el dictado todavía no contestó ninguna revisión" }
+        if lentas > 0 { t += " · \(lentas) sin contestar a tiempo" }
+        return t
+    }
+}
+
+/// La frase que sigue a «Alma» (Juan, 3-nov-2026: «Sonó la señal, pero no oí un pedido»). El dictado de la frase empieza
+/// con el audio guardado desde un poco antes de que se disparó el detector: así «Alma, anota pan» dicho de corrido se toma
+/// entero aunque la señal suene encima, y la señal no se come el principio. Sin pedido, se espera `espera` s desde la señal.
+enum PedidoCalle {
+    static let antesDelGatillo = 0.25   // segundos de audio antes del gatillo (el final de «Alma» no estorba: se quita)
+    static let espera = 6.0             // sin pedido, se rinde a los 6 s de la señal (al menos 5, decisión de Juan)
+    static let esperaAviso = 8.0
+    static let pausa = 1.2              // con pedido, la pausa que lo cierra
+    static let maximo = 12.0
+
+    /// Qué hacer cada vuelta: `pide` es lo que lleva el pedido (vacío si nada), `quieto` los segundos sin cambios del
+    /// dictado y `lleva` los segundos desde la señal.
+    enum Paso: Equatable { case sigue, mandar, rendirse }
+    static func paso(pide: String, quieto: Double, lleva: Double, cerro: Bool, aviso: Bool) -> Paso {
+        if !pide.isEmpty { return quieto > pausa || cerro || lleva > maximo ? .mandar : .sigue }
+        return lleva > (aviso ? esperaAviso : espera) || cerro ? .rendirse : .sigue
+    }
+
+    /// El pedido sin la cola de «Alma» que se cuela al empezar un poco antes del gatillo («ma, anota pan» → «anota pan»).
+    /// `despuesDeAlma`: lo que sigue a «Alma» si el dictado la oyó (Conferencia.pedidoAAlma); si no, el texto entero.
+    static func limpiar(_ texto: String, despuesDeAlma: String?) -> String {
+        let borde = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters)
+        var s = (despuesDeAlma ?? texto).trimmingCharacters(in: borde)
+        let l = s.lowercased()
+        for p in ["alma", "halma", "ma"] where l == p || l.hasPrefix(p + " ") || l.hasPrefix(p + ",") || l.hasPrefix(p + ".") {
+            s = String(s.dropFirst(p.count)).trimmingCharacters(in: borde); break
+        }
+        return s.count < 2 ? "" : s
+    }
+
+    /// Los trozos que van al dictado de la frase: los que terminaron después de `desde` (tiempos de un mismo reloj).
+    static func desde<T>(_ trozos: [(cuando: Double, trozo: T)], _ desde: Double) -> [T] {
+        trozos.filter { $0.cuando > desde }.map { $0.trozo }
+    }
+}

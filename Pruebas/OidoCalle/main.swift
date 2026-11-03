@@ -164,5 +164,47 @@ revisa(!PistaCalle.audifonosBajos(esAudifono: true, picoVoz: 0.3), "audífonos y
 revisa(!PistaCalle.audifonosBajos(esAudifono: false, picoVoz: 0.02), "micrófono del iPhone: sin pista")
 revisa(!PistaCalle.audifonosBajos(esAudifono: true, picoVoz: nil), "sin voz reciente: sin pista")
 
+// MARK: - La revisión de «Alma» por el dictado (TestFlight 142: no contestaba en 3,5 s)
+
+do {
+    typealias V = VerificacionCalle
+    revisa(V.decidir(oyoAlma: true, oyoOtraCosa: false, fin: .sigue, porRespaldo: false, lleva: 0.4) == .confirmar, "el dictado oyó «Alma»: señal")
+    revisa(V.decidir(oyoAlma: false, oyoOtraCosa: false, fin: .sigue, porRespaldo: false, lleva: 1) == .esperar, "todavía no contesta (1 s): espera")
+    revisa(V.decidir(oyoAlma: false, oyoOtraCosa: false, fin: .sigue, porRespaldo: false, lleva: 3.6) == .aceptarSinConfirmar, "detector y el dictado no contestó en 3,5 s: se acepta sin confirmar")
+    revisa(V.decidir(oyoAlma: false, oyoOtraCosa: false, fin: .fallo, porRespaldo: false, lleva: 0.5) == .aceptarSinConfirmar, "detector y el dictado falló: se acepta sin confirmar")
+    revisa(V.decidir(oyoAlma: false, oyoOtraCosa: false, fin: .sigue, porRespaldo: true, lleva: 3.6) == .descartar, "respaldo y el dictado no contestó: nada (sin confirmar despertaría con cada tos)")
+    revisa(V.decidir(oyoAlma: false, oyoOtraCosa: false, fin: .fallo, porRespaldo: true, lleva: 0.5) == .descartar, "respaldo y el dictado falló: nada")
+    revisa(V.decidir(oyoAlma: false, oyoOtraCosa: true, fin: .termino, porRespaldo: false, lleva: 0.6) == .descartar, "el dictado contestó otras palabras: no era «Alma»")
+    revisa(V.decidir(oyoAlma: false, oyoOtraCosa: false, fin: .termino, porRespaldo: false, lleva: 0.6) == .descartar, "el dictado dijo que no oyó voz: nada")
+    revisa(V.decidir(oyoAlma: false, oyoOtraCosa: true, fin: .sigue, porRespaldo: false, lleva: 3.6) == .descartar, "a los 3,5 s ya dio otras palabras sin «Alma»: no era «Alma»")
+}
+do {
+    var l = LatenciaCalle()
+    revisa(l.media == nil && l.texto.contains("todavía"), "latencia: sin medir")
+    l.anotar(ms: 600); l.anotar(ms: 800); l.anotarLenta()
+    revisa(l.ultima == 800 && l.media == 700 && l.lentas == 1, "latencia: la última, la media y las lentas aparte")
+    revisa(l.texto == "el dictado tarda 800 ms (media 700 ms de 2) · 1 sin contestar a tiempo", "latencia en el diagnóstico: «\(l.texto)»")
+}
+
+// MARK: - La frase después de «Alma»
+
+do {
+    typealias P = PedidoCalle
+    revisa(P.paso(pide: "", quieto: 4.9, lleva: 4.9, cerro: false, aviso: false) == .sigue, "solo «Alma»: a los 4,9 s sigue escuchando (al menos 5 s)")
+    revisa(P.paso(pide: "", quieto: 6.1, lleva: 6.1, cerro: false, aviso: false) == .rendirse, "solo «Alma»: a los 6 s se rinde")
+    revisa(P.paso(pide: "", quieto: 7, lleva: 7, cerro: false, aviso: true) == .sigue, "un aviso espera 8 s")
+    revisa(P.paso(pide: "anota pan", quieto: 0.5, lleva: 2, cerro: false, aviso: false) == .sigue, "con pedido y sin pausa: sigue")
+    revisa(P.paso(pide: "anota pan", quieto: 1.3, lleva: 2, cerro: false, aviso: false) == .mandar, "con pedido y pausa de 1,2 s: se manda")
+    revisa(P.paso(pide: "anota pan y leche", quieto: 0.1, lleva: 12.1, cerro: false, aviso: false) == .mandar, "12 s como mucho")
+    revisa(P.limpiar("ma, anota pan", despuesDeAlma: nil) == "anota pan", "la cola de «Alma» se quita: «ma, anota pan» → «anota pan»")
+    revisa(P.limpiar("Alma anota pan", despuesDeAlma: "anota pan") == "anota pan", "con «Alma» en el texto: lo que sigue")
+    revisa(P.limpiar("ma", despuesDeAlma: nil) == "", "solo la cola de «Alma»: no es un pedido")
+    revisa(P.limpiar("mamá llega a las tres", despuesDeAlma: nil) == "mamá llega a las tres", "«mamá» no es la cola de «Alma»")
+    revisa(P.limpiar("Anota pan", despuesDeAlma: nil) == "Anota pan", "sin cola: tal cual")
+    // Los trozos desde el gatillo (un poco antes): «Alma, anota pan» dicho de corrido entra entero a la frase.
+    let trozos: [(cuando: Double, trozo: String)] = [(9.0, "al"), (9.5, "ma"), (10.0, "ano"), (10.5, "ta pan")]
+    revisa(P.desde(trozos, 10.0 - P.antesDelGatillo) == ["ano", "ta pan"], "la frase empieza en el gatillo, con lo que dijo mientras el dictado revisaba")
+}
+
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallaron.")
 exit(fallos == 0 ? 0 : 1)
