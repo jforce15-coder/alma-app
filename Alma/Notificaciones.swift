@@ -28,16 +28,27 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationCategory(identifier: "alma.aviso", actions: [abrir], intentIdentifiers: [], options: [])])
     }
 
-    func mostrar(id: String, texto: String) {
+    /// `titulo` y `lineas` (del Hub, vozAvisos): lo que terminó en segundo plano llega con la respuesta, no solo el aviso
+    /// («Alma · Operación de hoy», el aviso de subtítulo y hasta 3 líneas del resultado). Sin ellos, como antes.
+    /// Sin Notification Service Extension: no hay imagen ni botones por aviso; lo completo está en la tarjeta de Pendientes.
+    func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = []) {
         guard !texto.isEmpty else { return }
         conPermiso {
             let n = UNMutableNotificationContent()
             n.title = "Alma"; n.sound = .default; n.threadIdentifier = "alma.retomar"
-            // Notificación expandible: en el banner se ve el resumen (subtítulo) y al mantenerla presionada se abre el texto completo.
             let t = texto.trimmingCharacters(in: .whitespacesAndNewlines)
-            let primera = t.components(separatedBy: CharacterSet(charactersIn: ".!?\n")).first ?? t
-            if t.count > 90, !primera.isEmpty, primera.count <= 90 { n.subtitle = primera }
-            n.body = String(t.prefix(1000))
+            let ls = lineas.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.prefix(3)
+            let tit = titulo.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !ls.isEmpty {
+                if !tit.isEmpty { n.title = "Alma · " + String(tit.prefix(60)) }
+                n.subtitle = String(t.prefix(120))
+                n.body = ls.map { "· " + $0 }.joined(separator: "\n")
+            } else {
+                // Notificación expandible: en el banner se ve el resumen (subtítulo) y al mantenerla presionada se abre el texto completo.
+                let primera = t.components(separatedBy: CharacterSet(charactersIn: ".!?\n")).first ?? t
+                if t.count > 90, !primera.isEmpty, primera.count <= 90 { n.subtitle = primera }
+                n.body = String(t.prefix(1000))
+            }
             n.categoryIdentifier = "alma.aviso"; n.userInfo = ["id": id]
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: n, trigger: nil))
         }
