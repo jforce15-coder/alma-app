@@ -100,6 +100,11 @@ jobs:
           bash .github/quitar-frameworks-estaticos.sh build/Alma.xcarchive/Products/Applications/Alma.app
           # El archivo sin firmar no lleva los permisos (Apple Salud): se le ponen con una firma provisional y la
           # exportación los conserva al firmar para distribución (y los activa en el App ID con -allowProvisioningUpdates).
+          # Los frameworks de dentro (sherpa-onnx y onnxruntime, dinámicos) también se firman: si van sin firma, la
+          # exportación no los vuelve a firmar y Apple rechaza la subida («Invalid Signature»).
+          for f in build/Alma.xcarchive/Products/Applications/Alma.app/Frameworks/*.framework; do
+            [ -d "$f" ] && codesign --force --sign - "$f"
+          done
           codesign --force --sign - --entitlements Alma/Alma.entitlements build/Alma.xcarchive/Products/Applications/Alma.app
           xcodebuild -exportArchive -archivePath build/Alma.xcarchive -exportOptionsPlist ExportOptions.plist \
             -exportPath build/export $AUTH | tail -60
