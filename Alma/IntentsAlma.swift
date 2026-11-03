@@ -46,7 +46,8 @@ struct ModoCalleAlma: AppIntent {
         // Encender pide permisos y carga el detector: se espera un poco para decir lo que de verdad pasó.
         if on { try? await Task.sleep(nanoseconds: 1_500_000_000) }
         let frase: String
-        if on, m.encendido { return .result(dialog: "") }   // ya escucha «Alma»: Siri no dice nada con su voz
+        // Ya escucha «Alma»: lo confirma Alma con su voz (cuando Siri suelta el audio); Siri no dice nada con la suya.
+        if on, m.encendido { _ = m.decirDeFuera("Modo calle encendido."); return .result(dialog: "") }
         if m.encendido == on { frase = "Modo calle apagado." }
         else { frase = on ? "Estoy encendiendo el Modo calle; si no queda, ábrelo en Alma." : "No pude apagar el Modo calle; ábrelo en Alma." }
         return .result(dialog: "\(frase)")
