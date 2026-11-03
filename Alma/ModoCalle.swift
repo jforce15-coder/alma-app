@@ -100,7 +100,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private var turnoVoz = 0                     // sube con cada frase y con callar(): una voz pedida tarde ya no suena
     private var vozGuardada: [String: Data] = [:]   // frases con la voz de Alma ya pedidas (solo en memoria)
     private var hubSinVoz = false                // el Hub todavía no tiene «calleVoz»: sin audio, habla el iPhone
-    private var ultimaVoz = ""                   // con qué voz se dijo lo último (para «Probar el Modo calle»)
+    private var vozUsada = ""                    // con qué voz se dijo lo último (para «Probar el Modo calle»)
     /// Lo que contestó Alma a un atajo («Mándale a Alma») con el Modo calle encendido: se dice con su voz, no con la de Siri.
     private var deFuera: (texto: String, desde: Date)?
     /// Las frases que la app dice por su cuenta: se piden con la voz de Alma al encender, así suenan con ella aunque falle la red.
@@ -223,7 +223,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         if !dictadoOido.isEmpty { d["dictado"] = dictadoOido }
         if !veredicto.isEmpty { d["veredicto"] = veredicto }
         if !errorDiag.isEmpty { d["error"] = errorDiag }
-        if !ultimaVoz.isEmpty { d["voz"] = ultimaVoz }
+        if !vozUsada.isEmpty { d["voz"] = vozUsada }
         if probando { d["probando"] = true }
         if pista { d["pista"] = PistaCalle.texto }
         return d
@@ -917,7 +917,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         guard let p = try? AVAudioPlayer(data: d) else { return false }
         reproductor = p; p.delegate = self; p.volume = 1
         guard p.play() else { reproductor = nil; return false }
-        ultimaVoz = voz
+        vozUsada = voz
         return true
     }
 
@@ -926,7 +926,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         let u = AVSpeechUtterance(string: t)
         u.voice = VozIphone.elegida
         u.rate = AVSpeechUtteranceDefaultSpeechRate
-        ultimaVoz = "iPhone: " + VozIphone.nombre + " (" + por + ")"
+        vozUsada = "iPhone: " + VozIphone.nombre + " (" + por + ")"
         anotar("Voz del iPhone: " + VozIphone.nombre + " · " + por)
         sintetizador.speak(u)
     }
@@ -1154,7 +1154,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
                       "modelo: " + DetectorAlma.modelo()]
         if !veredicto.isEmpty { partes.append("último: " + veredicto) }
         if !errorDiag.isEmpty { partes.append("error: " + errorDiag) }
-        if !ultimaVoz.isEmpty { partes.append("voz: " + ultimaVoz) }
+        if !vozUsada.isEmpty { partes.append("voz: " + vozUsada) }
         partes.append("pasos: " + eventos.suffix(8).joined(separator: " | "))
         return String(partes.joined(separator: " · ").prefix(1800))
     }
