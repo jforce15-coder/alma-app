@@ -97,11 +97,18 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
     /// El saludo al abrirla con tres toques a la roca del navegador (hablarSobrePantalla), pedido de Juan: «Hola, ahora lo veo».
     static let saludoPantalla = "Hola, ahora lo veo."
-    /// El saludo al despertarla solo con «Alma» o el anillo: el `saludo_corto` de la ficha del Hub (p. ej. «Dime, Juan») o «Dime».
-    static func saludoCorto(_ ficha: [String: Any]) -> String {
-        let dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
-        let s = ((ficha["saludo_corto"] as? String) ?? (dv["saludo_corto"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return s.isEmpty ? "Dime" : s
+    /// Saludo variado (#410, decisión de Juan): una frase natural y completa que cambia cada vez, nunca la misma dos veces
+    /// seguidas. Vienen en la ficha del Hub (`saludos`, con su nombre); si no, estas.
+    static let saludosBase = ["Hola, cuéntame.", "Aquí estoy, ¿qué necesitas?", "Dime, ¿en qué te ayudo?", "Hola, ¿cómo vamos?",
+                              "Te escucho.", "Hola, aquí contigo. ¿Qué se te ofrece?", "¿Qué tal? Cuéntame.", "Aquí estoy. ¿Por dónde empezamos?"]
+    static func saludoVariado(_ ficha: [String: Any]) -> String {
+        let deFicha = ((ficha["saludos"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let lista = deFicha.isEmpty ? saludosBase : deFicha
+        let d = UserDefaults.standard, ultimo = d.string(forKey: "voz_saludo_ultimo") ?? ""
+        let opciones = lista.count > 1 ? lista.filter { $0 != ultimo } : lista
+        let s = opciones.randomElement() ?? lista[0]
+        d.set(s, forKey: "voz_saludo_ultimo")
+        return s
     }
     private var textoInicial: String?
     private var alOir = false
@@ -128,6 +135,20 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// ContentView abre el chat con esto y la llamada sigue; al cerrar ese chat se cuelga y la app vuelve al inicio.
     struct Mostrado: Equatable { let id: Int; let titulo: String; let contenido: String }
     @Published private(set) var mostrado: Mostrado?
+    /// Medidor de personalidad (#410): en qué nivel de Modo Weebo va Alma en esta llamada (lo cuenta ella con la herramienta
+    /// de cliente nivel_weebo) y cuánto se adapta a Juan (viene en la ficha del Hub). Solo con el administrador principal.
+    @Published private(set) var weebo: Int?
+    /// +1 subió · −1 bajó · 0 sin cambio reciente (la flecha ▲/▼ se ve unos segundos).
+    @Published private(set) var weeboCambio = 0
+    @Published private(set) var adaptacion: Int?
+    private var adaptTope = 60, weeboModo = "auto"
+    private var flechaT: DispatchWorkItem?
+    /// Saludo variado: cuánto de tu voz se oyó mientras conectaba (si ya hablabas, Alma no saluda y escucha).
+    private var vozAlConectar = 0.0
+    /// La señal de la llamada (alma-inicio) suena fuerte ~1 s: lo que el micrófono oye en ese rato no es Juan.
+    static let finSenal = 1.0
+    /// Desde el toque hasta decidir si Alma saluda: la señal más 0.4 s para ver si Juan ya empezó a hablar.
+    static let ventanaSaludo = 1.4
 
     // MARK: - Lo que pide la página
 
@@ -274,9 +295,46 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// «Terminar» en la pantalla: cierra la conversación (el doble toque, en cambio, pausa).
     func colgar() { if estado == .hablando || estado == .conectando { terminar() } }
 
-    var resumen: [String: Any] { ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
-                                  "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
-                                  "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar"] }
+    var resumen: [String: Any] {
+        var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
+                                "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
+                                "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar"]
+        // la página que se abre a media llamada (o se recarga) pinta los chips con esto
+        if estado == .hablando || estado == .conectando, let p = personalidad { r["personalidad"] = p }
+        return r
+    }
+    /// Lo que ven los chips de la llamada (alma/inicio.html · LlamadaVista). nil = no hay medidores (no es el principal).
+    private var personalidad: [String: Any]? {
+        guard weebo != nil || adaptacion != nil else { return nil }
+        return ["weebo": weebo.map { $0 as Any } ?? NSNull(), "cambio": weeboCambio, "adapt": adaptacion.map { $0 as Any } ?? NSNull(),
+                "tope": adaptTope, "modo": weeboModo]
+    }
+    private func emitirPersonalidad() {
+        guard var p = personalidad else { return }
+        p["tipo"] = "personalidad"; emitir(p)
+    }
+    /// Nuevo nivel de Modo Weebo: la flecha ▲/▼ se ve unos segundos y se va.
+    private func ponerWeebo(_ n: Int) {
+        if let w = weebo, w != n { weeboCambio = n > w ? 1 : -1 } else if weebo == nil { weeboCambio = 0 }
+        weebo = n
+        flechaT?.cancel()
+        if weeboCambio != 0 {
+            let w = DispatchWorkItem { [weak self] in self?.weeboCambio = 0 }
+            flechaT = w; DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: w)
+        }
+    }
+    /// Juan cambió el Modo Weebo en la hoja de la llamada (alma/inicio.html): Alma se entera ya, sin esperar a otra llamada.
+    func ajustarWeebo(modo: String, nivel: Int) {
+        guard estado == .hablando || estado == .conectando else { return }
+        let n = max(0, min(3, nivel))
+        weeboModo = modo == "fijo" ? "fijo" : "auto"
+        if weeboModo == "fijo" { ponerWeebo(n) }
+        paso(weeboModo == "fijo" ? "Juan fijó el Modo Weebo en \(n)" : "Juan dejó el Modo Weebo en automático")
+        guard estado == .hablando else { return }
+        mandar(["type": "contextual_update", "text": weeboModo == "fijo"
+            ? "MODO WEEBO FIJO: Juan acaba de fijar tu Modo Weebo en el nivel \(n). Úsalo desde ahora (con un problema o una urgencia, vuelve a tu centro). No lo comentes."
+            : "MODO WEEBO AUTOMÁTICO: Juan dejó tu Modo Weebo en automático: vuelve a medirlo tú. No lo comentes."])
+    }
     /// La sesión de la llamada (y la del anillo): no se mezcla, así que pausa la música o los videos de otras apps.
     static let opciones: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
     /// La sesión para solo escuchar (Modo Inicio, conferencia, Mejora): se mezcla con las otras apps (TikTok, Facebook, la voz
@@ -417,7 +475,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         inicioLlamada = Date()
         // Un solo micrófono: el Modo Inicio se calla ya (con la ficha pedida de antemano, la llamada abre el suyo enseguida).
         EscuchaInicio.shared.detener()
-        estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false
+        estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0
+        weebo = nil; weeboCambio = 0; adaptacion = nil; flechaT?.cancel()
         sonido("alma-inicio", llamada: true)   // el segundo beep: el de la llamada a Alma, suena siempre (también en conferencia): lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
         if let f = fichaLista, Date().timeIntervalSince(f.t) < 540 {
@@ -463,19 +522,22 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in if self?.estado == .conectando { self?.fallo("Alma no contestó. Revisa tu internet.") } }
         var dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
         segundosLargo = (ficha["conferencia_tras"] as? NSNumber).map { max(30, $0.doubleValue) } ?? 240
+        // Medidores de la llamada (solo vienen con el administrador principal): el nivel de partida y la adaptación.
+        weebo = (ficha["weebo_nivel"] as? NSNumber)?.intValue; weeboCambio = 0
+        adaptacion = (ficha["adapt_nivel"] as? NSNumber)?.intValue
+        adaptTope = (ficha["adapt_tope"] as? NSNumber)?.intValue ?? 60
+        weeboModo = (ficha["weebo_modo"] as? String) ?? "auto"
         // Hay un tema por retomar (lo eligió el Hub, el más importante): Alma empieza por él en lugar de solo escuchar.
         let retomar = (ficha["retomar"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        // La despertaron solo con «Alma» (el anillo, o «Alma» en la conferencia o el Modo Inicio, sin pedido): saluda corto y
-        // al instante («Dime» o «Dime, <nombre>» si el Hub manda `saludo_corto`). Si ya dijeron el pedido junto con «Alma»,
-        // no saluda: va directo a eso.
+        // La despertaron solo con «Alma» (el anillo, o «Alma» en la conferencia o el Modo Inicio, sin pedido): saluda con el
+        // saludo variado. Si ya dijeron el pedido junto con «Alma», no saluda: va directo a eso.
         let sinPedido = (textoInicial ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let corto = VozNativa.saludoCorto(ficha)
         if !desdePantalla {
-            let empieza: String = retomar == nil ? "Ya sonó la señal y ya dijiste «\(corto)»: NO saludes otra vez ni hables más. Escucha." : "Empiezas tú con el tema por retomar (ya está en tu primer mensaje); después escucha."
+            let empieza: String = retomar == nil ? "Ya sonó la señal y ya saludaste (o Juan ya empezó a hablar): NO saludes otra vez ni hables más. Escucha." : "Empiezas tú con el tema por retomar (ya está en tu primer mensaje); después escucha."
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO ANILLO: Juan te habla desde su anillo, casi siempre con el teléfono bloqueado (solo voz, sin pantalla). " + empieza + " Habla en tramos, con pausas, como quien piensa en voz alta: mientras no haya pedido algo concreto o su idea quede a medias, usa skip_turn y sigue escuchando; junta todo lo que dijo como un solo mensaje. Responde solo cuando ya pidió algo claro o terminó de hablar. Respuestas cortas, claras y cálidas."
         }
         if let cf = conferencia {
-            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste «\(corto)»; escucha lo que te piden." : "") + " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste con un saludo corto; escucha lo que te piden." : "") + " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
         }
         // Manos de Alma (navegador): qué tiene abierto el navegador de la app (las reglas están en el Hub, voz.js).
         let manos = ManosAlma.shared.ficha
@@ -483,20 +545,31 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if let pt = pantalla {
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO PANTALLA: Juan está en el navegador de la app de Alma viendo " + pt + " y tocó tres veces la roca para hablar contigo de lo que ve. Ya le dijiste «\(VozNativa.saludoPantalla)»: no saludes otra vez; escucha. En unos segundos te llega LO QUE SE VE EN LA PANTALLA (lo que muestra su captura): úsalo como contexto. Si pregunta antes de que llegue, dile que lo estás mirando."
         }
-        var agent: [String: Any] = [:]
-        // modo anillo: sin tema por retomar, Alma dice solo el saludo corto y escucha. Desde la roca saluda como en la página.
-        // Tres toques en el navegador (pantalla): «Hola, ahora lo veo» y Alma escucha lo que preguntas de la pantalla.
-        let primero: String
-        if pantalla != nil { primero = VozNativa.saludoPantalla }
-        else if conferencia != nil || alOir { primero = sinPedido ? corto : "" }
-        else if desdePantalla { primero = ficha["first_message"] as? String ?? "" }
-        else { primero = retomar ?? corto }
-        agent["first_message"] = primero
-        if let l = ficha["language"] as? String, !l.isEmpty { agent["language"] = l }
-        var inicio: [String: Any] = ["type": "conversation_initiation_client_data", "dynamic_variables": dv]
-        if !agent.isEmpty { inicio["conversation_config_override"] = ["agent": agent] }
-        mandar(inicio)
+        // Saludo variado (#410): sin tema por retomar, Alma abre con una frase natural y completa que cambia cada vez (antes
+        // «Dime, Juan», que sonaba cortado). Tres toques en el navegador (pantalla): «Hola, ahora lo veo».
+        // Sin pisar a Juan: el primer mensaje se decide pasada la señal (ventanaSaludo); si para entonces Juan ya está
+        // hablando, va vacío y Alma solo escucha (ElevenLabs espera a que hable). Si ya dijeron el pedido con «Alma», tampoco.
+        let tema = (ficha["saludo_tema"] as? Bool) == true
+        let enPantalla = pantalla != nil, enConferencia = conferencia != nil || alOir
+        let fm = ficha["first_message"] as? String ?? "", idioma = ficha["language"] as? String ?? ""
+        let deRoca = desdePantalla, llamada = inicioLlamada, dvListas = dv
+        let espera = max(0, VozNativa.ventanaSaludo - Date().timeIntervalSince(inicioLlamada))
         escuchar()
+        DispatchQueue.main.asyncAfter(deadline: .now() + espera) { [weak self] in
+            guard let self, self.inicioLlamada == llamada, self.estado == .conectando, self.ws != nil else { return }
+            let primero: String
+            if self.vozAlConectar >= 0.25 {   // Juan ya habla: primer mensaje vacío, Alma lo escucha
+                self.paso(String(format: "Ya hablabas al conectar (%.1f s): Alma no saluda y te escucha", self.vozAlConectar))
+                primero = ""
+            }
+            else if enPantalla { primero = VozNativa.saludoPantalla }
+            else if enConferencia { primero = sinPedido ? VozNativa.saludoVariado(ficha) : "" }
+            else if deRoca { primero = retomar ?? (tema && !fm.isEmpty ? fm : VozNativa.saludoVariado(ficha)) }   // un tema por retomar o la llamada reciente siguen primero
+            else { primero = retomar ?? VozNativa.saludoVariado(ficha) }
+            var agent: [String: Any] = ["first_message": primero]
+            if !idioma.isEmpty { agent["language"] = idioma }
+            self.mandar(["type": "conversation_initiation_client_data", "dynamic_variables": dvListas, "conversation_config_override": ["agent": agent]])
+        }
     }
 
     /// Abre el micrófono. Primero con cancelación de eco; si iOS la rechaza (error «what»), sin ella: así Alma igual escucha.
@@ -555,7 +628,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
            suena más fuerte que su eco (Juan hablándole de verdad); lo demás se manda como silencio. Sin cancelación de
            eco el eco es más fuerte, así que el umbral sube. */
         let suenaAlma = Date() < finVozAlma.addingTimeInterval(0.35)
+        /* La señal de la llamada (alma-inicio, ~1 s fuerte) suena por el parlante mientras conecta: si llegaba a ElevenLabs
+           como voz, lo tomaba como que Juan interrumpía y cortaba el saludo («Dime, Ju…»). Solo pasa lo que suena más fuerte. */
+        let desdeToque = Date().timeIntervalSince(inicioLlamada), suenaSenal = desdeToque >= 0 && desdeToque < VozNativa.finSenal
         if suenaAlma && rmsTu < (sinEco ? 0.12 : 0.045) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
+        else if suenaSenal && rmsTu < (sinEco ? 0.15 : 0.08) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
         let cap = AVAudioFrameCount(Double(buf.frameLength) * 16000 / buf.format.sampleRate) + 32
         guard let out = AVAudioPCMBuffer(pcmFormat: formatoEntrada, frameCapacity: cap) else { return }
         var dado = false
@@ -567,7 +644,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let datos = Data(bytes: p[0], count: Int(out.frameLength) * 2)
         let seg = Double(out.frameLength) / 16000
         DispatchQueue.main.async {
-            if self.estado == .conectando { if self.colaVoz.count < 80 { self.colaVoz.append(datos.base64EncodedString()) }; return }
+            if self.estado == .conectando {
+                if self.colaVoz.count < 80 { self.colaVoz.append(datos.base64EncodedString()) }
+                // ¿Juan ya habla? (para no saludarlo encima). Durante la señal solo cuenta una voz claramente más fuerte.
+                if rmsTu > (suenaSenal ? 0.15 : 0.04) { self.vozAlConectar += seg }
+                return
+            }
             self.vozEnviada += seg; self.ultimaVoz = Date(); self.mandar(["user_audio_chunk": datos.base64EncodedString()])
             if !self.almaHabla { self.nivel = min(1, CGFloat(rmsTu) * 9) }
             if rmsTu > 0.05 && !suenaAlma { self.ultimaActividad = Date() }   // Juan hablando también cuenta (no es pausa larga)
@@ -623,11 +705,16 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let t = textoInicial, !t.isEmpty { mandar(["type": "user_message", "text": t]) }; textoInicial = nil
             if let v = vistaPendiente { vistaPendiente = nil; mandar(["type": "contextual_update", "text": v]) }   // la captura llegó mientras conectaba
             infoBloqueo("Te escucho · dos toques para pausar")
+            emitirPersonalidad()   // los chips de la llamada (si es el principal)
             if let id = ev["conversation_id"] as? String { vincular(id) }
         case "audio":
             let ev = j["audio_event"] as? [String: Any] ?? [:]
             ultimaActividad = Date()
-            if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) { if !sono { sono = true; paso("Alma está hablando") }; sonar(d) }
+            if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) {
+                let primera = !sono
+                if primera { sono = true; paso("Alma está hablando") }
+                sonar(d, respiro: primera)
+            }
         case "agent_tool_request":
             herramienta = true; ultimaActividad = Date()
         case "client_tool_call":
@@ -670,6 +757,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             else { ManosAlma.shared.correr(nombre, p, contestar) }
             return
         }
+        // Medidor de personalidad (#410): Alma cuenta en silencio su nivel de Modo Weebo. No espera respuesta (expects_response
+        // false): no se contesta, así no la hace hablar.
+        if nombre == "nivel_weebo" {
+            let n: Int? = (p["nivel"] as? NSNumber)?.intValue ?? Int((p["nivel"] as? String) ?? "")
+            if let n, (0...3).contains(n) { if n != weebo { paso("Modo Weebo: nivel \(n)") }; ponerWeebo(n); emitirPersonalidad() }
+            return
+        }
         var res = "Esta herramienta no existe en la app.", error = true
         if nombre == "mostrar_en_chat" {
             let titulo = (p["titulo"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -709,10 +803,18 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }.resume()
     }
 
-    private func sonar(_ pcm16: Data) {
+    /// `respiro`: la primera voz de la llamada va después de 0.12 s de silencio. El audio con cancelación de eco recién
+    /// abierto puede comerse el arranque de lo primero que suena (la primera sílaba del saludo); el respiro lo protege.
+    private func sonar(_ pcm16: Data, respiro: Bool = false) {
         let n = pcm16.count / 2
         guard n > 0, let buf = AVAudioPCMBuffer(pcmFormat: formatoSalida, frameCapacity: AVAudioFrameCount(n)), let ch = buf.floatChannelData else { return }
         buf.frameLength = AVAudioFrameCount(n)
+        if respiro, let sil = AVAudioPCMBuffer(pcmFormat: formatoSalida, frameCapacity: AVAudioFrameCount(formatoSalida.sampleRate * 0.12)), let sc = sil.floatChannelData {
+            sil.frameLength = sil.frameCapacity
+            for i in 0..<Int(sil.frameLength) { sc[0][i] = 0 }
+            player.scheduleBuffer(sil, completionHandler: nil)
+            finVozAlma = max(finVozAlma, Date()).addingTimeInterval(0.12)
+        }
         var e: Float = 0
         pcm16.withUnsafeBytes { (r: UnsafeRawBufferPointer) in
             let s = r.bindMemory(to: Int16.self)
