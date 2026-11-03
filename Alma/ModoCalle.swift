@@ -20,7 +20,10 @@ import UIKit
 ///     no gastar créditos de ElevenLabs: 6 s de silencio de Juan después de que Alma habló, «espera» / «luego» / «es todo»,
 ///     45 s sin que Alma hable, u otra llamada, Siri o los audífonos que se desconectan (las reglas, en SuenoCalle.swift).
 ///     Al colgar, vuelve a esperar «Alma» solo con el detector; si fue otra llamada o Siri, espera a que iOS devuelva el
-///     micrófono. Mientras no hay llamada, todo lo que Alma dice al oído es la voz del iPhone o el audio que manda el Hub.
+///     micrófono. Mientras no hay llamada, todo lo que Alma dice al oído es su voz (el audio de ElevenLabs que manda el Hub).
+///   · La voz (Juan, 3-nov-2026: «me responde una voz de hombre»): la voz por defecto del iPhone para «es-MX» puede ser de
+///     hombre. Si una respuesta llega sin audio, se pide aparte al Hub (acción «calleVoz»); las frases fijas quedan guardadas
+///     en memoria. Solo sin internet habla el iPhone, y siempre con una voz de mujer elegida a mano (VozIphone).
 ///   · Medición (T3): cada sesión guarda minutos, batería al empezar y al terminar, despertares y falsos despertares, y los
 ///     segundos de llamada con ElevenLabs (cuántas colgó el sueño); al apagarlo se manda el resumen al Hub (acción
 ///     «calleUso») y queda en el teléfono (`calle_usos`), con un diagnóstico corto.
@@ -85,6 +88,14 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private let sintetizador = AVSpeechSynthesizer()
     private var reproductor: AVAudioPlayer?
     private var trasHablar: (() -> Void)?
+    private var turnoVoz = 0                     // sube con cada frase y con callar(): una voz pedida tarde ya no suena
+    private var vozGuardada: [String: Data] = [:]   // frases con la voz de Alma ya pedidas (solo en memoria)
+    private var hubSinVoz = false                // el Hub todavía no tiene «calleVoz»: sin audio, habla el iPhone
+    private var ultimaVoz = ""                   // con qué voz se dijo lo último (para «Probar el Modo calle»)
+    /// Lo que contestó Alma a un atajo («Mándale a Alma») con el Modo calle encendido: se dice con su voz, no con la de Siri.
+    private var deFuera: (texto: String, desde: Date)?
+    /// Las frases que la app dice por su cuenta: se piden con la voz de Alma al encender, así suenan con ella aunque falle la red.
+    private static let frasesFijas = ["Listo.", "No pude hablar con el Hub. Intenta otra vez.", "No pude hacerlo ahora."]
 
     // MARK: - Medición (T3)
 
@@ -190,6 +201,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         if !dictadoOido.isEmpty { d["dictado"] = dictadoOido }
         if !veredicto.isEmpty { d["veredicto"] = veredicto }
         if !errorDiag.isEmpty { d["error"] = errorDiag }
+        if !ultimaVoz.isEmpty { d["voz"] = ultimaVoz }
         if probando { d["probando"] = true }
         return d
     }
@@ -297,6 +309,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         relojVigia = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.vigilar() }
         volverAEsperar()
         emitir()
+        guardarFrasesFijas()
         VozNativa.shared.buscarAvisosAhora()   // los avisos que ya esperan se dicen enseguida, sin esperar la vuelta de 45 s
     }
 
@@ -647,6 +660,10 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         // Un respiro: que el final de la voz de Alma (o la señal) no despierte al detector.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self, self.encendido, self.fase == .esperando else { return }
+            if let f = self.deFuera {
+                self.deFuera = nil
+                if Date().timeIntervalSince(f.desde) < 120 { self.decir(f.texto, audio: nil) { [weak self] in self?.volverAEsperar() }; return }
+            }
             self.candado.lock(); self.alimentarDetector = true; self.candado.unlock()
             self.procesarAvisos()
         }
@@ -669,7 +686,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             } else {
                 if self.encendido { self.uso.errores += 1 }
                 let e = (j?["error"] as? String).map { ModoCalle.corto($0, palabras: 20) } ?? ""
-                self.responder(hablar: j == nil ? "No pude hablar con el Hub. Intenta otra vez." : (e.isEmpty ? "No pude hacerlo ahora." : e), conversar: false, audio: nil, pedido: texto)
+                self.responder(hablar: j == nil ? "No pude hablar con el Hub. Intenta otra vez." : (e.isEmpty ? "No pude hacerlo ahora." : e), conversar: false, audio: nil, pedido: texto, pedirVoz: j != nil)
             }
         }
     }
@@ -686,14 +703,14 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
                 self.responder(hablar: alma.isEmpty ? "Listo." : ModoCalle.corto(alma, palabras: 40), conversar: false, audio: nil, pedido: texto)
             } else {
                 if self.encendido { self.uso.errores += 1 }
-                self.responder(hablar: j == nil ? "No pude hablar con el Hub. Intenta otra vez." : "No pude hacerlo ahora.", conversar: false, audio: nil, pedido: texto)
+                self.responder(hablar: j == nil ? "No pude hablar con el Hub. Intenta otra vez." : "No pude hacerlo ahora.", conversar: false, audio: nil, pedido: texto, pedirVoz: j != nil)
             }
         }
     }
 
-    private func responder(hablar: String, conversar: Bool, audio: String?, pedido: String) {
+    private func responder(hablar: String, conversar: Bool, audio: String?, pedido: String, pedirVoz: Bool = true) {
         let frase = hablar.isEmpty && !conversar && audio == nil ? "Listo." : hablar
-        decir(frase, audio: audio) { [weak self] in
+        decir(frase, audio: audio, pedirVoz: pedirVoz) { [weak self] in
             guard let self, self.ocupaMicrofono else { return }
             if conversar { self.abrirLlamada(pedido) } else { self.volverAEsperar() }
         }
@@ -739,26 +756,79 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     // MARK: - Hablar
 
-    /// Alma contesta al oído: con su voz si el Hub mandó el audio; si no, con la voz del iPhone (es-MX, ritmo natural).
-    private func decir(_ texto: String, audio: String?, luego: @escaping () -> Void) {
+    /// Alma contesta al oído, siempre con su voz (ElevenLabs): el audio que mandó el Hub; si no vino, el que ya se guardó
+    /// para esa frase; si no, se pide aparte (acción «calleVoz», 6 s como mucho). Solo sin nada de eso habla el iPhone, con
+    /// una voz de mujer elegida a mano (VozIphone), nunca la de por defecto. `pedirVoz`: false si el Hub no contesta (sin red).
+    private func decir(_ texto: String, audio: String?, pedirVoz: Bool = true, luego: @escaping () -> Void) {
         fase = .hablando
         candado.lock(); alimentarDetector = false; candado.unlock()
         trasHablar = luego
-        if let a = audio, let d = Data(base64Encoded: a), let p = try? AVAudioPlayer(data: d) {
-            reproductor = p; p.delegate = self; p.volume = 1
-            if p.play() { return }
-            reproductor = nil
-        }
+        turnoVoz += 1; let mio = turnoVoz
         let t = texto.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let a = audio, let d = Data(base64Encoded: a), tocar(d, voz: "Alma (ElevenLabs)") { guardarVoz(t, d); return }
         guard !t.isEmpty else { terminoDeHablar(); return }
+        if let d = vozGuardada[t], tocar(d, voz: "Alma (ElevenLabs, guardada)") { return }
+        guard pedirVoz, !hubSinVoz else { hablarIphone(t, por: hubSinVoz ? "el Hub no tiene «calleVoz»" : "sin conexión con el Hub"); return }
+        llamarHub(["texto": t], accion: "calleVoz", timeout: 6) { [weak self] j in
+            guard let self, self.turnoVoz == mio, self.fase == .hablando, self.trasHablar != nil else { return }   // ya se calló
+            if (j?["error"] as? String) == "accion" { self.hubSinVoz = true }
+            if (j?["ok"] as? Bool) == true, let a = j?["audio"] as? String, let d = Data(base64Encoded: a),
+               self.tocar(d, voz: "Alma (ElevenLabs, pedida aparte)") { self.guardarVoz(t, d); return }
+            self.hablarIphone(t, por: j == nil ? "el Hub no contestó a tiempo" : "el Hub no mandó la voz")
+        }
+    }
+
+    /// Suena el mp3 de la voz de Alma. false si no se pudo (entonces se intenta lo siguiente).
+    private func tocar(_ d: Data, voz: String) -> Bool {
+        guard let p = try? AVAudioPlayer(data: d) else { return false }
+        reproductor = p; p.delegate = self; p.volume = 1
+        guard p.play() else { reproductor = nil; return false }
+        ultimaVoz = voz
+        return true
+    }
+
+    /// La voz del iPhone, solo de respaldo: de mujer, en español, elegida a mano. Queda anotado por qué.
+    private func hablarIphone(_ t: String, por: String) {
         let u = AVSpeechUtterance(string: t)
-        u.voice = AVSpeechSynthesisVoice(language: "es-MX") ?? AVSpeechSynthesisVoice(language: "es-ES")
+        u.voice = VozIphone.elegida
         u.rate = AVSpeechUtteranceDefaultSpeechRate
+        ultimaVoz = "iPhone: " + VozIphone.nombre + " (" + por + ")"
+        anotar("Voz del iPhone: " + VozIphone.nombre + " · " + por)
         sintetizador.speak(u)
+    }
+
+    /// Las frases cortas quedan con la voz de Alma (en memoria, 40 como mucho): la próxima vez suenan sin esperar al Hub.
+    private func guardarVoz(_ t: String, _ d: Data) {
+        guard !t.isEmpty, t.count <= 160, d.count <= 200_000 else { return }
+        if vozGuardada.count >= 40, vozGuardada[t] == nil, let k = vozGuardada.keys.first(where: { !ModoCalle.frasesFijas.contains($0) }) { vozGuardada[k] = nil }
+        vozGuardada[t] = d
+    }
+
+    /// Al encender: las frases que dice la app por su cuenta se piden una vez con la voz de Alma (el Hub las guarda 6 h).
+    private func guardarFrasesFijas() {
+        guard !hubSinVoz else { return }
+        for f in ModoCalle.frasesFijas where vozGuardada[f] == nil {
+            llamarHub(["texto": f], accion: "calleVoz", timeout: 15) { [weak self] j in
+                guard let self else { return }
+                if (j?["error"] as? String) == "accion" { self.hubSinVoz = true }
+                if (j?["ok"] as? Bool) == true, let a = j?["audio"] as? String, let d = Data(base64Encoded: a), (try? AVAudioPlayer(data: d)) != nil { self.guardarVoz(f, d) }
+            }
+        }
+    }
+
+    /// Lo que contestó Alma a un atajo de Siri con el Modo calle encendido: lo dice el Modo calle con la voz de Alma, en
+    /// cuanto vuelve a esperar «Alma» (Siri tiene el audio mientras corre el atajo). true si lo toma; si está apagado, false.
+    func decirDeFuera(_ texto: String) -> Bool {
+        let t = texto.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard encendido, !t.isEmpty else { return false }
+        deFuera = (t, Date())
+        if fase == .esperando { volverAEsperar() }
+        return true
     }
 
     private func callar() {
         trasHablar = nil
+        turnoVoz += 1
         if sintetizador.isSpeaking { sintetizador.stopSpeaking(at: .immediate) }
         reproductor?.stop(); reproductor = nil
     }
@@ -948,6 +1018,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
                       "modelo: " + DetectorAlma.modelo()]
         if !veredicto.isEmpty { partes.append("último: " + veredicto) }
         if !errorDiag.isEmpty { partes.append("error: " + errorDiag) }
+        if !ultimaVoz.isEmpty { partes.append("voz: " + ultimaVoz) }
         partes.append("pasos: " + eventos.suffix(8).joined(separator: " | "))
         return String(partes.joined(separator: " · ").prefix(1800))
     }
@@ -1119,5 +1190,48 @@ enum NivelAvisos {
             r[t] = x
         }
         return r
+    }
+}
+
+/// La voz del iPhone, solo de respaldo (sin internet o sin audio del Hub). Nunca la de por defecto: con
+/// `AVSpeechSynthesisVoice(language: "es-MX")` iOS da la que esté puesta en el teléfono, y en el de Juan era de hombre
+/// (3-nov-2026). Se elige a mano: de mujer, en español (es-MX, luego es-US, luego es-ES), la de mejor calidad que haya
+/// (premium, mejorada, normal), sin voces de juguete. Si no hay ninguna marcada como de mujer, Paulina o Mónica por nombre.
+enum VozIphone {
+    static let elegida: AVSpeechSynthesisVoice? = elegir()
+    /// Para el diagnóstico: «Paulina · es-MX · mujer · mejorada».
+    static var nombre: String {
+        guard let v = elegida else { return "la de por defecto (no encontré una voz de mujer en español)" }
+        let calidad: String
+        switch v.quality {
+        case .premium: calidad = "premium"
+        case .enhanced: calidad = "mejorada"
+        default: calidad = "normal"
+        }
+        return v.name + " · " + v.language + " · " + (v.gender == .female ? "mujer" : "elegida por nombre") + " · " + calidad
+    }
+
+    private static let idiomas = ["es-MX", "es-US", "es-ES"]
+    private static let deRespaldo = ["com.apple.voice.premium.es-MX.Paulina", "com.apple.voice.enhanced.es-MX.Paulina",
+                                     "com.apple.voice.compact.es-MX.Paulina", "com.apple.ttsbundle.Paulina-compact",
+                                     "com.apple.voice.compact.es-ES.Monica", "com.apple.ttsbundle.Monica-compact"]
+
+    private static func elegir() -> AVSpeechSynthesisVoice? {
+        func puntos(_ v: AVSpeechSynthesisVoice) -> Int? {
+            guard v.gender == .female, let i = idiomas.firstIndex(of: v.language) else { return nil }
+            if v.voiceTraits.contains(.isNoveltyVoice) || v.voiceTraits.contains(.isPersonalVoice) { return nil }
+            let calidad: Int
+            switch v.quality {
+            case .premium: calidad = 0
+            case .enhanced: calidad = 1
+            default: calidad = 2
+            }
+            // El acento latino (México, EE. UU.) antes que el de España; dentro de cada uno, la mejor calidad.
+            return (i == 2 ? 100 : 0) + calidad * 10 + i
+        }
+        let todas = AVSpeechSynthesisVoice.speechVoices()
+        if let v = todas.compactMap({ v in puntos(v).map { (v, $0) } }).min(by: { $0.1 < $1.1 })?.0 { return v }
+        for id in deRespaldo { if let v = AVSpeechSynthesisVoice(identifier: id) { return v } }
+        return nil
     }
 }

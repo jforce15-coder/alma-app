@@ -6,6 +6,8 @@ import UIKit
 /// · «Modo calle»: enciende o apaga el Modo calle (ModoCalle.swift). Sin decir cuál, lo cambia.
 /// · «Mándale a Alma»: le escribe a Alma en tu chat, como el cuadro de texto de la app (opEnviar, canal «app»), y te dice
 ///   en corto lo que contestó.
+/// Con el Modo calle encendido Siri no lee nada en voz alta (su voz es otra, de hombre en el teléfono de Juan): el diálogo
+/// queda vacío y, si hay respuesta, la dice el Modo calle con la voz de Alma.
 struct PreguntarleAAlma: AppIntent {
     static var title: LocalizedStringResource = "Pregúntale a Alma"
     static var description = IntentDescription("Abre Alma y empieza a hablar con ella por voz. Si escribes la pregunta, Alma responde a eso de una vez.")
@@ -44,7 +46,8 @@ struct ModoCalleAlma: AppIntent {
         // Encender pide permisos y carga el detector: se espera un poco para decir lo que de verdad pasó.
         if on { try? await Task.sleep(nanoseconds: 1_500_000_000) }
         let frase: String
-        if m.encendido == on { frase = on ? "Modo calle encendido." : "Modo calle apagado." }
+        if on, m.encendido { return .result(dialog: "") }   // ya escucha «Alma»: Siri no dice nada con su voz
+        if m.encendido == on { frase = "Modo calle apagado." }
         else { frase = on ? "Estoy encendiendo el Modo calle; si no queda, ábrelo en Alma." : "No pude apagar el Modo calle; ábrelo en Alma." }
         return .result(dialog: "\(frase)")
     }
@@ -59,6 +62,8 @@ struct MandaleAAlma: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let r = await ChatAlma.enviar(texto)
+        // Con el Modo calle encendido, la respuesta la dice Alma con su voz (al soltar Siri el audio), no Siri.
+        if await MainActor.run(body: { ModoCalle.shared.decirDeFuera(r) }) { return .result(dialog: "") }
         return .result(dialog: "\(r)")
     }
 }
