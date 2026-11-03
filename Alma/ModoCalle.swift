@@ -16,8 +16,14 @@ import UIKit
 ///     «Alma». También con la app abierta (inicio o conferencia). Los niveles están en NivelAvisos.
 ///   · Se enciende con la app a la vista (iOS no deja abrir el micrófono con el teléfono bloqueado) y sigue bloqueado.
 ///   · No va junto con el modo conferencia ni con el Modo Inicio: encender uno apaga el otro.
-///   · Medición (T3): cada sesión guarda minutos, batería al empezar y al terminar, despertares y falsos despertares; al
-///     apagarlo se manda el resumen al Hub (acción «calleUso») y queda en el teléfono (`calle_usos`).
+///   · Sueño (Juan, 3-nov-2026): la llamada que abre el Modo calle (por «Alma» o por un aviso) se cuelga sola, rápido, para
+///     no gastar créditos de ElevenLabs: 6 s de silencio de Juan después de que Alma habló, «espera» / «luego» / «es todo»,
+///     45 s sin que Alma hable, u otra llamada, Siri o los audífonos que se desconectan (las reglas, en SuenoCalle.swift).
+///     Al colgar, vuelve a esperar «Alma» solo con el detector; si fue otra llamada o Siri, espera a que iOS devuelva el
+///     micrófono. Mientras no hay llamada, todo lo que Alma dice al oído es la voz del iPhone o el audio que manda el Hub.
+///   · Medición (T3): cada sesión guarda minutos, batería al empezar y al terminar, despertares y falsos despertares, y los
+///     segundos de llamada con ElevenLabs (cuántas colgó el sueño); al apagarlo se manda el resumen al Hub (acción
+///     «calleUso») y queda en el teléfono (`calle_usos`).
 final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     static let shared = ModoCalle()
     var alEvento: (([String: Any]) -> Void)?
@@ -81,12 +87,16 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         var inicio = Date()
         var bateriaInicio: Int?
         var gatillos = 0, despertares = 0, descartes = 0, falsos = 0, pedidos = 0, llamadas = 0, avisos = 0, errores = 0
+        /// Lo que se gasta en ElevenLabs: segundos de llamada conectada; cuántas colgó el sueño y cuántas se cortaron.
+        var llamadaSeg = 0.0, dormidas = 0, cortadas = 0
     }
     private var uso = Uso()
 
     // MARK: - Avisos hablados
 
     private var colaAvisos: [(id: String, texto: String, resultado: Bool)] = []
+    /// iOS quitó el audio (otra llamada, Siri) y todavía no lo devuelve: al colgar la llamada de Alma se espera en pausa.
+    private var interrumpido = false
     private var relojAvisos: Timer?
 
     private override init() {
@@ -95,8 +105,12 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         let nc = NotificationCenter.default
         // Otra app (o una llamada de teléfono) tomó el audio: se suelta y, cuando lo devuelve, se vuelve a esperar «Alma».
         nc.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
-            guard let self, self.ocupaMicrofono, self.fase != .llamada, let t = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt else { return }
-            if t == AVAudioSession.InterruptionType.began.rawValue {
+            guard let self, self.ocupaMicrofono, let t = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt else { return }
+            let empezo = t == AVAudioSession.InterruptionType.began.rawValue
+            if self.encendido { self.interrumpido = empezo }
+            // En llamada, la cuelga VozNativa (sueño: corte); al terminar, revisarLlamada espera en pausa a que vuelva el audio.
+            guard self.fase != .llamada else { return }
+            if empezo {
                 if self.temporal { self.terminarTemporal(); return }
                 self.cerrarEscucha(); self.callar(); self.cerrarMicrofono(); self.fase = .pausa
             } else { self.reabrir(tras: 0.6) }
@@ -115,6 +129,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         // Al volver a la app con el Modo calle en pausa (iOS no dejó volver a abrir el micrófono bloqueado), se reintenta.
         nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self, self.encendido, self.fase == .pausa else { return }
+            self.interrumpido = false   // con la app a la vista, iOS ya devolvió el audio (aunque no avisó que terminó)
             self.reintentos = 0; self.reabrir(tras: 0.3)
         }
     }
@@ -192,13 +207,14 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         uso = Uso()
         UIDevice.current.isBatteryMonitoringEnabled = true
         uso.bateriaInicio = ModoCalle.bateria()
-        reintentos = 0
+        reintentos = 0; interrumpido = false
         guard abrirMicrofono() else {
             encendido = false; cerrarMicrofono(); UIDevice.current.isBatteryMonitoringEnabled = false
             fallar("No pude abrir el micrófono. Intenta de nuevo."); return
         }
         volverAEsperar()
         emitir()
+        VozNativa.shared.buscarAvisosAhora()   // los avisos que ya esperan se dicen enseguida, sin esperar la vuelta de 45 s
     }
 
     private func apagar() {
@@ -592,6 +608,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         if encendido { uso.llamadas += 1 }
         let v = VozNativa.shared
         v.desdeCalle = encendido
+        v.ultimaLlamada = (0, nil)   // si la llamada no llega a empezar, no se cuenta la anterior
         v.hablarAlOir(pedido)
         llamadaVista = false; llamadaDesde = Date()
         reloj?.invalidate()
@@ -604,7 +621,19 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         if e == .hablando || e == .conectando { llamadaVista = true; return }
         guard llamadaVista || Date().timeIntervalSince(llamadaDesde) > 5 else { return }
         reloj?.invalidate(); reloj = nil
-        VozNativa.shared.desdeCalle = false
+        let v = VozNativa.shared
+        v.desdeCalle = false
+        if encendido {
+            uso.llamadaSeg += v.ultimaLlamada.seg
+            switch v.ultimaLlamada.motivo {
+            case .silencio?, .cierre?, .tope?: uso.dormidas += 1
+            case .corte?: uso.cortadas += 1
+            case nil: break
+            }
+            v.ultimaLlamada = (0, nil)
+        }
+        // Otra llamada o Siri todavía tienen el audio: se espera en pausa; vuelve con el aviso de iOS o al abrir Alma.
+        if encendido && interrumpido { cerrarMicrofono(); fase = .pausa; return }
         if encendido || temporal { volverAEsperar() } else { fase = .quieta }
     }
 
@@ -712,6 +741,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             "inicio": iso.string(from: uso.inicio), "fin": iso.string(from: fin), "minutos": Int((seg / 60).rounded()),
             "gatillos": uso.gatillos, "despertares": uso.despertares, "descartes": uso.descartes, "falsos": uso.falsos,
             "pedidos": uso.pedidos, "llamadas": uso.llamadas, "avisos": uso.avisos, "errores": uso.errores,
+            "llamadaSeg": Int(uso.llamadaSeg.rounded()), "llamadasSleep": uso.dormidas, "llamadasCorte": uso.cortadas,
             "despertaresHora": porHora(uso.despertares), "falsosHora": porHora(uso.falsos), "gatillosHora": porHora(uso.gatillos),
             "detector": DetectorAlma.nombre, "enviado": false
         ]
