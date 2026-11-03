@@ -8,8 +8,11 @@ import UIKit
 ///     gratis, DetectorAlma). No transcribe todo, no graba, no sube nada y no gasta tokens. El audio se mezcla con las otras
 ///     apps: TikTok, la música o Claude siguen sonando.
 ///   · El detector deja pasar de más a propósito (para no perderse un «Alma»). Cada vez que cree oírla, el dictado del iPhone
-///     (en el teléfono) revisa en silencio los últimos 2 s: solo si de verdad dice «Alma» suena la señal. Si no, nada.
-///   · Después de «Alma»: el dictado escucha solo la frase que sigue, hasta una pausa (1,2 s; 12 s como mucho), y la manda al
+///     (en el teléfono, listo de antemano) revisa en silencio los últimos 2 s: si dice «Alma» suena la señal; si oyó otra
+///     cosa, nada. Si no contesta en 3,5 s, se acepta igual (Juan, 3-nov-2026: un «Alma» perdido cuesta más que un falso
+///     despertar); el respaldo, en cambio, sí necesita que el dictado confirme (VerificacionCalle en OidoCalle.swift).
+///   · Después de «Alma»: el dictado escucha la frase desde el gatillo (dicha de corrido también), hasta una pausa (1,2 s;
+///     12 s como mucho; sin pedido, 6 s desde la señal), y la manda al
 ///     Hub (acción «calle»). Alma contesta corto y hablado («Listo, …»). Si hace falta conversar, se abre la llamada real de
 ///     ElevenLabs y, al colgar, el Modo calle vuelve a esperar.
 ///   · Avisos hablados: lo importante que llega del Hub (vozAvisos) Alma lo dice al oído y escucha 8 s la respuesta, sin
@@ -61,8 +64,11 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private var compartido = false
     private let candado = NSLock()               // lo de abajo también lo usa el hilo del micrófono
     private var alimentarDetector = false
-    private var previo: [AVAudioPCMBuffer] = []  // los últimos 3 s (solo en memoria): con ellos se revisa si dijeron «Alma»
+    /// Los últimos 6 s (solo en memoria), cada trozo con cuándo terminó (systemUptime): con ellos se revisa si dijeron
+    /// «Alma» y, después, la frase empieza desde el gatillo (lo que dijo mientras el dictado revisaba no se pierde).
+    private var previo: [(cuando: Double, trozo: AVAudioPCMBuffer)] = []
     private var previoSeg = 0.0
+    private static let previoMax = 6.0
     private var ganancia = GananciaCalle()       // con `candado`: sube el volumen antes del detector y del dictado
     private var segmentador = SegmentadorCalle() // con `candado`: las voces cortas para el respaldo
     private var segmentando = false              // con `candado`
@@ -81,7 +87,17 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     private let reconocedor = SFSpeechRecognizer(locale: Locale(identifier: "es-MX"))
     private var tarea: SFSpeechRecognitionTask?
-    private var vuelta = 0
+    private var vuelta = 0                       // el id de la tarea del dictado que cuenta ahora (0: ninguna)
+    private var ids = 0                          // de dónde salen los ids de las tareas
+    /// El dictado listo de antemano para revisar «Alma» (Juan, 3-nov-2026, TestFlight 142: la mitad de las veces no
+    /// contestaba en 3,5 s). Se crea al volver a esperar, sin audio: al dispararse el detector solo recibe los últimos
+    /// segundos y se le cierra el audio, sin el arranque en frío de una tarea nueva. Se renueva cada 45 s.
+    private var armado: (pedido: SFSpeechAudioBufferRecognitionRequest, tarea: SFSpeechRecognitionTask, id: Int, desde: Date)?
+    private var fallosArmado = 0, armarDesde = Date.distantPast
+    private var marcaGatillo = 0.0               // systemUptime del gatillo: la frase empieza un poco antes
+    private var finDictado = VerificacionCalle.Fin.sigue
+    private var primeraRespuesta = false         // ya llegó el primer resultado de esta revisión (para medir)
+    private var latencia = LatenciaCalle()
     private var textoAlma: String?               // la versión del dictado donde se oyó «Alma»
     private var textoMejor = ""
     private var ultimoCambio = Date(), desde = Date()
@@ -145,6 +161,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     // del respaldo, si la revisión de ahora es del respaldo y cuántos despertares vinieron del detector y del respaldo.
     private var ultimoGatillo: Double?, finRespaldo: Double?, porRespaldo = false
     private var revisionesRespaldo = 0, despertaresDetector = 0, despertaresRespaldo = 0
+    private var sinConfirmar = 0                 // despertares del detector aceptados sin que el dictado contestara
     private var ultimaVoz: (pico: Float, cuando: Double)?   // la última voz de 0,3 s o más, con su ganancia (para la pista)
     private var pista = false, pistaAnotada = false
     private var formatoMic = ""
@@ -152,7 +169,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private var fuerza: Float?, fuerzaHasta = Date.distantPast
     private var escalera: [(umbral: Float, detector: DetectorAlma)] = []   // solo en colaDetector, con «Probar»
     private var dictadoOido = "", veredicto = "", errorDictado: String?
-    private var sinDictado = 0                   // revisiones seguidas en que el dictado no contestó nada
+    private var sinDictado = 0                   // revisiones seguidas en que el dictado no contestó a tiempo
     private var errorDiag = "", eventos: [String] = []
     private var avisadoMudo = false
 
@@ -215,8 +232,11 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             "despertaresDetector": despertaresDetector, "despertaresRespaldo": despertaresRespaldo, "respaldos": revisionesRespaldo,
             "modelo": DetectorAlma.modelo(), "linea": linea, "umbral": Double(umbral), "puntaje": Double(puntaje),
             "umbralFabrica": Double(DetectorAlma.umbralDeFabrica), "puntajeFabrica": Double(DetectorAlma.puntajeDeFabrica),
-            "dictadoEnTelefono": reconocedor?.supportsOnDeviceRecognition == true, "eventos": eventos
+            "dictadoEnTelefono": reconocedor?.supportsOnDeviceRecognition == true, "eventos": eventos,
+            "sinConfirmar": sinConfirmar, "latencia": latencia.texto
         ]
+        if let ms = latencia.ultima { d["dictadoMs"] = ms }   // la página lo muestra en el veredicto (va en el texto)
+        if let ms = latencia.media { d["dictadoMsMedia"] = ms }
         if micAbierto, ultimo != .distantPast { d["audioHace"] = (Date().timeIntervalSince(ultimo) * 10).rounded() / 10 }
         if let g = ultimoGolpe { d["golpeHace"] = Int(Date().timeIntervalSince(g)) }
         if let f = fuerza, Date() < fuerzaHasta.addingTimeInterval(10) { d["fuerza"] = Int((f * 100).rounded()) }
@@ -245,7 +265,8 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// Cuántos despertares vinieron de cada lado (va con el veredicto, que la página muestra tal cual).
     private var textoDespertares: String {
-        "despertó \(despertaresDetector) por el detector · \(despertaresRespaldo) por el respaldo"
+        "despertó \(despertaresDetector) por el detector" + (sinConfirmar > 0 ? " (\(sinConfirmar) sin confirmar)" : "")
+            + " · \(despertaresRespaldo) por el respaldo · " + latencia.texto
     }
 
     func poner(_ on: Bool) { if on { encender() } else { apagar() } }
@@ -357,7 +378,8 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         }
         golpes = 0; ultimoGolpe = nil; sinDictado = 0
         ultimoGatillo = nil; finRespaldo = nil; porRespaldo = false; ultimaVoz = nil; pista = false; pistaAnotada = false
-        revisionesRespaldo = 0; despertaresDetector = 0; despertaresRespaldo = 0
+        revisionesRespaldo = 0; despertaresDetector = 0; despertaresRespaldo = 0; sinConfirmar = 0
+        latencia = LatenciaCalle(); fallosArmado = 0; armarDesde = .distantPast
         anotar("Encendido · micrófono " + formatoMic + " · dictado " + (reconocedor?.supportsOnDeviceRecognition == true ? "en el teléfono" : "con internet"))
         relojVigia?.invalidate()
         relojVigia = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.vigilar() }
@@ -373,7 +395,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         reloj?.invalidate(); reloj = nil
         relojVigia?.invalidate(); relojVigia = nil
         anotar("Apagado")
-        cerrarEscucha(); callar(); cerrarMicrofono()
+        cerrarEscucha(); soltarArmado(); callar(); cerrarMicrofono()
         if fase == .llamada { VozNativa.shared.desdeCalle = false }   // la llamada sigue; al colgar ya no vuelve al Modo calle
         fase = .quieta
         // El detector se suelta (unos MB de memoria) hasta la próxima vez.
@@ -432,6 +454,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
                 reabrir(tras: 0.3); return
             }
         }
+        if fase == .esperando { armarVerificacion() }   // si falta o ya tiene un minuto
         if probando { emitir() }
     }
 
@@ -508,6 +531,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     private func cerrarMicrofono() {
         candado.lock(); alimentarDetector = false; let p = pedido; pedido = nil; previo = []; previoSeg = 0; candado.unlock()
+        soltarArmado()   // otro micrófono: el dictado listo se vuelve a crear al esperar
         p?.endAudio()
         if compartido { VozNativa.shared.quitarOyente("calle"); compartido = false }
         else if micAbierto { motor.inputNode.removeTap(onBus: 0); if motor.isRunning { motor.stop() } }
@@ -575,8 +599,8 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         candado.lock()
         ultimoTramo = Date(); tramos += 1; picoTramos = max(picoTramos, pico); picoTramosAntes = max(picoTramosAntes, crudo.pico)
         segCeros = crudo.pico == 0 ? segCeros + seg : 0
-        previo.append(copia); previoSeg += seg
-        while previoSeg > 3.0, previo.count > 1 { let x = previo.removeFirst(); previoSeg -= Double(x.frameLength) / x.format.sampleRate }
+        previo.append((ProcessInfo.processInfo.systemUptime, copia)); previoSeg += seg
+        while previoSeg > ModoCalle.previoMax, previo.count > 1 { let x = previo.removeFirst().trozo; previoSeg -= Double(x.frameLength) / x.format.sampleRate }
         let p = pedido, alDetector = alimentarDetector
         let m = alDetector ? a16k(copia) : nil
         candado.unlock()
@@ -637,7 +661,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         golpes += 1; ultimoGolpe = Date(); ultimoGatillo = ProcessInfo.processInfo.systemUptime
         if probando, Date() >= fuerzaHasta { fuerza = nil }   // ningún escalón la oyó: menos de 5 %
         anotar("El detector oyó «Alma»" + (probando ? (fuerza.map { " · fuerza \(Int($0 * 100)) % o más" } ?? " · fuerza menos de 5 %") : ""))
-        empezarEscucha(conAlma: true, aviso: nil)
+        verificar(respaldo: nil)
     }
 
     /// Terminaron una o más voces (del hilo del micrófono, con la ganancia de ese momento). La última de 0,3 s o más queda
@@ -650,117 +674,218 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
                                     ultimoGatillo: ultimoGatillo, finUltima: finRespaldo) else { return }
         uso.respaldos += 1; revisionesRespaldo += 1
         finRespaldo = ahora
-        empezarEscucha(conAlma: true, aviso: nil, respaldo: RespaldoCalle.segundosParaDictado(v))
+        verificar(respaldo: RespaldoCalle.segundosParaDictado(v))
     }
 
-    /// Empieza el dictado (en el teléfono). `conAlma`: primero revisa si dijeron «Alma» (con lo de los últimos 2 s);
-    /// `aviso`: responde a un aviso y no hace falta «Alma». `respaldo`: la revisión es del respaldo y lleva esos segundos
-    /// del audio guardado (la voz corta entera, hasta 3 s).
-    private func empezarEscucha(conAlma: Bool, aviso: String?, respaldo: Double? = nil) {
-        tarea?.cancel(); tarea = nil
+    /// Un pedido nuevo al dictado (en el teléfono si se puede). `revisar`: solo para revisar «Alma» (corto, sin puntuación).
+    private func nuevoPedido(revisar: Bool) -> SFSpeechAudioBufferRecognitionRequest {
         let p = SFSpeechAudioBufferRecognitionRequest(); p.shouldReportPartialResults = true
         if reconocedor?.supportsOnDeviceRecognition == true { p.requiresOnDeviceRecognition = true }
-        if #available(iOS 16, *) { p.addsPunctuation = true }
+        if revisar { p.taskHint = .search } else if #available(iOS 16, *) { p.addsPunctuation = true }
         p.contextualStrings = ["Alma"]   // que el reconocedor espere oír «Alma» (no «palma» ni «al ma»)
+        return p
+    }
+
+    /// Crea la tarea del dictado con el id `mia`: lo que contesta solo cuenta mientras `vuelta == mia`.
+    private func nuevaTarea(_ p: SFSpeechAudioBufferRecognitionRequest, id mia: Int) -> SFSpeechRecognitionTask? {
+        reconocedor?.recognitionTask(with: p) { [weak self] r, e in
+            DispatchQueue.main.async { self?.respuestaDictado(id: mia, r, e) }
+        }
+    }
+
+    /// Deja listo el dictado que revisará el próximo «Alma» (sin audio todavía). Solo con el Modo calle esperando; si ya
+    /// hay uno de menos de 45 s, nada. Si iOS lo cierra solo varias veces seguidas, se deja de armar (se crea al momento).
+    private func armarVerificacion() {
+        guard encendido, fase == .esperando, reconocedor?.isAvailable == true, Date() >= armarDesde else { return }
+        if let a = armado, Date().timeIntervalSince(a.desde) < 45 { return }
+        soltarArmado()
+        ids += 1; let mia = ids
+        let p = nuevoPedido(revisar: true)
+        guard let t = nuevaTarea(p, id: mia) else { return }
+        armado = (p, t, mia, Date())
+    }
+
+    private func soltarArmado() {
+        guard let a = armado else { return }
+        armado = nil
+        a.tarea.cancel(); a.pedido.endAudio()
+    }
+
+    /// Revisa con el dictado si dijeron «Alma»: el dictado listo (o uno nuevo) recibe los últimos 2 s (o la voz corta del
+    /// respaldo) y se le cierra el audio enseguida, así contesta con lo que oyó. La frase se escucha después, aparte.
+    private func verificar(respaldo: Double?) {
+        cerrarEscucha()
+        let usado: (pedido: SFSpeechAudioBufferRecognitionRequest, tarea: SFSpeechRecognitionTask, id: Int)
+        if let a = armado { armado = nil; usado = (a.pedido, a.tarea, a.id) }
+        else {
+            ids += 1
+            let p = nuevoPedido(revisar: true)
+            guard let t = nuevaTarea(p, id: ids) else { descartar(); volverAEsperar(); return }
+            usado = (p, t, ids)
+        }
+        marcaGatillo = ProcessInfo.processInfo.systemUptime
         candado.lock()
         alimentarDetector = false
-        if conAlma {
-            // Del final hacia atrás, sin pasar de lo que toca (2 s para el detector, como siempre).
-            let hasta = respaldo ?? 2.0
-            var tomar: [AVAudioPCMBuffer] = [], seg = 0.0
-            for b in previo.reversed() {
-                let d = Double(b.frameLength) / b.format.sampleRate
-                if !tomar.isEmpty, seg + d > hasta + 0.001 { break }
-                tomar.append(b); seg += d
-            }
-            for b in tomar.reversed() { p.append(b) }
+        // Del final hacia atrás, sin pasar de lo que toca (2 s para el detector, como siempre).
+        let hasta = respaldo ?? 2.0
+        var tomar: [AVAudioPCMBuffer] = [], seg = 0.0
+        for x in previo.reversed() {
+            let d = Double(x.trozo.frameLength) / x.trozo.format.sampleRate
+            if !tomar.isEmpty, seg + d > hasta + 0.001 { break }
+            tomar.append(x.trozo); seg += d
         }
-        let viejo = pedido; pedido = p
         candado.unlock()
-        viejo?.endAudio()
+        for b in tomar.reversed() { usado.pedido.append(b) }
+        usado.pedido.endAudio()
         colaDetector.async { [weak self] in self?.detector?.reiniciar() }
-        vuelta += 1; let mia = vuelta
-        textoAlma = nil; textoMejor = ""; avisoActual = aviso; ultimoCambio = Date(); desde = Date(); errorDictado = nil
+        vuelta = usado.id; tarea = usado.tarea
+        textoAlma = nil; textoMejor = ""; avisoActual = nil; ultimoCambio = Date(); desde = Date(); errorDictado = nil
+        finDictado = .sigue; primeraRespuesta = false
         porRespaldo = respaldo != nil
-        fase = conAlma ? .verificando : .oyendo
-        tarea = reconocedor?.recognitionTask(with: p) { [weak self] r, e in
-            DispatchQueue.main.async {
-                guard let self, self.vuelta == mia else { return }
-                if let e { self.errorDictado = ModoCalle.textoError(e) }
-                if let r {
-                    let t = r.bestTranscription.formattedString
-                    if t != self.textoMejor { self.textoMejor = t; self.ultimoCambio = Date() }
-                    if let a = Conferencia.versionConAlma(r) { self.textoAlma = a }
-                    if self.fase == .verificando, self.textoAlma != nil { self.confirmar() }
-                    if r.isFinal { self.revisar(cerro: true) }
-                } else if e != nil { self.revisar(cerro: true) }
-            }
-        }
+        fase = .verificando
+        reloj?.invalidate()
+        reloj = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.revisar(cerro: false) }
+    }
+
+    /// Escucha la frase: tras «Alma», con el audio desde un poco antes del gatillo (lo dicho de corrido no se pierde y la
+    /// señal no se come el principio) y lo que siga llegando; para un aviso, solo lo que llega (no hace falta «Alma»).
+    private func escucharFrase(aviso: String?) {
+        cerrarEscucha(); soltarArmado()   // un solo dictado a la vez; se vuelve a armar al esperar
+        ids += 1; let mia = ids
+        let p = nuevoPedido(revisar: false)
+        candado.lock()
+        alimentarDetector = false
+        let guardado = aviso == nil ? PedidoCalle.desde(previo, marcaGatillo - PedidoCalle.antesDelGatillo) : []
+        for b in guardado { p.append(b) }
+        pedido = p   // desde aquí el hilo del micrófono le pasa cada trozo
+        candado.unlock()
+        colaDetector.async { [weak self] in self?.detector?.reiniciar() }
+        vuelta = mia
+        textoAlma = nil; textoMejor = ""; avisoActual = aviso; ultimoCambio = Date(); desde = Date(); errorDictado = nil
+        finDictado = .sigue
+        fase = .oyendo
+        tarea = nuevaTarea(p, id: mia)
         reloj?.invalidate()
         reloj = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.revisar(cerro: false) }
     }
 
-    /// El dictado confirmó «Alma»: suena la señal y se escucha lo que pide.
-    private func confirmar() {
-        fase = .oyendo; desde = Date(); ultimoCambio = Date()
+    /// Lo que contesta el dictado (en el hilo principal).
+    private func respuestaDictado(id mia: Int, _ r: SFSpeechRecognitionResult?, _ e: Error?) {
+        if vuelta != mia {
+            // El dictado listo de antemano se cerró solo (sin audio): se vuelve a armar, con calma si pasa seguido.
+            if let a = armado, a.id == mia, e != nil {
+                armado = nil
+                fallosArmado += 1
+                armarDesde = Date().addingTimeInterval(fallosArmado >= 3 ? 300 : 3)
+                if fallosArmado == 3 { anotar("El dictado listo de antemano se cierra solo: lo creo al momento") }
+            }
+            return
+        }
+        if fase == .verificando, !primeraRespuesta, r != nil || e != nil {
+            primeraRespuesta = true; if r != nil { fallosArmado = 0 }
+            latencia.anotar(ms: Int((Date().timeIntervalSince(desde) * 1000).rounded()))
+        }
+        if let e {
+            errorDictado = ModoCalle.textoError(e)
+            // «No speech detected» (1110): contestó que no oyó voz. Otro error: el dictado no pudo revisar.
+            if finDictado == .sigue { finDictado = ModoCalle.sinVoz(e) ? .termino : .fallo }
+        }
+        if let r {
+            let t = r.bestTranscription.formattedString
+            if t != textoMejor { textoMejor = t; ultimoCambio = Date() }
+            if let a = Conferencia.versionConAlma(r) { textoAlma = a }
+            if r.isFinal { finDictado = .termino }
+        }
+        if fase == .verificando { revisar(cerro: false) }
+        else if r?.isFinal == true || (r == nil && e != nil) { revisar(cerro: true) }
+    }
+
+    private static func sinVoz(_ e: Error) -> Bool {
+        let n = e as NSError
+        return n.domain == "kAFAssistantErrorDomain" && n.code == 1110
+    }
+
+    /// El dictado confirmó «Alma» (o el detector la oyó y el dictado no contestó a tiempo): suena la señal y se escucha
+    /// lo que pide.
+    private func confirmar(sinConfirmarlo: Bool = false) {
         uso.despertares += 1
-        if porRespaldo {
+        let respaldo = porRespaldo
+        if respaldo {
             uso.despertaresRespaldo += 1; despertaresRespaldo += 1; finRespaldo = ProcessInfo.processInfo.systemUptime
         } else { despertaresDetector += 1 }
-        sinDictado = 0; errorDiag = ""
-        dictadoOido = String((textoAlma ?? "").prefix(120))
-        veredicto = (porRespaldo ? "Confirmado por el respaldo (el detector no la oyó): el dictado oyó «Alma»" : "Confirmado: el dictado oyó «Alma»") + " · " + textoDespertares
+        errorDiag = ""
+        let ms = latencia.ultima.map { " en \($0) ms" } ?? ""
+        if sinConfirmarlo {
+            sinConfirmar += 1; sinDictado += 1
+            if !primeraRespuesta { latencia.anotarLenta() }
+            dictadoOido = ""
+            let porque = errorDictado.map { "el dictado falló: \($0)" } ?? "no contestó en 3,5 s"
+            veredicto = "Aceptado sin confirmar (dictado lento: \(porque)) · " + textoDespertares
+        } else {
+            sinDictado = 0
+            dictadoOido = String((textoAlma ?? "").prefix(120))
+            veredicto = (respaldo ? "Confirmado por el respaldo (el detector no la oyó): el dictado oyó «Alma»" : "Confirmado: el dictado oyó «Alma»") + ms + " · " + textoDespertares
+        }
         anotar(veredicto)
+        if sinDictado == 3 { anotar("El dictado del iPhone tarda: tres veces seguidas no contestó a tiempo (igual acepto «Alma» del detector)") }
         porRespaldo = false
+        escucharFrase(aviso: nil)
         VozNativa.shared.senal()
     }
 
-    /// Cada 0,2 s: ¿terminó la frase (pausa de 1,2 s)? ¿no era «Alma»? ¿nadie dijo nada?
+    /// Cada 0,1–0,2 s: ¿qué dijo el dictado de «Alma»? ¿terminó la frase (pausa de 1,2 s)? ¿nadie dijo nada?
     private func revisar(cerro: Bool) {
         let quieto = Date().timeIntervalSince(ultimoCambio), lleva = Date().timeIntervalSince(desde)
         switch fase {
         case .verificando:
-            // 3,5 s: el dictado en el teléfono a veces tarda en dar lo primero (con 2,5 s se descartaba un «Alma» de verdad).
-            if cerro || lleva > 3.5 { descartar(porTiempo: !cerro); volverAEsperar() }   // no era «Alma»: nada suena
+            let otraCosa = textoAlma == nil && !textoMejor.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            switch VerificacionCalle.decidir(oyoAlma: textoAlma != nil, oyoOtraCosa: otraCosa, fin: finDictado, porRespaldo: porRespaldo, lleva: lleva) {
+            case .esperar: break
+            case .confirmar: confirmar()
+            case .aceptarSinConfirmar: confirmar(sinConfirmarlo: true)
+            case .descartar: descartar(); volverAEsperar()   // no era «Alma»: nada suena
+            }
         case .oyendo:
             let pide: String
             if avisoActual != nil { pide = textoMejor.trimmingCharacters(in: .whitespacesAndNewlines) }
-            else { pide = textoAlma.flatMap { Conferencia.pedidoAAlma($0) } ?? "" }
-            if !pide.isEmpty && (quieto > 1.2 || cerro || lleva > 12) { listo(pide); return }
-            let espera: TimeInterval = avisoActual != nil ? 8 : 5
-            if pide.isEmpty && (lleva > espera || cerro) { sinPedido() }
+            else { pide = PedidoCalle.limpiar(textoMejor, despuesDeAlma: Conferencia.pedidoAAlma(textoMejor)) }
+            switch PedidoCalle.paso(pide: pide, quieto: quieto, lleva: lleva, cerro: cerro, aviso: avisoActual != nil) {
+            case .sigue: break
+            case .mandar: listo(pide)
+            case .rendirse: sinPedido()
+            }
         default: break
         }
     }
 
     /// El dictado no confirmó «Alma»: no suena nada, pero queda dicho por qué (en la prueba y en el diagnóstico).
-    private func descartar(porTiempo: Bool) {
+    private func descartar() {
         let oido = textoMejor.trimmingCharacters(in: .whitespacesAndNewlines), error = errorDictado
+        let contesto = primeraRespuesta
         cerrarEscucha()
+        if !contesto { latencia.anotarLenta() }
         if porRespaldo {
             // El respaldo revisa cualquier voz corta (una tos, una puerta): que no era «Alma» es lo normal. No cuenta como
             // descarte del detector ni como dictado que no contesta; queda en «Lo que pasó» solo durante la prueba.
             porRespaldo = false; finRespaldo = ProcessInfo.processInfo.systemUptime
             if probando {
-                anotar("Respaldo: " + (oido.isEmpty ? "una voz corta, sin palabras" : "«\(ModoCalle.corto(oido, palabras: 12))», sin «Alma»"))
+                anotar("Respaldo: " + (oido.isEmpty ? (contesto ? "una voz corta, sin palabras" : "el dictado no contestó en 3,5 s") : "«\(ModoCalle.corto(oido, palabras: 12))», sin «Alma»"))
             }
-            if let error { avisarError("El dictado del iPhone falló al revisar «Alma» (\(error)).") }
             return
         }
         uso.descartes += 1
+        sinDictado = 0
         dictadoOido = String(oido.prefix(120))
-        if let error { veredicto = "Descartado: el dictado falló (\(error))" }
-        else if oido.isEmpty { veredicto = porTiempo ? "Descartado: el dictado no contestó en 3,5 s" : "Descartado: el dictado no oyó nada" }
-        else { veredicto = "Descartado: el dictado oyó «\(ModoCalle.corto(oido, palabras: 12))», sin «Alma»" }
+        let ms = latencia.ultima.map { " (\($0) ms)" } ?? ""
+        if oido.isEmpty { veredicto = "Descartado: el dictado no oyó voz" + ms }
+        else { veredicto = "Descartado: el dictado oyó «\(ModoCalle.corto(oido, palabras: 12))», sin «Alma»" + ms }
+        if let error, !oido.isEmpty || !error.contains("1110") { veredicto += " · " + error }
         anotar(veredicto)
-        if error != nil || oido.isEmpty { sinDictado += 1 } else { sinDictado = 0 }
-        if let error { avisarError("El dictado del iPhone falló al revisar «Alma» (\(error)).") }
-        else if sinDictado >= 3 { avisarError("El dictado del iPhone no contesta: tres veces seguidas no oyó nada al revisar «Alma».") }
     }
 
     private func cerrarEscucha() {
         reloj?.invalidate(); reloj = nil
-        vuelta += 1
+        vuelta = 0
         tarea?.cancel(); tarea = nil
         candado.lock(); let p = pedido; pedido = nil; candado.unlock()
         p?.endAudio()
@@ -799,6 +924,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
                 if Date().timeIntervalSince(f.desde) < 120 { self.decir(f.texto, audio: nil) { [weak self] in self?.volverAEsperar() }; return }
             }
             self.candado.lock(); self.alimentarDetector = true; self.candado.unlock()
+            self.armarVerificacion()
             self.procesarAvisos()
         }
     }
@@ -903,12 +1029,14 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         guard !t.isEmpty else { terminoDeHablar(); return }
         if let d = vozGuardada[t], tocar(d, voz: "Alma (ElevenLabs, guardada)") { return }
         guard pedirVoz, !hubSinVoz else { hablarIphone(t, por: hubSinVoz ? "el Hub no tiene «calleVoz»" : "sin conexión con el Hub"); return }
-        llamarHub(["texto": t], accion: "calleVoz", timeout: 6) { [weak self] j in
+        llamarHub(["texto": t], accion: "calleVoz", timeout: 8) { [weak self] j in
             guard let self, self.turnoVoz == mio, self.fase == .hablando, self.trasHablar != nil else { return }   // ya se calló
             if (j?["error"] as? String) == "accion" { self.hubSinVoz = true }
             if (j?["ok"] as? Bool) == true, let a = j?["audio"] as? String, let d = Data(base64Encoded: a),
                self.tocar(d, voz: "Alma (ElevenLabs, pedida aparte)") { self.guardarVoz(t, d); return }
-            self.hablarIphone(t, por: j == nil ? "el Hub no contestó a tiempo" : "el Hub no mandó la voz")
+            // El Hub dice por qué no hubo voz (sin llave, sin permiso, sin créditos, ElevenLabs falló…): queda en el diagnóstico.
+            let motivo = (j?["motivo"] as? String).map { ": " + ModoCalle.corto($0, palabras: 18) } ?? ((j?["error"] as? String).map { ": " + $0 } ?? "")
+            self.hablarIphone(t, por: j == nil ? "el Hub no contestó a tiempo" : "el Hub no mandó la voz" + motivo)
         }
     }
 
@@ -1056,7 +1184,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         marcarDicho(a)
         if encendido {
             uso.avisos += 1
-            decirAviso(a) { [weak self] in self?.empezarEscucha(conAlma: false, aviso: a.id) }
+            decirAviso(a) { [weak self] in self?.escucharFrase(aviso: a.id) }
             return
         }
         if conf {
@@ -1074,7 +1202,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         guard abrirMicrofono() else { temporal = false; fase = .quieta; cerrarMicrofono(); VozNativa.soltarAudio(); return }
         decirAviso(a) { [weak self] in
             guard let self, self.temporal else { return }
-            self.empezarEscucha(conAlma: false, aviso: a.id)
+            self.escucharFrase(aviso: a.id)
         }
     }
 
@@ -1132,10 +1260,11 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             "llamadaSeg": Int(uso.llamadaSeg.rounded()), "llamadasSleep": uso.dormidas, "llamadasCorte": uso.cortadas,
             "despertaresHora": porHora(uso.despertares), "falsosHora": porHora(uso.falsos), "gatillosHora": porHora(uso.gatillos),
             "respaldos": uso.respaldos, "despertaresRespaldo": uso.despertaresRespaldo,
-            "despertaresDetector": uso.despertares - uso.despertaresRespaldo,
+            "despertaresDetector": uso.despertares - uso.despertaresRespaldo, "despertaresSinConfirmar": sinConfirmar,
             "detector": DetectorAlma.nombre, "enviado": false, "diag": diagCorto()
         ]
         let fin100 = ModoCalle.bateria()
+        if let ms = latencia.media { r["dictadoMs"] = ms }
         if let b = uso.bateriaInicio { r["bateriaInicio"] = b }
         if let b = fin100 { r["bateriaFin"] = b }
         if let a = uso.bateriaInicio, let b = fin100 { r["bateriaGastada"] = a - b; r["bateriaHora"] = porHora(a - b) }
