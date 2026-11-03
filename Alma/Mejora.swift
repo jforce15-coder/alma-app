@@ -123,7 +123,7 @@ final class MejoraCampo: ObservableObject {
         if let d = saludo, let pl = try? AVAudioPlayer(data: d) {
             reproductor = pl; pl.volume = 1; pl.play(); dura = pl.duration + 0.25
         } else {
-            let u = AVSpeechUtterance(string: "¿En qué te ayudo?"); u.voice = AVSpeechSynthesisVoice(language: "es-MX"); sintetizador.speak(u)
+            let u = AVSpeechUtterance(string: "¿En qué te ayudo?"); u.voice = VozIphone.elegida; sintetizador.speak(u)   // de mujer, nunca la de por defecto
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + dura) { [weak self] in
             guard let self, self.fin != nil else { return }
