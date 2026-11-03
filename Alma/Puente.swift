@@ -55,12 +55,13 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             e.alEvento = { [weak self] x in self?.responder("AlmaEscucha.evento", [x]) }
             switch d["que"] as? String ?? "" { case "pagina": e.poner(pagina: (d["on"] as? Bool) ?? false); case "activar": e.activar((d["on"] as? Bool) ?? true); default: break }
             responder("AlmaEscucha.evento", [e.resumen])
-        case "calle":   // Modo calle (ModoCalle.swift): { que: "on" | "off" | "estado" } · { que: "calibrar", linea, umbral, puntaje }
+        case "calle":   // Modo calle (ModoCalle.swift): { que: "on" | "off" | "estado" } · { que: "calibrar", linea, umbral, puntaje } · { que: "probar", on }
             let m = ModoCalle.shared
             m.alEvento = { [weak self] e in self?.responder("AlmaCalle.evento", [e]) }
             switch d["que"] as? String ?? "" {
             case "on": m.poner(true)
             case "off": m.poner(false)
+            case "probar": m.probar((d["on"] as? Bool) ?? false)   // «Probar el Modo calle»: el estado y la fuerza del detector cada segundo
             case "calibrar": m.calibrar(linea: d["linea"] as? String, umbral: (d["umbral"] as? NSNumber)?.doubleValue, puntaje: (d["puntaje"] as? NSNumber)?.doubleValue)
             default: break
             }

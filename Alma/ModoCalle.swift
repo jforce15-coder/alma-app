@@ -23,7 +23,12 @@ import UIKit
 ///     micrófono. Mientras no hay llamada, todo lo que Alma dice al oído es la voz del iPhone o el audio que manda el Hub.
 ///   · Medición (T3): cada sesión guarda minutos, batería al empezar y al terminar, despertares y falsos despertares, y los
 ///     segundos de llamada con ElevenLabs (cuántas colgó el sueño); al apagarlo se manda el resumen al Hub (acción
-///     «calleUso») y queda en el teléfono (`calle_usos`).
+///     «calleUso») y queda en el teléfono (`calle_usos`), con un diagnóstico corto.
+///   · Diagnóstico (Juan, 3-nov-2026: «no responde» y nadie sabía por qué): la página muestra bajo el botón en qué va
+///     (esperando «Alma», te oí, te escucho…) y cualquier error; nada se calla. Cada segundo un vigía revisa que llegue
+///     audio y que se escuche por el micrófono correcto (si la voz abre o suelta el suyo, se cambia). «Probar el Modo
+///     calle» (Ajustes o toque largo en el botón) muestra el nivel del micrófono, la fuerza con la que el detector oyó
+///     «Alma», lo que oyó el dictado al revisar y por qué se descartó, para calibrar el umbral.
 final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     static let shared = ModoCalle()
     var alEvento: (([String: Any]) -> Void)?
@@ -99,6 +104,27 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private var interrumpido = false
     private var relojAvisos: Timer?
 
+    // MARK: - Diagnóstico
+    // Solo números y textos cortos, en memoria: nada de audio se guarda ni se manda.
+
+    private var probando = false                 // «Probar el Modo calle» abierto: el estado va a la página cada segundo
+    private var probarLoEncendio = false         // al cerrar la prueba se apaga si fue ella la que lo encendió
+    private var arrancando = false               // pidiendo permisos y cargando el detector (la página no lo da por apagado)
+    private var relojVigia: Timer?
+    private var ultimoTramo = Date.distantPast   // con `candado`: el último trozo que llegó del micrófono
+    private var picoTramos: Float = 0            // con `candado`: lo más fuerte desde la última vuelta del vigía
+    private var tramos = 0                       // con `candado`
+    private var segCeros = 0.0                   // con `candado`: segundos seguidos en cero exacto (un micrófono mudo)
+    private var nivel: Float = 0                 // el último pico (0…1)
+    private var formatoMic = ""
+    private var golpes = 0, ultimoGolpe: Date?
+    private var fuerza: Float?, fuerzaHasta = Date.distantPast
+    private var escalera: [(umbral: Float, detector: DetectorAlma)] = []   // solo en colaDetector, con «Probar»
+    private var dictadoOido = "", veredicto = "", errorDictado: String?
+    private var sinDictado = 0                   // revisiones seguidas en que el dictado no contestó nada
+    private var errorDiag = "", eventos: [String] = []
+    private var avisadoMudo = false
+
     private override init() {
         super.init()
         sintetizador.delegate = self
@@ -143,7 +169,29 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             r["despertares"] = uso.despertares; r["falsos"] = uso.falsos; r["pedidos"] = uso.pedidos
         }
         r["usos"] = Array((UserDefaults.standard.array(forKey: "calle_usos") ?? []).suffix(5))
+        if arrancando { r["encendiendo"] = true }
+        if encendido || probando || arrancando || !errorDiag.isEmpty { r["diag"] = diag }
         return r
+    }
+
+    /// Lo que la página muestra bajo el botón y en «Probar el Modo calle».
+    private var diag: [String: Any] {
+        let (linea, umbral, puntaje) = DetectorAlma.ajustes()
+        candado.lock(); let ultimo = ultimoTramo, n = tramos; candado.unlock()
+        var d: [String: Any] = [
+            "mic": micAbierto ? formatoMic : "cerrado", "tramos": n, "nivel": Int((nivel * 100).rounded()), "golpes": golpes,
+            "modelo": DetectorAlma.modelo(), "linea": linea, "umbral": Double(umbral), "puntaje": Double(puntaje),
+            "umbralFabrica": Double(DetectorAlma.umbralDeFabrica), "puntajeFabrica": Double(DetectorAlma.puntajeDeFabrica),
+            "dictadoEnTelefono": reconocedor?.supportsOnDeviceRecognition == true, "eventos": eventos
+        ]
+        if micAbierto, ultimo != .distantPast { d["audioHace"] = (Date().timeIntervalSince(ultimo) * 10).rounded() / 10 }
+        if let g = ultimoGolpe { d["golpeHace"] = Int(Date().timeIntervalSince(g)) }
+        if let f = fuerza, Date() < fuerzaHasta.addingTimeInterval(10) { d["fuerza"] = Int((f * 100).rounded()) }
+        if !dictadoOido.isEmpty { d["dictado"] = dictadoOido }
+        if !veredicto.isEmpty { d["veredicto"] = veredicto }
+        if !errorDiag.isEmpty { d["error"] = errorDiag }
+        if probando { d["probando"] = true }
+        return d
     }
 
     func poner(_ on: Bool) { if on { encender() } else { apagar() } }
@@ -156,6 +204,25 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// Ajustar el detector sin otra versión de la app (para calibrar en la calle): la línea de «Alma» en sonidos del
     /// modelo, el umbral y el puntaje. Vacío = lo de fábrica (DetectorAlma).
+    /// «Probar el Modo calle» (Ajustes o toque largo en el botón): el estado va a la página cada segundo y, junto al detector
+    /// de siempre, corren otros con umbrales de 50 %, 30 %, 15 % y 5 %: la «fuerza» es el más alto que oyó «Alma». Si el Modo
+    /// calle estaba apagado, la prueba lo enciende y lo apaga al cerrarse.
+    func probar(_ on: Bool) {
+        let antes = probando
+        probando = on
+        if on != antes { armarEscalera(on); anotar(on ? "Empieza la prueba" : "Termina la prueba") }
+        if on, !encendido, !arrancando { probarLoEncendio = true; encender() }
+        if !on, probarLoEncendio { probarLoEncendio = false; if encendido { apagar() } }
+        emitir()
+    }
+
+    private func armarEscalera(_ on: Bool) {
+        let (linea, _, puntaje) = DetectorAlma.ajustes()
+        colaDetector.async { [weak self] in
+            self?.escalera = on ? DetectorAlma.escalones.compactMap { u in DetectorAlma(linea: linea, umbral: u, puntaje: puntaje).map { (umbral: u, detector: $0) } } : []
+        }
+    }
+
     func calibrar(linea: String?, umbral: Double?, puntaje: Double?) {
         let d = UserDefaults.standard
         if let l = linea { if l.trimmingCharacters(in: .whitespaces).isEmpty { d.removeObject(forKey: "calle_kws_linea") } else { d.set(l, forKey: "calle_kws_linea") } }
@@ -164,22 +231,33 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         // El detector se vuelve a cargar con lo nuevo.
         detectorListo = false
         colaDetector.async { [weak self] in self?.detector = nil }
+        let (l, u, p) = DetectorAlma.ajustes()
+        anotar("Calibrado: umbral \(u) · puntaje \(p)" + (l == DetectorAlma.lineaDeFabrica ? "" : " · línea «\(l)»"))
+        let loEncendio = probarLoEncendio
         if encendido { apagar(); encender() }
+        probarLoEncendio = loEncendio
+        if probando { armarEscalera(true) }
     }
 
     private func encender() {
-        guard !encendido else { emitir(); return }
+        guard !encendido, !arrancando else { emitir(); return }
         guard UIApplication.shared.applicationState != .background else {
             fallar("Abre Alma para encender el Modo calle: con el teléfono bloqueado iOS no deja abrir el micrófono."); return
         }
+        arrancando = true; errorDiag = ""; veredicto = ""; dictadoOido = ""
+        anotar("Encendiendo")
+        emitir()
         SFSpeechRecognizer.requestAuthorization { st in
             AVAudioSession.sharedInstance().requestRecordPermission { mic in
                 DispatchQueue.main.async {
-                    guard st == .authorized, mic, self.reconocedor?.isAvailable == true else {
-                        self.fallar("Activa el micrófono y el reconocimiento de voz para Alma en Ajustes del iPhone."); return
+                    // Cada permiso con su mensaje: así se sabe cuál falta.
+                    guard mic else { self.fallar("Activa el micrófono para Alma en Ajustes del iPhone → Alma → Micrófono."); return }
+                    guard st == .authorized else { self.fallar("Activa el reconocimiento de voz para Alma en Ajustes del iPhone → Alma → Reconocimiento de voz."); return }
+                    guard self.reconocedor?.isAvailable == true else {
+                        self.fallar("El dictado del iPhone no está disponible ahora (español de México). Revisa Ajustes → General → Teclado → Dictado y que haya internet la primera vez."); return
                     }
                     self.cargarDetector { ok in
-                        guard ok else { self.fallar("Esta versión de Alma no trae el detector de «Alma». Actualiza la app."); return }
+                        guard ok else { self.fallar(DetectorAlma.fallo); return }
                         self.arrancar()
                     }
                 }
@@ -199,6 +277,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     }
 
     private func arrancar() {
+        arrancando = false
         guard !encendido else { return }
         if temporal { terminarTemporal() }
         encendido = true   // antes de apagar los otros modos: así no sueltan el audio ni vuelven a escuchar
@@ -212,6 +291,10 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             encendido = false; cerrarMicrofono(); UIDevice.current.isBatteryMonitoringEnabled = false
             fallar("No pude abrir el micrófono. Intenta de nuevo."); return
         }
+        golpes = 0; ultimoGolpe = nil; sinDictado = 0
+        anotar("Encendido · micrófono " + formatoMic + " · dictado " + (reconocedor?.supportsOnDeviceRecognition == true ? "en el teléfono" : "con internet"))
+        relojVigia?.invalidate()
+        relojVigia = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.vigilar() }
         volverAEsperar()
         emitir()
         VozNativa.shared.buscarAvisosAhora()   // los avisos que ya esperan se dicen enseguida, sin esperar la vuelta de 45 s
@@ -219,8 +302,10 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     private func apagar() {
         guard encendido else { emitir(); return }
-        encendido = false
+        encendido = false; probarLoEncendio = false
         reloj?.invalidate(); reloj = nil
+        relojVigia?.invalidate(); relojVigia = nil
+        anotar("Apagado")
         cerrarEscucha(); callar(); cerrarMicrofono()
         if fase == .llamada { VozNativa.shared.desdeCalle = false }   // la llamada sigue; al colgar ya no vuelve al Modo calle
         fase = .quieta
@@ -234,9 +319,49 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         emitir()
     }
 
+    /// Un error que impide encender (o seguir): la página lo dice con un aviso y queda en la línea del botón.
     private func fallar(_ m: String) {
+        arrancando = false
         if encendido { uso.errores += 1 }
-        alEvento?(["tipo": "calle", "activa": encendido, "fase": fase.rawValue, "error": m])
+        errorDiag = m; anotar("Error: " + m)
+        var r = resumen; r["error"] = m
+        alEvento?(r)
+    }
+
+    /// Un problema con el Modo calle encendido: queda en la línea del botón y en la prueba (sin aviso que interrumpa).
+    private func avisarError(_ m: String) {
+        if m != errorDiag { if encendido { uso.errores += 1 }; anotar("Error: " + m) }
+        errorDiag = m
+        emitir()
+    }
+
+    private static let hora: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f }()
+    private func anotar(_ t: String) {
+        eventos.append(ModoCalle.hora.string(from: Date()) + " " + t)
+        if eventos.count > 14 { eventos.removeFirst(eventos.count - 14) }
+    }
+
+    /// Cada segundo con el Modo calle encendido: ¿llega audio? ¿se escucha por el micrófono que toca? Si la voz de Alma
+    /// abrió (o soltó) su micrófono, se cambia a ese: con dos micrófonos abiertos iOS deja mudo a uno.
+    private func vigilar() {
+        candado.lock(); let ultimo = ultimoTramo, ceros = segCeros; nivel = picoTramos; picoTramos = 0; candado.unlock()
+        guard encendido else { return }
+        let v = VozNativa.shared.estado
+        if fase == .esperando, micAbierto, v != .hablando, v != .conectando {
+            let deLaVoz = VozNativa.shared.microfonoListo
+            if compartido != deLaVoz || (!compartido && !motor.isRunning) {
+                anotar(compartido ? "La voz soltó su micrófono: abro el mío" : deLaVoz ? "La voz abrió su micrófono: escucho por el suyo" : "El micrófono se detuvo: lo vuelvo a abrir")
+                reabrir(tras: 0.2); return
+            }
+            let sinAudio = Date().timeIntervalSince(ultimo)
+            if sinAudio > 4 { avisarError("No me llega audio del micrófono (\(Int(sinAudio)) s). Lo vuelvo a abrir."); reabrir(tras: 0.3); return }
+            if ceros > 5, !avisadoMudo {
+                avisadoMudo = true
+                avisarError("El micrófono llega mudo (todo en cero): otra app o la voz de Alma lo tiene. Apaga y vuelve a encender el Modo calle.")
+                reabrir(tras: 0.3); return
+            }
+        }
+        if probando { emitir() }
     }
 
     // MARK: - Abrir y cerrar el micrófono
@@ -247,9 +372,11 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private func abrirMicrofono() -> Bool {
         let voz = VozNativa.shared
         candado.lock(); convertidor = nil; formatoConvertidor = nil; candado.unlock()
+        candado.lock(); ultimoTramo = Date(); segCeros = 0; candado.unlock()   // el vigía da unos segundos al micrófono nuevo
         if voz.microfonoListo {
             compartido = true
             voz.ponerOyente("calle") { [weak self] b in self?.oir(b) }
+            formatoMic = "el de la voz de Alma (\(Int(voz.formatoOyente?.sampleRate ?? 0)) Hz) · " + ModoCalle.entrada()
             micAbierto = true; return true
         }
         compartido = false
@@ -265,14 +392,29 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             try? s.setActive(true)
         }
         let entrada = motor.inputNode, f = entrada.outputFormat(forBus: 0)
-        guard f.sampleRate > 0, f.channelCount > 0 else { return false }
+        guard f.sampleRate > 0, f.channelCount > 0 else { anotar("El micrófono no dio formato (0 Hz)"); return false }
         entrada.removeTap(onBus: 0)
         // Trozos de ~85 ms: menos despertares del procesador que con trozos chicos.
         entrada.installTap(onBus: 0, bufferSize: 4096, format: f) { [weak self] b, _ in self?.oir(b) }
         motor.prepare()
-        do { try motor.start() } catch { entrada.removeTap(onBus: 0); return false }
+        do { try motor.start() } catch {
+            entrada.removeTap(onBus: 0)
+            anotar("El micrófono no arrancó: " + ModoCalle.textoError(error)); return false
+        }
+        formatoMic = "propio (\(Int(f.sampleRate)) Hz, \(f.channelCount) canal\(f.channelCount == 1 ? "" : "es")) · " + ModoCalle.entrada()
         micAbierto = true
         return true
+    }
+
+    /// Por dónde entra el audio (micrófono del iPhone, AirPods…), para el diagnóstico.
+    private static func entrada() -> String {
+        AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName ?? "sin entrada"
+    }
+
+    /// Un error de iOS en corto: dominio, código y lo que dice.
+    static func textoError(_ e: Error) -> String {
+        let n = e as NSError
+        return "\(n.domain) \(n.code): " + String(n.localizedDescription.prefix(90))
     }
 
     private func cerrarMicrofono() {
@@ -316,7 +458,9 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private func oir(_ b: AVAudioPCMBuffer) {
         guard let copia = ModoCalle.copiar(b) else { return }
         let seg = Double(copia.frameLength) / copia.format.sampleRate
+        let pico = ModoCalle.pico(copia)
         candado.lock()
+        ultimoTramo = Date(); tramos += 1; picoTramos = max(picoTramos, pico); segCeros = pico == 0 ? segCeros + seg : 0
         previo.append(copia); previoSeg += seg
         while previoSeg > 2.0, previo.count > 1 { let x = previo.removeFirst(); previoSeg -= Double(x.frameLength) / x.format.sampleRate }
         let p = pedido, alDetector = alimentarDetector
@@ -324,6 +468,15 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         candado.unlock()
         p?.append(copia)
         if let m { colaDetector.async { [weak self] in self?.decodificar(m) } }
+    }
+
+    /// Lo más fuerte del trozo (0…1), del primer canal: el nivel del diagnóstico y si el micrófono llega mudo.
+    private static func pico(_ b: AVAudioPCMBuffer) -> Float {
+        guard let ch = b.floatChannelData else { return 0 }
+        let paso = b.format.isInterleaved ? Int(b.format.channelCount) : 1
+        var m: Float = 0
+        for i in stride(from: 0, to: Int(b.frameLength) * paso, by: paso) { let a = abs(ch[0][i]); if a > m { m = a } }
+        return m
     }
 
     /// Copia el trozo: iOS reusa los suyos y aquí se guardan los últimos 2 s.
@@ -357,8 +510,16 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// El detector (en su cola): ¿sonó algo como «Alma»?
     private func decodificar(_ m: [Float]) {
+        for e in escalera where e.detector.oir(m) { let u = e.umbral; DispatchQueue.main.async { [weak self] in self?.anotarFuerza(u) } }
         guard let d = detector, d.oir(m) else { return }
         DispatchQueue.main.async { [weak self] in self?.gatillo() }
+    }
+
+    /// Con «Probar»: uno de los detectores de la escalera oyó «Alma»; la fuerza es el umbral más alto en 2 s.
+    private func anotarFuerza(_ u: Float) {
+        fuerza = Date() < fuerzaHasta ? max(fuerza ?? 0, u) : u
+        fuerzaHasta = Date().addingTimeInterval(2)
+        emitir()
     }
 
     // MARK: - «Alma» y la frase
@@ -367,6 +528,9 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private func gatillo() {
         guard encendido, fase == .esperando else { return }
         uso.gatillos += 1
+        golpes += 1; ultimoGolpe = Date()
+        if probando, Date() >= fuerzaHasta { fuerza = nil }   // ningún escalón la oyó: menos de 5 %
+        anotar("El detector oyó «Alma»" + (probando ? (fuerza.map { " · fuerza \(Int($0 * 100)) % o más" } ?? " · fuerza menos de 5 %") : ""))
         empezarEscucha(conAlma: true, aviso: nil)
     }
 
@@ -386,11 +550,12 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         viejo?.endAudio()
         colaDetector.async { [weak self] in self?.detector?.reiniciar() }
         vuelta += 1; let mia = vuelta
-        textoAlma = nil; textoMejor = ""; avisoActual = aviso; ultimoCambio = Date(); desde = Date()
+        textoAlma = nil; textoMejor = ""; avisoActual = aviso; ultimoCambio = Date(); desde = Date(); errorDictado = nil
         fase = conAlma ? .verificando : .oyendo
         tarea = reconocedor?.recognitionTask(with: p) { [weak self] r, e in
             DispatchQueue.main.async {
                 guard let self, self.vuelta == mia else { return }
+                if let e { self.errorDictado = ModoCalle.textoError(e) }
                 if let r {
                     let t = r.bestTranscription.formattedString
                     if t != self.textoMejor { self.textoMejor = t; self.ultimoCambio = Date() }
@@ -408,6 +573,9 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private func confirmar() {
         fase = .oyendo; desde = Date(); ultimoCambio = Date()
         uso.despertares += 1
+        sinDictado = 0; errorDiag = ""
+        dictadoOido = String((textoAlma ?? "").prefix(120)); veredicto = "Confirmado: el dictado oyó «Alma»"
+        anotar(veredicto)
         VozNativa.shared.senal()
     }
 
@@ -416,7 +584,8 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         let quieto = Date().timeIntervalSince(ultimoCambio), lleva = Date().timeIntervalSince(desde)
         switch fase {
         case .verificando:
-            if cerro || lleva > 2.5 { cerrarEscucha(); uso.descartes += 1; volverAEsperar() }   // no era «Alma»: nada suena
+            // 3,5 s: el dictado en el teléfono a veces tarda en dar lo primero (con 2,5 s se descartaba un «Alma» de verdad).
+            if cerro || lleva > 3.5 { descartar(porTiempo: !cerro); volverAEsperar() }   // no era «Alma»: nada suena
         case .oyendo:
             let pide: String
             if avisoActual != nil { pide = textoMejor.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -426,6 +595,20 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             if pide.isEmpty && (lleva > espera || cerro) { sinPedido() }
         default: break
         }
+    }
+
+    /// El dictado no confirmó «Alma»: no suena nada, pero queda dicho por qué (en la prueba y en el diagnóstico).
+    private func descartar(porTiempo: Bool) {
+        let oido = textoMejor.trimmingCharacters(in: .whitespacesAndNewlines), error = errorDictado
+        cerrarEscucha(); uso.descartes += 1
+        dictadoOido = String(oido.prefix(120))
+        if let error { veredicto = "Descartado: el dictado falló (\(error))" }
+        else if oido.isEmpty { veredicto = porTiempo ? "Descartado: el dictado no contestó en 3,5 s" : "Descartado: el dictado no oyó nada" }
+        else { veredicto = "Descartado: el dictado oyó «\(ModoCalle.corto(oido, palabras: 12))», sin «Alma»" }
+        anotar(veredicto)
+        if error != nil || oido.isEmpty { sinDictado += 1 } else { sinDictado = 0 }
+        if let error { avisarError("El dictado del iPhone falló al revisar «Alma» (\(error)).") }
+        else if sinDictado >= 3 { avisarError("El dictado del iPhone no contesta: tres veces seguidas no oyó nada al revisar «Alma».") }
     }
 
     private func cerrarEscucha() {
@@ -440,7 +623,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private func sinPedido() {
         cerrarEscucha()
         if avisoActual != nil { avisoActual = nil }   // el aviso queda en Pendientes
-        else { uso.falsos += 1; VozNativa.shared.sonar("alma-fin") }
+        else { uso.falsos += 1; VozNativa.shared.sonar("alma-fin"); anotar("Sonó la señal, pero no oí un pedido") }
         volverAEsperar()
     }
 
@@ -449,6 +632,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         cerrarEscucha()
         let aviso = avisoActual; avisoActual = nil
         if encendido { uso.pedidos += 1 }
+        anotar("Pedido: «" + ModoCalle.corto(pide, palabras: 12) + "»")
         fase = .pensando
         preguntar(pide, aviso: aviso)
     }
@@ -743,7 +927,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             "pedidos": uso.pedidos, "llamadas": uso.llamadas, "avisos": uso.avisos, "errores": uso.errores,
             "llamadaSeg": Int(uso.llamadaSeg.rounded()), "llamadasSleep": uso.dormidas, "llamadasCorte": uso.cortadas,
             "despertaresHora": porHora(uso.despertares), "falsosHora": porHora(uso.falsos), "gatillosHora": porHora(uso.gatillos),
-            "detector": DetectorAlma.nombre, "enviado": false
+            "detector": DetectorAlma.nombre, "enviado": false, "diag": diagCorto()
         ]
         let fin100 = ModoCalle.bateria()
         if let b = uso.bateriaInicio { r["bateriaInicio"] = b }
@@ -753,6 +937,19 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         lista.append(r)
         UserDefaults.standard.set(Array(lista.suffix(30)), forKey: "calle_usos")
         mandarUsos()
+    }
+
+    /// El diagnóstico de la salida en una línea (columna «diagnostico» de ALMA_CALLE_USO): micrófono, golpes, el último
+    /// veredicto y error, y lo último que pasó.
+    private func diagCorto() -> String {
+        let (l, u, p) = DetectorAlma.ajustes()
+        candado.lock(); let n = tramos; candado.unlock()
+        var partes = ["mic: " + formatoMic, "trozos: \(n)", "golpes: \(golpes)", "detector: umbral \(u) puntaje \(p)" + (l == DetectorAlma.lineaDeFabrica ? "" : " «\(l)»"),
+                      "modelo: " + DetectorAlma.modelo()]
+        if !veredicto.isEmpty { partes.append("último: " + veredicto) }
+        if !errorDiag.isEmpty { partes.append("error: " + errorDiag) }
+        partes.append("pasos: " + eventos.suffix(8).joined(separator: " | "))
+        return String(partes.joined(separator: " · ").prefix(1800))
     }
 
     /// Manda al Hub los resúmenes que todavía no llegaron (si el Hub no tiene «calleUso», quedan en el teléfono).
@@ -778,6 +975,8 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 /// zipformer zh-en 3M (2025-12-20; ~5 MB, va dentro de la app en Recursos «Calle»). El modelo escribe el inglés con sonidos
 /// (fonemas ARPAbet): «Alma» se escribe «AE1 L M AH0», la combinación que mejor la oyó en voces en español de México (las
 /// pruebas están en el PR). El umbral es bajo a propósito: deja pasar de más y el dictado del iPhone confirma.
+/// Puntaje 15 (antes 8; 3-nov-2026): con el audio en trozos como llega del micrófono, sin fin de audio, el 8 oía 9 de 12
+/// llamadas de prueba y el 15 oye 11 (los falsos pasan de 5 a 6 de 16, y esos los descarta el dictado).
 final class DetectorAlma {
     static let nombre = "sherpa-onnx kws zipformer zh-en 3M 2025-12-20"
     static let encoder = "encoder-epoch-13-avg-2-chunk-16-left-64.int8.onnx"
@@ -785,7 +984,22 @@ final class DetectorAlma {
     static let joiner = "joiner-epoch-13-avg-2-chunk-16-left-64.int8.onnx"
     static let lineaDeFabrica = "AE1 L M AH0 @ALMA"
     static let umbralDeFabrica: Float = 0.01
-    static let puntajeDeFabrica: Float = 8.0
+    static let puntajeDeFabrica: Float = 15.0
+    static let archivos = [encoder, decoder, joiner, "tokens.txt"]
+    /// Los umbrales de «Probar»: la fuerza con que se oyó «Alma» es el más alto que la detectó.
+    static let escalones: [Float] = [0.5, 0.3, 0.15, 0.05]
+    /// Por qué no cargó el detector la última vez (el mensaje que ve Juan).
+    static var fallo = "No pude cargar el detector de «Alma»."
+
+    /// ¿Vienen los archivos del modelo dentro de la app? Para el diagnóstico.
+    static func modelo() -> String {
+        guard let c = Bundle.main.url(forResource: "Calle", withExtension: nil) else { return "falta la carpeta Calle" }
+        let fm = FileManager.default
+        let faltan = archivos.filter { !fm.fileExists(atPath: c.appendingPathComponent($0).path) }
+        if !faltan.isEmpty { return "faltan " + faltan.joined(separator: ", ") }
+        let bytes = archivos.reduce(0) { $0 + (((try? fm.attributesOfItem(atPath: c.appendingPathComponent($1).path))?[.size] as? NSNumber)?.intValue ?? 0) }
+        return String(format: "%d archivos, %.1f MB", archivos.count, Double(bytes) / 1_048_576)
+    }
 
     /// Lo de fábrica, o lo que se calibró (ModoCalle.calibrar).
     static func ajustes() -> (String, Float, Float) {
@@ -800,18 +1014,27 @@ final class DetectorAlma {
 
     /// nil si faltan los archivos del modelo o la línea trae un sonido que el modelo no conoce (sherpa-onnx cerraría la app).
     init?(linea: String, umbral: Float, puntaje: Float) {
-        guard let carpeta = Bundle.main.url(forResource: "Calle", withExtension: nil) else { return nil }
-        let ruta: (String) -> String = { carpeta.appendingPathComponent($0).path }
-        for n in [DetectorAlma.encoder, DetectorAlma.decoder, DetectorAlma.joiner, "tokens.txt"] where !FileManager.default.fileExists(atPath: ruta(n)) {
+        guard let carpeta = Bundle.main.url(forResource: "Calle", withExtension: nil) else {
+            DetectorAlma.fallo = "Falta el modelo del detector de «Alma» en esta versión de la app (no trae la carpeta Calle). Actualiza Alma desde TestFlight."
             return nil
         }
-        guard let tokens = try? String(contentsOfFile: ruta("tokens.txt"), encoding: .utf8) else { return nil }
+        let ruta: (String) -> String = { carpeta.appendingPathComponent($0).path }
+        for n in DetectorAlma.archivos where !FileManager.default.fileExists(atPath: ruta(n)) {
+            DetectorAlma.fallo = "Falta el modelo del detector de «Alma» (\(n)). Actualiza Alma desde TestFlight."
+            return nil
+        }
+        guard let tokens = try? String(contentsOfFile: ruta("tokens.txt"), encoding: .utf8) else {
+            DetectorAlma.fallo = "No pude leer el modelo del detector de «Alma» (tokens.txt)."; return nil
+        }
         let conocidos = Set(tokens.split(whereSeparator: { $0.isNewline }).compactMap { $0.split(separator: " ").first.map(String.init) })
         let lineas = linea.split(whereSeparator: { $0.isNewline }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        guard !lineas.isEmpty else { return nil }
+        guard !lineas.isEmpty else { DetectorAlma.fallo = "La línea de «Alma» está vacía: restablece la calibración."; return nil }
         for l in lineas {
             for w in l.split(separator: " ") where !(w.hasPrefix("@") || w.hasPrefix(":") || w.hasPrefix("#")) {
-                guard conocidos.contains(String(w)) else { return nil }
+                guard conocidos.contains(String(w)) else {
+                    DetectorAlma.fallo = "La línea de «Alma» calibrada trae «\(w)», un sonido que el modelo no conoce: restablece la calibración."
+                    return nil
+                }
             }
         }
         let texto = lineas.joined(separator: "\n")
@@ -822,7 +1045,7 @@ final class DetectorAlma {
                                                     numTrailingBlanks: 1, keywordsScore: puntaje, keywordsThreshold: umbral,
                                                     keywordsBuf: texto, keywordsBufSize: texto.utf8.count)
         let k = SherpaOnnxKeywordSpotterWrapper(config: &config)
-        guard k.spotter != nil, k.stream != nil else { return nil }
+        guard k.spotter != nil, k.stream != nil else { DetectorAlma.fallo = "El detector de «Alma» no arrancó (sherpa-onnx no aceptó el modelo)."; return nil }
         kws = k
     }
 
