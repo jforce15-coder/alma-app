@@ -84,6 +84,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var aConferencia = false, relojLargo: Timer?, vigiaLargo: Timer?, ultimaActividad = Date()
     /// Alma espera una herramienta (la secretaria tarda de 15 a 57 s): ese silencio no es una pausa larga.
     private var herramienta = false
+    /// Modo conferencia: la secretaria espera hasta 45 s (el Hub lo sabe por vozWebVincular). Si una herramienta pasa de
+    /// `tras` segundos, la app dice una vez «Sigo en eso, ya casi» con la voz de Alma (el audio PCM llega del Hub al vincular,
+    /// en el mismo formato de la llamada). Sin audio no se dice nada: queda el tecleo de siempre.
+    private var espera: (pcm: Data, hz: Double, tras: Double)?
+    private var relojEspera: Timer?
     /// T: desde cuándo una llamada «larga» deja de rendir (lo calcula el Hub con los datos de las llamadas y lo manda en la
     /// ficha como `conferencia_tras`, en segundos). Pasado T la llamada sigue igual; solo cambia la primera pausa larga.
     private var segundosLargo: Double = 240
@@ -630,11 +635,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) { if !sono { sono = true; paso("Alma está hablando") }; sonar(d) }
         case "agent_tool_request":
             herramienta = true; ultimaActividad = Date()
+            let tr = j["agent_tool_request"] as? [String: Any] ?? [:]
+            if conferencia != nil, (tr["tool_name"] as? String ?? "secretaria") == "secretaria" { armarEspera() }
         case "client_tool_call":
             ultimaActividad = Date()
             herramientaCliente(j["client_tool_call"] as? [String: Any] ?? [:])
         case "agent_tool_response":
             herramienta = false; ultimaActividad = Date()
+            relojEspera?.invalidate(); relojEspera = nil
         case "interruption":
             player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         case "ping":
@@ -776,11 +784,40 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     /// La llamada queda ligada a tu chat con Alma en el Hub (como la voz de las web apps).
+    /// En modo conferencia también avisa que es conferencia (el Hub espera hasta 45 s) y pide la frase de espera en el formato
+    /// de audio de esta llamada.
     private func vincular(_ id: String) {
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
-        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWebVincular", "app": "alma", "conv_id": id, "token": token, "session": sesion])
-        URLSession.shared.dataTask(with: r).resume()
+        var b: [String: Any] = ["hub": 1, "action": "vozWebVincular", "app": "alma", "conv_id": id, "token": token, "session": sesion]
+        let enConf = conferencia != nil
+        if enConf { b["conferencia"] = true; b["hz"] = Int(formatoSalida.sampleRate) }
+        r.httpBody = try? JSONSerialization.data(withJSONObject: b)
+        let llamada = inicioLlamada
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+            guard enConf, let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  let e = j["espera"] as? [String: Any], let a = e["audio"] as? String, let pcm = Data(base64Encoded: a), !pcm.isEmpty else { return }
+            let hz = (e["hz"] as? NSNumber)?.doubleValue ?? 0, tras = (e["tras"] as? NSNumber)?.doubleValue ?? 15
+            DispatchQueue.main.async {
+                guard let self, self.inicioLlamada == llamada, self.conferencia != nil else { return }   // la de una llamada anterior no sirve
+                self.espera = (pcm, hz, max(5, tras))
+            }
+        }.resume()
+    }
+
+    /// La secretaria empezó a trabajar en una llamada del modo conferencia: si pasa de `tras` segundos, «Sigo en eso, ya casi».
+    /// Suena por la misma salida que la voz de Alma (sonar), así el micrófono no la toma como si Juan hablara.
+    private func armarEspera() {
+        relojEspera?.invalidate(); relojEspera = nil
+        let tras = espera?.tras ?? 15, llamada = inicioLlamada
+        relojEspera = Timer.scheduledTimer(withTimeInterval: tras, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.relojEspera = nil
+            guard self.inicioLlamada == llamada, self.estado == .hablando, self.herramienta, !self.almaHabla,
+                  let e = self.espera, e.hz == self.formatoSalida.sampleRate else { return }
+            self.paso("La secretaria tarda: «Sigo en eso, ya casi»")
+            self.sonar(e.pcm)
+        }
     }
 
     /// Mientras hablan: cada 10 s anota cuánta voz llegó; si el micrófono calla más de 3 s, lo vuelve a abrir.
@@ -821,6 +858,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let charla = pasarAConferencia ? charlaReciente : []   // de qué se hablaba: el modo conferencia lo lleva de contexto
         pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; mudo = false; enChat = false; player.volume = 1
         let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
+        relojEspera?.invalidate(); relojEspera = nil; espera = nil
         conferencia = nil; textoInicial = nil; alOir = false; pantalla = nil; vistaPendiente = nil
         if habia { paso("Pausa") }
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
@@ -910,7 +948,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // teléfono y lo que Alma dice al oído (con el Modo calle o la app abierta).
             for a in l {
                 let id = a["id"] as? String ?? UUID().uuidString, texto = a["texto"] as? String ?? "", n = NivelAvisos.deAviso(a)
-                if n <= NivelAvisos.nivel("telefono") { Notificaciones.shared.mostrar(id: id, texto: texto) }
+                // Con su tarjeta de Pendientes, la notificación lleva la respuesta: el título y hasta 3 líneas del resultado.
+                let titulo = a["titulo"] as? String ?? "", lineas = a["lineas"] as? [String] ?? []
+                if n <= NivelAvisos.nivel("telefono") { Notificaciones.shared.mostrar(id: id, texto: texto, titulo: titulo, lineas: lineas) }
                 // Modo conferencia: lo que terminó en segundo plano (resultado) se dice sea cual sea su nivel (salvo «Silencio»).
                 let resultado = (a["resultado"] as? Bool) == true, enConf = resultado && Conferencia.shared.activa
                 if n <= NivelAvisos.nivel("hablado") || (enConf && NivelAvisos.nivel("hablado") > 0) {
