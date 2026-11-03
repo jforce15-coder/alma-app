@@ -54,6 +54,13 @@ jobs:
           SUMAS
           ls -l Modelos/Calle
 
+      # La lógica pura del oído del Modo calle (ganancia, voces cortas, respaldo, pista): se prueba sola en segundos.
+      - name: Probar el oído del Modo calle
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/OidoCalle.swift Pruebas/OidoCalle/main.swift -o /tmp/oido-calle
+          /tmp/oido-calle
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen
