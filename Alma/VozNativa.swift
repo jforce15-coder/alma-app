@@ -86,7 +86,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// (escucha en silencio hasta que la vuelvan a llamar con «Alma»).
     private var aConferencia = false, relojLargo: Timer?, vigiaLargo: Timer?, ultimaActividad = Date()
     /// Alma espera una herramienta (la secretaria tarda de 15 a 57 s): ese silencio no es una pausa larga.
-    private var herramienta = false
+    private var herramienta = false {
+        didSet { if herramienta && !oldValue { herramientaDesde = Date() } else if !herramienta && oldValue { herramientaDesde = nil; finHerramienta = Date() } }
+    }
+    private var herramientaDesde: Date?, finHerramienta = Date.distantPast
     /// Modo conferencia: la secretaria espera hasta 45 s (el Hub lo sabe por vozWebVincular). Si una herramienta pasa de
     /// `tras` segundos, la app dice una vez «Sigo en eso, ya casi» con la voz de Alma (el audio PCM llega del Hub al vincular,
     /// en el mismo formato de la llamada). Sin audio no se dice nada: queda el tecleo de siempre.
@@ -135,6 +138,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// La llamada la abre el Modo calle (ModoCalle.swift) con el teléfono bloqueado: el micrófono del Modo calle acaba de
     /// soltarse y la sesión sigue activa, así que se intenta abrir el de la llamada aunque la app esté en segundo plano.
     var desdeCalle = false
+    /// Sueño del Modo calle (SuenoCalle.swift): en una llamada que abrió el Modo calle, la app cuelga sola tras un silencio de
+    /// Juan, si dice «espera» o «es todo», a los 45 s sin que Alma hable o si algo corta el audio. Los segundos vienen en la
+    /// ficha del Hub (calle_silencio_s, calle_tope_s). Las llamadas fuera del Modo calle no cambian.
+    private var vigiaCalle: Timer?, motivoCalle: SuenoCalle.Motivo?
+    private var calleSilencio = SuenoCalle.silencioDeFabrica, calleTope = SuenoCalle.topeDeFabrica
+    private var vozJuanCalle = Date.distantPast, sonidoCalle = Date.distantPast
+    /// Cómo terminó la última llamada (el Modo calle lo suma a su uso): segundos conectada a ElevenLabs y si colgó el sueño.
+    var ultimaLlamada: (seg: Double, motivo: SuenoCalle.Motivo?) = (0, nil)
     /// Tres toques a la roca del navegador (hablarSobrePantalla): la página que se ve («título» (dirección)). La lectura de la
     /// captura llega después; si la llamada aún conecta, espera aquí y se manda al conectar.
     private var pantalla: String?
@@ -429,7 +440,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         guard !mandosListos else { return }; mandosListos = true
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
             guard let self, let t = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt, t == AVAudioSession.InterruptionType.began.rawValue else { return }
-            if self.estado == .hablando || self.estado == .conectando { self.fallo("Otra app o una llamada tomó el audio.") }
+            guard self.estado == .hablando || self.estado == .conectando else { return }
+            // Modo calle: otra llamada o Siri cortan sin error ni reintento; el Modo calle vuelve a esperar cuando regrese el micrófono.
+            if self.desdeCalle { self.colgarCalle(.corte) } else { self.fallo("Otra app o una llamada tomó el audio.") }
         }
         // Al abrir la app (o al volver a ella) el micrófono queda listo otra vez.
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -449,6 +462,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             guard let self, self.estado == .hablando, let r = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt else { return }
             let salida = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? "?"
             self.paso("Cambió la salida de audio (motivo \(r)) → \(salida)")
+            // Modo calle: se desconectaron los audífonos: cuelga sin reintentar y el Modo calle vuelve a esperar «Alma».
+            if self.desdeCalle && r == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self.colgarCalle(.corte) }
         }
         let c = MPRemoteCommandCenter.shared()
         // El anillo (modo Music) llega como reproducir/pausar. Un doble toque puede llegar como dos avisos: se cuentan como uno.
@@ -484,6 +499,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Un solo micrófono: el Modo Inicio se calla ya (con la ficha pedida de antemano, la llamada abre el suyo enseguida).
         EscuchaInicio.shared.detener()
         estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0; inicioEnviado = false
+        ultimaLlamada = (0, nil); motivoCalle = nil
         weebo = nil; weeboCambio = 0; adaptacion = nil; flechaT?.cancel()
         sonido("alma-inicio", llamada: true)   // el segundo beep: el de la llamada a Alma, suena siempre (también en conferencia): lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
@@ -530,6 +546,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in if self?.estado == .conectando { self?.fallo("Alma no contestó. Revisa tu internet.") } }
         var dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
         segundosLargo = (ficha["conferencia_tras"] as? NSNumber).map { max(30, $0.doubleValue) } ?? 240
+        calleSilencio = (ficha["calle_silencio_s"] as? NSNumber).map { min(30, max(3, $0.doubleValue)) } ?? SuenoCalle.silencioDeFabrica
+        calleTope = (ficha["calle_tope_s"] as? NSNumber).map { min(180, max(15, $0.doubleValue)) } ?? SuenoCalle.topeDeFabrica
         // Medidores de la llamada (solo vienen con el administrador principal): el nivel de partida y la adaptación.
         weebo = (ficha["weebo_nivel"] as? NSNumber)?.intValue; weeboCambio = 0
         adaptacion = (ficha["adapt_nivel"] as? NSNumber)?.intValue
@@ -546,6 +564,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         if let cf = conferencia {
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio. Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste con un saludo corto; escucha lo que te piden." : "") + " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
+        }
+        if desdeCalle {
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CALLE: Juan va caminando, con el teléfono bloqueado y audífonos; hay ruido y gente alrededor. Responde en una o dos frases cortas. Si lo que oyes no va dirigido a ti, usa skip_turn y no contestes. Nunca preguntes si sigue ahí ni te despidas: si se queda callado, la app cuelga sola y él te vuelve a llamar con «Alma»."
         }
         // Manos de Alma (navegador): qué tiene abierto el navegador de la app (las reglas están en el Hub, voz.js).
         let manos = ManosAlma.shared.ficha
@@ -663,7 +684,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             self.vozEnviada += seg; self.ultimaVoz = Date(); self.mandar(["user_audio_chunk": datos.base64EncodedString()])
             if !self.almaHabla { self.nivel = min(1, CGFloat(rmsTu) * 9) }
-            if rmsTu > 0.05 && !suenaAlma { self.ultimaActividad = Date() }   // Juan hablando también cuenta (no es pausa larga)
+            if rmsTu > 0.05 && !suenaAlma { self.ultimaActividad = Date(); self.sonidoCalle = Date() }   // Juan hablando también cuenta (no es pausa larga)
         }
     }
 
@@ -697,7 +718,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             estado = .hablando; conectadaDesde = Date(); vozEnPausa = 0
             vigilar()
             aConferencia = false; relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; ultimaActividad = Date(); herramienta = false
-            if conferencia == nil {
+            if desdeCalle { vigilarCalle() }
+            if conferencia == nil && !desdeCalle {   // en el Modo calle manda el sueño (más corto); pasar a conferencia apagaría el Modo calle
                 relojLargo = Timer.scheduledTimer(withTimeInterval: segundosLargo, repeats: false) { [weak self] _ in
                     guard let self, self.estado == .hablando else { return }
                     self.aConferencia = true; self.paso("Llamada larga: en la próxima pausa larga pasa al modo conferencia")
@@ -746,7 +768,16 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let t = ev["agent_response"] as? String { emitir(["tipo": "alma", "texto": t]); linea(true, t) }
         case "user_transcript":
             let ev = j["user_transcription_event"] as? [String: Any] ?? [:]
-            if let t = ev["user_transcript"] as? String { ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t) }
+            if let t = ev["user_transcript"] as? String {
+                ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t)
+                if desdeCalle, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    vozJuanCalle = Date()
+                    if SuenoCalle.esCierre(t) { colgarCalle(.cierre) }
+                }
+            }
+        case "vad_score":   // solo llega si el agente lo tiene encendido: «alguien habla» según ElevenLabs (mejor que el volumen)
+            let v = ((j["vad_score_event"] as? [String: Any])?["vad_score"] as? NSNumber)?.doubleValue ?? 0
+            if v >= 0.6 { sonidoCalle = Date() }
         default: break
         }
     }
@@ -943,6 +974,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if self.pausada { self.ultimaVoz = Date(); return }
             if Date().timeIntervalSince(self.ultimaVoz) > 3 {
                 self.paso("El micrófono dejó de mandar voz (motor " + (self.engine.isRunning ? "encendido" : "apagado") + ")")
+                if self.desdeCalle && !self.mudo { self.colgarCalle(.corte); return }   // Modo calle: sin reintentar; vuelve a esperar «Alma»
                 self.ultimaVoz = Date()
                 self.revivirMicrofono()
             }
@@ -961,6 +993,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static let sinPregunta = "En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call."
     private func terminar() {
         vigia?.invalidate(); vigia = nil
+        vigiaCalle?.invalidate(); vigiaCalle = nil
+        if estado == .hablando || estado == .conectando {
+            ultimaLlamada = (estado == .hablando ? max(0, Date().timeIntervalSince(conectadaDesde)) : 0, motivoCalle)
+        }
+        motivoCalle = nil
         relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil
         let pasarAConferencia = aConferencia && (estado == .hablando || estado == .conectando); aConferencia = false
         let charla = pasarAConferencia ? charlaReciente : []   // de qué se hablaba: el modo conferencia lo lleva de contexto
@@ -984,6 +1021,30 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             paso("La llamada larga pasó al modo conferencia")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { Conferencia.shared.encender(contexto: charla, apagarTras: 7 * 60) }   // si en 7 min nadie dice «Alma», se apaga
         }
+    }
+
+    // MARK: - Sueño del Modo calle
+
+    /// Cada medio segundo, en una llamada que abrió el Modo calle: ¿ya hay que colgar? (las reglas, en SuenoCalle).
+    private func vigilarCalle() {
+        vigiaCalle?.invalidate()
+        vozJuanCalle = .distantPast; sonidoCalle = .distantPast
+        vigiaCalle = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] t in
+            guard let self else { t.invalidate(); return }
+            guard self.estado == .hablando, self.desdeCalle else { t.invalidate(); if self.vigiaCalle === t { self.vigiaCalle = nil }; return }
+            guard !self.enChat, !self.mudo else { return }   // modo chat o mudo con la pantalla a la vista: no se cuelga sola
+            let m = SuenoCalle.Momentos(conectada: self.conectadaDesde, finVozAlma: self.finVozAlma, vozJuan: self.vozJuanCalle,
+                                        sonido: self.sonidoCalle, herramientaDesde: self.herramientaDesde, finHerramienta: self.finHerramienta)
+            if let motivo = SuenoCalle.decidir(m, ahora: Date(), silencio: self.calleSilencio, tope: self.calleTope) { self.colgarCalle(motivo) }
+        }
+    }
+
+    /// Cuelga la llamada del Modo calle sin despedida (solo el sonido de fin): el Modo calle vuelve a esperar «Alma».
+    private func colgarCalle(_ m: SuenoCalle.Motivo) {
+        guard estado == .hablando || estado == .conectando else { return }
+        paso("Modo calle: cuelga (" + m.rawValue + ") y vuelve a esperar «Alma»")
+        motivoCalle = m
+        terminar()
     }
 
     // MARK: - Pausa
@@ -1030,6 +1091,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     // MARK: - Avisos (notificaciones) y lista «un rato»
+
+    /// El Modo calle, al encenderse: pregunta ya por avisos (no espera la próxima vuelta de 45 s).
+    func buscarAvisosAhora() { empezarAvisos(); buscarAvisos() }
 
     private func empezarAvisos() {
         if avisosT == nil { avisosT = Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in self?.buscarAvisos() } }
@@ -1081,6 +1145,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     private func fallo(_ m: String) {
+        if desdeCalle && motivoCalle == nil { motivoCalle = .corte }
         paso("Error: " + m)
         UserDefaults.standard.set(m, forKey: "voz_ultimo_error")
         emitir(["tipo": "error", "mensaje": m])
