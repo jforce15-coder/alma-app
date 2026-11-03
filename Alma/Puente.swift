@@ -107,7 +107,7 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         }
     }
 
-    /// Alma con el teléfono bloqueado (VozNativa.swift): { accion: "voz", que: "configurar" | "anillo" | "alternar" | "hablar" | "colgar" | "texto" | "mudo" | "estado", … }
+    /// Alma con el teléfono bloqueado (VozNativa.swift): { accion: "voz", que: "configurar" | "anillo" | "alternar" | "hablar" | "colgar" | "texto" | "mudo" | "personalidad" | "estado", … }
     /// Lo que pasa (estado, lo que dices, lo que responde Alma) va a la página como AlmaVoz.evento({ tipo, … }).
     private func voz(_ d: [String: Any]) {
         let v = VozNativa.shared
@@ -123,6 +123,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         case "mudo": v.silenciar((d["on"] as? Bool) ?? false)
         case "sinvoz": v.sinVoz((d["on"] as? Bool) ?? false)   // modo chat: Alma oye pero no habla
         case "sonido": v.sonar(d["n"] as? String ?? ""); return   // la señal de la voz de las páginas (alma-voz.js)
+        // Medidor de personalidad (#410): Juan cambió el Modo Weebo en la hoja de la llamada; Alma se entera en la misma llamada.
+        case "personalidad": v.ajustarWeebo(modo: d["modo"] as? String ?? "auto", nivel: (d["nivel"] as? NSNumber)?.intValue ?? 1)
         default: break
         }
         responder("AlmaVoz.evento", [v.resumen])

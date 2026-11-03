@@ -9,7 +9,7 @@ import UIKit
 ///   · El Hub decide con los primeros minutos: una persona → dictado (el audio se borra sin subirse); varias → reunión:
 ///     se suben las partes (también las de antes) y ElevenLabs las transcribe distinguiendo las voces.
 ///   · Si alguien dice «Alma, …», se enciende la llamada real con la señal, con lo último que se dijo como contexto; si solo
-///     dijeron «Alma», ella contesta «Dime». Alma responde y, al colgar, vuelve a escuchar sola.
+///     dijeron «Alma», ella contesta con un saludo corto y natural. Alma responde y, al colgar, vuelve a escuchar sola.
 ///   · Escuchar no le quita el sonido a las otras apps (la sesión se mezcla); solo la llamada real lo toma. El micrófono queda
 ///     encendido entre tramos: solo se cambia el reconocimiento.
 ///   · Encendida por «Alma» en el Modo Inicio: se apaga sola a los 7 min sin «Alma» y al salir de la app. Encendida con el
@@ -339,7 +339,7 @@ final class Conferencia {
     }
 
     /// Alguien dijo «Alma, …»: la llamada real se enciende con la señal, con el contexto de la reunión. Si solo dijeron
-    /// «Alma», no se manda texto: Alma contesta «Dime» (VozNativa.saludoCorto) y escucha. `texto`: la versión donde se oyó.
+    /// «Alma», no se manda texto: Alma contesta con el saludo variado (VozNativa.saludoVariado) y escucha. `texto`: la versión donde se oyó.
     private func despertar(_ pide: String, texto: String) {
         if !texto.isEmpty { actual = texto }   // el tramo queda con la versión donde se oyó «Alma»
         guardarTramo(); detener(); reloj?.invalidate(); relojApagar?.invalidate()
