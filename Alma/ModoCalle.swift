@@ -41,6 +41,13 @@ import UIKit
 ///     disparó, el dictado la revisa igual que siempre (el respaldo; una revisión cada 2 s como mucho, solo con el dictado
 ///     en el teléfono). La lógica pura está en OidoCalle.swift, con sus pruebas en Pruebas/OidoCalle. Calibrar en
 ///     «Probar el Modo calle» cambia el detector en vivo, sin apagar el Modo calle.
+///   · El botón del caminante (Juan, 4-nov-2026, TestFlight 144): un toque y Alma escucha ya, sin «Alma» (escucharAhora),
+///     con la señal al empezar y el sonido de fin al terminar de oír; manda el pedido al Hub y contesta en voz alta, igual
+///     que después de «Alma». Con el Modo calle apagado escucha una vez y no lo deja encendido. Encender y apagar el Modo
+///     calle queda en Ajustes → Modo calle y en Siri. Antes el toque lo apagaba y, si Alma esperaba al Hub, la respuesta
+///     se perdía sin decir nada (ALMA_CALLE_USO, 3-nov-2026 22:21 UTC).
+///   · Nunca en silencio (EsperaCalle): si a los 25 s de oír el pedido no llegó respuesta, Alma dice «No me llegó la
+///     respuesta, ¿me lo repites?» y vuelve a escuchar; el porqué queda en el diagnóstico.
 final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     static let shared = ModoCalle()
     var alEvento: (([String: Any]) -> Void)?
@@ -102,6 +109,11 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private var textoMejor = ""
     private var ultimoCambio = Date(), desde = Date()
     private var avisoActual: String?             // se responde a un aviso: se escucha sin «Alma»
+    private var porBoton = false                 // la escucha la abrió el botón del caminante: sin «Alma» ni audio de antes
+    private var turnoPedido = 0                  // sube con cada pedido: una respuesta del Hub que llega tarde ya no suena
+    private var relojRespuesta: Timer?           // nunca en silencio: el plazo de la respuesta del Hub (EsperaCalle)
+    private var pedidoDesde = Date()
+    private var errorRed: String?                // por qué falló la última llamada al Hub (para el diagnóstico)
     private var reloj: Timer?
     private var reintentos = 0
     private var hubSinCalle = false              // el Hub todavía no tiene la acción «calle»: se usa el chat
@@ -120,7 +132,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     /// Lo que contestó Alma a un atajo («Mándale a Alma») con el Modo calle encendido: se dice con su voz, no con la de Siri.
     private var deFuera: (texto: String, desde: Date)?
     /// Las frases que la app dice por su cuenta: se piden con la voz de Alma al encender, así suenan con ella aunque falle la red.
-    private static let frasesFijas = ["Listo.", "No pude hablar con el Hub. Intenta otra vez.", "No pude hacerlo ahora."]
+    private static let frasesFijas = ["Listo.", "No pude hablar con el Hub. Intenta otra vez.", "No pude hacerlo ahora.", EsperaCalle.frase]
 
     // MARK: - Medición (T3)
 
@@ -211,7 +223,8 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     // MARK: - Encender y apagar
 
     var resumen: [String: Any] {
-        var r: [String: Any] = ["tipo": "calle", "activa": encendido, "fase": fase.rawValue]
+        // «ahora»: esta versión escucha al tocar el botón (que: "ahora"); la página deja de usar el toque para encender o apagar.
+        var r: [String: Any] = ["tipo": "calle", "activa": encendido, "fase": fase.rawValue, "ahora": true]
         if encendido {
             r["minutos"] = Int(Date().timeIntervalSince(uso.inicio) / 60)
             r["despertares"] = uso.despertares; r["falsos"] = uso.falsos; r["pedidos"] = uso.pedidos
@@ -270,6 +283,56 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     }
 
     func poner(_ on: Bool) { if on { encender() } else { apagar() } }
+
+    /// El botón del caminante: Alma escucha ya, sin «Alma» (BotonCalle). Con el Modo calle encendido, lo de ahora se deja
+    /// (la respuesta que esperaba ya no se dice); apagado, abre el micrófono solo para este pedido (como un aviso con la
+    /// app abierta) y lo suelta al terminar, sin encender el Modo calle.
+    func escucharAhora() {
+        let accion = BotonCalle.decidir(fase: encendido || temporal ? fase.rawValue : "quieta")
+        guard accion != .nada else { anotar("Botón: en llamada, la llamada ya te escucha"); emitir(); return }
+        if encendido || temporal {
+            if fase == .pensando { anotar("Botón: dejo la respuesta que esperaba y te escucho") }
+            soltarEspera(); turnoPedido += 1
+            cerrarEscucha(); callar()
+            porRespaldo = false
+            if !micAbierto { guard abrirMicrofono() else { reintentar(); return } }
+            anotar("Botón: te escucho")
+            escucharFrase(aviso: nil, boton: true)
+            VozNativa.shared.senal()
+            return
+        }
+        guard UIApplication.shared.applicationState != .background else { return }   // un toque en la página: la app está a la vista
+        let v = VozNativa.shared.estado
+        guard v != .hablando, v != .conectando else { anotar("Botón: hay una llamada con Alma, ella ya te escucha"); emitir(); return }
+        guard reconocedor?.isAvailable == true else {
+            fallar("El dictado del iPhone no está disponible ahora (español de México). Revisa Ajustes → General → Teclado → Dictado."); return
+        }
+        guard AVAudioSession.sharedInstance().recordPermission == .granted, SFSpeechRecognizer.authorizationStatus() == .authorized else {
+            // La primera vez: se piden los permisos con la app abierta y se vuelve a intentar.
+            SFSpeechRecognizer.requestAuthorization { st in
+                AVAudioSession.sharedInstance().requestRecordPermission { mic in
+                    DispatchQueue.main.async {
+                        guard mic else { self.fallar("Activa el micrófono para Alma en Ajustes del iPhone → Alma → Micrófono."); return }
+                        guard st == .authorized else { self.fallar("Activa el reconocimiento de voz para Alma en Ajustes del iPhone → Alma → Reconocimiento de voz."); return }
+                        self.escucharAhora()
+                    }
+                }
+            }
+            return
+        }
+        if Conferencia.shared.activa { Conferencia.shared.poner(false) }   // uno a la vez
+        temporal = true
+        EscuchaInicio.shared.detener()
+        errorDiag = ""
+        guard abrirMicrofono() else {
+            temporal = false; fase = .quieta; cerrarMicrofono(); VozNativa.soltarAudio()
+            fallar("No pude abrir el micrófono. Intenta de nuevo."); return
+        }
+        anotar("Botón: te escucho (una vez, sin encender el Modo calle)")
+        escucharFrase(aviso: nil, boton: true)
+        VozNativa.shared.senal()
+        guardarFrasesFijas()   // la próxima vez «No me llegó la respuesta…» ya suena con la voz de Alma
+    }
 
     /// alma://calle?on=1 · alma://calle?on=0 · alma://calle (cambia): para un atajo de iOS.
     func abrirEnlace(_ u: URL) {
@@ -394,6 +457,8 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         encendido = false; probarLoEncendio = false
         reloj?.invalidate(); reloj = nil
         relojVigia?.invalidate(); relojVigia = nil
+        if fase == .pensando { anotar("Apagado mientras esperaba la respuesta del Hub (ya no se dirá)") }
+        soltarEspera()
         anotar("Apagado")
         cerrarEscucha(); soltarArmado(); callar(); cerrarMicrofono()
         if fase == .llamada { VozNativa.shared.desdeCalle = false }   // la llamada sigue; al colgar ya no vuelve al Modo calle
@@ -749,19 +814,20 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// Escucha la frase: tras «Alma», con el audio desde un poco antes del gatillo (lo dicho de corrido no se pierde y la
     /// señal no se come el principio) y lo que siga llegando; para un aviso, solo lo que llega (no hace falta «Alma»).
-    private func escucharFrase(aviso: String?) {
+    /// `boton`: la abrió el botón del caminante: solo lo que llega desde ahora, sin «Alma» (si la dice, se quita).
+    private func escucharFrase(aviso: String?, boton: Bool = false) {
         cerrarEscucha(); soltarArmado()   // un solo dictado a la vez; se vuelve a armar al esperar
         ids += 1; let mia = ids
         let p = nuevoPedido(revisar: false)
         candado.lock()
         alimentarDetector = false
-        let guardado = aviso == nil ? PedidoCalle.desde(previo, marcaGatillo - PedidoCalle.antesDelGatillo) : []
+        let guardado = aviso == nil && !boton ? PedidoCalle.desde(previo, marcaGatillo - PedidoCalle.antesDelGatillo) : []
         for b in guardado { p.append(b) }
         pedido = p   // desde aquí el hilo del micrófono le pasa cada trozo
         candado.unlock()
         colaDetector.async { [weak self] in self?.detector?.reiniciar() }
         vuelta = mia
-        textoAlma = nil; textoMejor = ""; avisoActual = aviso; ultimoCambio = Date(); desde = Date(); errorDictado = nil
+        textoAlma = nil; textoMejor = ""; avisoActual = aviso; porBoton = boton; ultimoCambio = Date(); desde = Date(); errorDictado = nil
         finDictado = .sigue
         fase = .oyendo
         tarea = nuevaTarea(p, id: mia)
@@ -849,7 +915,8 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             let pide: String
             if avisoActual != nil { pide = textoMejor.trimmingCharacters(in: .whitespacesAndNewlines) }
             else { pide = PedidoCalle.limpiar(textoMejor, despuesDeAlma: Conferencia.pedidoAAlma(textoMejor)) }
-            switch PedidoCalle.paso(pide: pide, quieto: quieto, lleva: lleva, cerro: cerro, aviso: avisoActual != nil) {
+            // Con el botón se espera como con un aviso (8 s): no hubo «Alma» antes, Juan puede tardar en empezar.
+            switch PedidoCalle.paso(pide: pide, quieto: quieto, lleva: lleva, cerro: cerro, aviso: avisoActual != nil || porBoton) {
             case .sigue: break
             case .mandar: listo(pide)
             case .rendirse: sinPedido()
@@ -894,7 +961,9 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     /// Sonó la señal, pero no pidieron nada (o nadie respondió al aviso).
     private func sinPedido() {
         cerrarEscucha()
+        let boton = porBoton; porBoton = false
         if avisoActual != nil { avisoActual = nil }   // el aviso queda en Pendientes
+        else if boton { VozNativa.shared.sonar("alma-fin"); anotar("Botón: no oí un pedido") }   // no es un falso despertar
         else { uso.falsos += 1; VozNativa.shared.sonar("alma-fin"); anotar("Sonó la señal, pero no oí un pedido") }
         volverAEsperar()
     }
@@ -903,10 +972,43 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private func listo(_ pide: String) {
         cerrarEscucha()
         let aviso = avisoActual; avisoActual = nil
+        let boton = porBoton; porBoton = false
         if encendido { uso.pedidos += 1 }
-        anotar("Pedido: «" + ModoCalle.corto(pide, palabras: 12) + "»")
+        anotar((boton ? "Pedido (botón): «" : "Pedido: «") + ModoCalle.corto(pide, palabras: 12) + "»")
+        VozNativa.shared.sonar("alma-fin")   // el sonido de fin: te oí y lo mando (antes, silencio hasta la respuesta)
         fase = .pensando
-        preguntar(pide, aviso: aviso)
+        turnoPedido += 1
+        esperarRespuesta(turnoPedido)
+        preguntar(pide, aviso: aviso, turno: turnoPedido)
+    }
+
+    /// Nunca en silencio (EsperaCalle): si a los 25 s no llegó la respuesta del Hub, Alma lo dice y vuelve a escuchar,
+    /// sin «Alma». La respuesta que llegue después ya no suena (queda en el Chat con Alma o en Pendientes).
+    private func esperarRespuesta(_ mio: Int) {
+        soltarEspera()
+        pedidoDesde = Date(); errorRed = nil
+        relojRespuesta = Timer.scheduledTimer(withTimeInterval: EsperaCalle.plazo, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.relojRespuesta = nil
+            guard self.ocupaMicrofono, self.fase == .pensando, self.turnoPedido == mio else { return }
+            self.turnoPedido += 1
+            self.sinRespuesta(EsperaCalle.motivo(red: self.errorRed, segundos: Date().timeIntervalSince(self.pedidoDesde)))
+        }
+    }
+
+    private func soltarEspera() { relojRespuesta?.invalidate(); relojRespuesta = nil }
+
+    /// No llegó la respuesta (o el Hub no contestó): la frase corta y a escuchar de nuevo. El porqué, en el diagnóstico.
+    private func sinRespuesta(_ motivo: String) {
+        soltarEspera()
+        if encendido { uso.errores += 1 }
+        avisarError("No llegó la respuesta: " + motivo)
+        decir(EsperaCalle.frase, audio: nil, pedirVoz: false) { [weak self] in
+            guard let self, self.ocupaMicrofono else { return }
+            if !self.micAbierto { guard self.abrirMicrofono() else { self.reintentar(); return } }
+            self.escucharFrase(aviso: nil, boton: true)
+            VozNativa.shared.senal()
+        }
     }
 
     /// De vuelta a esperar «Alma» (o, si era un aviso con la app abierta, se suelta el micrófono).
@@ -933,16 +1035,18 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// La frase al Hub: acción «calle» → { ok, hablar, conversar, audio? }. Si el Hub todavía no la tiene, va al chat con
     /// Alma (opEnviar, canal «calle») y se dice corto lo que contestó.
-    private func preguntar(_ texto: String, aviso: String?) {
-        if hubSinCalle { porChat(texto, aviso: aviso); return }
+    private func preguntar(_ texto: String, aviso: String?, turno: Int) {
+        if hubSinCalle { porChat(texto, aviso: aviso, turno: turno); return }
         var b: [String: Any] = ["texto": texto, "canal": "calle"]
         if let aviso { b["aviso_id"] = aviso }
-        llamarHub(b, accion: "calle", timeout: 30) { [weak self] j in
+        llamarHub(b, accion: "calle", timeout: EsperaCalle.plazo + 5) { [weak self] j in
             guard let self, self.ocupaMicrofono else { return }
+            guard self.vigente(turno) else { return }
+            if j == nil { self.sinRespuesta(EsperaCalle.motivo(red: self.errorRed, segundos: Date().timeIntervalSince(self.pedidoDesde))); return }
             if let j, (j["ok"] as? Bool) == true {
                 self.responder(hablar: j["hablar"] as? String ?? "", conversar: (j["conversar"] as? Bool) ?? false, audio: j["audio"] as? String, pedido: texto)
             } else if (j?["error"] as? String) == "accion" {
-                self.hubSinCalle = true; self.porChat(texto, aviso: aviso)
+                self.hubSinCalle = true; self.porChat(texto, aviso: aviso, turno: turno)
             } else {
                 if self.encendido { self.uso.errores += 1 }
                 let e = (j?["error"] as? String).map { ModoCalle.corto($0, palabras: 20) } ?? ""
@@ -951,13 +1055,24 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         }
     }
 
-    private func porChat(_ texto: String, aviso: String?) {
+    /// ¿La respuesta es del pedido de ahora? Si llegó tarde (ya se dijo «No me llegó…» o se tocó el botón), no suena.
+    private func vigente(_ turno: Int) -> Bool {
+        guard turno == turnoPedido, fase == .pensando else {
+            anotar("La respuesta del Hub llegó tarde (\(Int(Date().timeIntervalSince(pedidoDesde))) s): ya no la digo")
+            return false
+        }
+        soltarEspera()
+        return true
+    }
+
+    private func porChat(_ texto: String, aviso: String?, turno: Int) {
         var t = texto
         if let aviso, let a = UserDefaults.standard.dictionary(forKey: "avisos_textos")?[aviso] as? String { t = "Sobre el aviso «\(a)»: \(texto)" }
         var b: [String: Any] = ["texto": t, "canal": "calle"]
         if let email = ModoCalle.correoDeSesion() { b["email"] = email }
-        llamarHub(b, accion: "opEnviar", timeout: 90) { [weak self] j in
-            guard let self, self.ocupaMicrofono else { return }
+        llamarHub(b, accion: "opEnviar", timeout: EsperaCalle.plazo + 5) { [weak self] j in
+            guard let self, self.ocupaMicrofono, self.vigente(turno) else { return }
+            if j == nil { self.sinRespuesta(EsperaCalle.motivo(red: self.errorRed, segundos: Date().timeIntervalSince(self.pedidoDesde))); return }
             let alma = (j?["alma"] as? [String: Any])?["texto"] as? String ?? ""
             if (j?["ok"] as? Bool) == true {
                 self.responder(hablar: alma.isEmpty ? "Listo." : ModoCalle.corto(alma, palabras: 40), conversar: false, audio: nil, pedido: texto)
@@ -978,15 +1093,22 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     private func llamarHub(_ cuerpo: [String: Any], accion: String, timeout: TimeInterval, _ listo: @escaping ([String: Any]?) -> Void) {
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else {
-            DispatchQueue.main.async { listo(nil) }; return
+            DispatchQueue.main.async { self.errorRed = "falta la sesión del Hub: abre Alma con sesión"; listo(nil) }; return
         }
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.timeoutInterval = timeout
         r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
         var b = cuerpo; b["hub"] = 1; b["action"] = accion; b["token"] = token; b["session"] = sesion; b["app"] = "alma"
         r.httpBody = try? JSONSerialization.data(withJSONObject: b)
-        URLSession.shared.dataTask(with: r) { d, _, _ in
+        URLSession.shared.dataTask(with: r) { d, resp, err in
             let j = d.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-            DispatchQueue.main.async { listo(j) }
+            // Por qué no hubo respuesta (para el diagnóstico): el error de la red, el código HTTP o que no vino JSON.
+            var porque: String?
+            if j == nil {
+                if let err { porque = (err as NSError).code == NSURLErrorTimedOut ? "la red tardó más de \(Int(timeout)) s" : ModoCalle.textoError(err) }
+                else if let h = resp as? HTTPURLResponse, h.statusCode != 200 { porque = "HTTP \(h.statusCode)" }
+                else { porque = "la respuesta no era JSON" }
+            }
+            DispatchQueue.main.async { if j == nil, accion == "calle" || accion == "opEnviar" { self.errorRed = porque }; listo(j) }
         }.resume()
     }
 
@@ -1234,6 +1356,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// El aviso con la app abierta terminó: se suelta el micrófono (y las otras apps vuelven a su volumen).
     private func terminarTemporal() {
+        soltarEspera(); porBoton = false
         cerrarEscucha(); callar(); cerrarMicrofono()
         temporal = false; fase = .quieta
         VozNativa.soltarAudio()
