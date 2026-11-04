@@ -243,3 +243,33 @@ enum PedidoCalle {
         trozos.filter { $0.cuando > desde }.map { $0.trozo }
     }
 }
+
+/// El botón del caminante (Juan, 4-nov-2026: «el botón no llama a Alma»; antes un toque encendía o apagaba el Modo calle y,
+/// si Alma estaba pensando, apagarlo tiraba la respuesta). Ahora un toque y Alma escucha ya, sin decir «Alma», con el Modo
+/// calle encendido o apagado (apagado: escucha una vez y no lo deja encendido). Qué hacer según la fase del Modo calle.
+enum BotonCalle {
+    /// escuchar: abre la escucha ya · cortarYEscuchar: deja lo de ahora (lo que oía, la respuesta que esperaba o lo que
+    /// decía) y escucha · nada: en llamada (la llamada ya escucha).
+    enum Accion: Equatable { case escuchar, cortarYEscuchar, nada }
+    /// `fase`: ModoCalle.Fase.rawValue.
+    static func decidir(fase: String) -> Accion {
+        switch fase {
+        case "verificando", "oyendo", "pensando", "hablando": return .cortarYEscuchar
+        case "llamada": return .nada
+        default: return .escuchar   // quieta, esperando, pausa
+        }
+    }
+}
+
+/// Nunca en silencio (Juan, 4-nov-2026: «me reconoce y no me responde nada»): después de oír un pedido, si no llega
+/// respuesta del Hub en `plazo` segundos, Alma dice `frase` (con su voz si ya la tiene guardada; si no, la del iPhone) y
+/// el porqué queda en el diagnóstico. El Hub corta a los 15 s («Sigo en eso…») y deja de pedir el audio a los 20 s.
+enum EsperaCalle {
+    static let plazo = 25.0
+    static let frase = "No me llegó la respuesta, ¿me lo repites?"
+    /// El porqué, para el diagnóstico: el error de la red si lo hubo; si no, cuánto se esperó.
+    static func motivo(red: String?, segundos: Double) -> String {
+        if let r = red?.trimmingCharacters(in: .whitespacesAndNewlines), !r.isEmpty { return "el Hub no contestó (" + r + ")" }
+        return "el Hub no contestó en \(Int(segundos.rounded())) s"
+    }
+}

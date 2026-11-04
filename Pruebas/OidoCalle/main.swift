@@ -206,5 +206,24 @@ do {
     revisa(P.desde(trozos, 10.0 - P.antesDelGatillo) == ["ano", "ta pan"], "la frase empieza en el gatillo, con lo que dijo mientras el dictado revisaba")
 }
 
+// MARK: - El botón del caminante y nunca en silencio
+
+do {
+    typealias B = BotonCalle
+    revisa(B.decidir(fase: "quieta") == .escuchar, "botón con el Modo calle apagado: escucha una vez")
+    revisa(B.decidir(fase: "esperando") == .escuchar, "botón esperando «Alma»: escucha ya, sin «Alma»")
+    revisa(B.decidir(fase: "pausa") == .escuchar, "botón en pausa: vuelve a abrir el micrófono y escucha")
+    revisa(B.decidir(fase: "pensando") == .cortarYEscuchar, "botón mientras espera al Hub: deja esa respuesta y escucha")
+    revisa(B.decidir(fase: "hablando") == .cortarYEscuchar, "botón mientras Alma habla: se calla y escucha")
+    revisa(B.decidir(fase: "llamada") == .nada, "botón en llamada: nada (la llamada ya escucha)")
+    revisa(PedidoCalle.limpiar("Alma, anota pan", despuesDeAlma: "anota pan") == "anota pan", "con el botón, si igual dice «Alma», se quita")
+    revisa(PedidoCalle.limpiar("Qué pasó con el huésped del 901", despuesDeAlma: nil) == "Qué pasó con el huésped del 901", "con el botón, sin «Alma»: tal cual")
+    typealias E = EsperaCalle
+    revisa(E.plazo > 20 && E.plazo <= 30, "nunca en silencio: el plazo (\(E.plazo) s) pasa el corte del Hub (15 s + la voz)")
+    revisa(E.motivo(red: nil, segundos: 25) == "el Hub no contestó en 25 s", "el motivo sin error de red: cuánto se esperó")
+    revisa(E.motivo(red: "NSURLErrorDomain -1009", segundos: 3) == "el Hub no contestó (NSURLErrorDomain -1009)", "el motivo con error de red")
+    revisa(E.motivo(red: "  ", segundos: 25.4) == "el Hub no contestó en 25 s", "un error vacío no cuenta")
+}
+
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallaron.")
 exit(fallos == 0 ? 0 : 1)

@@ -11,7 +11,7 @@ import WebKit
 ///   { accion: "faceEntrar" }                 → pide Face ID y devuelve la llave → AlmaLogin.face(email, llave)
 ///   { accion: "faceBorrar" }
 ///   { accion: "escucha", que, on }          → «Inicio con escucha activa» → AlmaEscucha.evento({ activada, escuchando })
-///   { accion: "calle", que }                → Modo calle (ModoCalle.swift) → AlmaCalle.evento({ activa, fase, … })
+///   { accion: "calle", que }                → Modo calle (que: on · off · estado · ahora · calibrar · probar) (ModoCalle.swift) → AlmaCalle.evento({ activa, fase, … })
 ///   { accion: "avisos", que, tipo, nivel, por } → niveles de las notificaciones → AlmaAvisos.evento({ hablado, telefono })
 ///   { accion: "navegador", pos }             → Alma se llevó a una de las 8 posiciones: barra de búsqueda lista ("" = volvió al centro)
 ///   { accion: "atajos", que, nombre, on }   → Atajos permitidos (AtajosIOS.swift) → AlmaAtajos.evento({ lista, todos })
@@ -55,12 +55,14 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             e.alEvento = { [weak self] x in self?.responder("AlmaEscucha.evento", [x]) }
             switch d["que"] as? String ?? "" { case "pagina": e.poner(pagina: (d["on"] as? Bool) ?? false); case "activar": e.activar((d["on"] as? Bool) ?? true); default: break }
             responder("AlmaEscucha.evento", [e.resumen])
-        case "calle":   // Modo calle (ModoCalle.swift): { que: "on" | "off" | "estado" } · { que: "calibrar", linea, umbral, puntaje } · { que: "probar", on }
+        case "calle":   // Modo calle (ModoCalle.swift): { que: "on" | "off" | "estado" } · { que: "ahora" } (el botón del caminante: escucha ya,
+                        // sin «Alma») · { que: "calibrar", linea, umbral, puntaje } · { que: "probar", on }
             let m = ModoCalle.shared
             m.alEvento = { [weak self] e in self?.responder("AlmaCalle.evento", [e]) }
             switch d["que"] as? String ?? "" {
             case "on": m.poner(true)
             case "off": m.poner(false)
+            case "ahora": m.escucharAhora()
             case "probar": m.probar((d["on"] as? Bool) ?? false)   // «Probar el Modo calle»: el estado y la fuerza del detector cada segundo
             case "calibrar": m.calibrar(linea: d["linea"] as? String, umbral: (d["umbral"] as? NSNumber)?.doubleValue, puntaje: (d["puntaje"] as? NSNumber)?.doubleValue)
             default: break
