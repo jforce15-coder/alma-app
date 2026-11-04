@@ -45,6 +45,12 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in Portal.shared.pasar { salud = true } }
             // Manos de Alma (navegador): Alma lee o actúa en la página; la pantalla de la llamada se baja para que la veas.
             .onReceive(NotificationCenter.default.publisher(for: .manosAlma)) { _ in llamadaOculta = true }
+            // Tarjeta de la llamada: «Abrir conversación» baja la pantalla de la llamada (sigue en la roca) y abre el Hub.
+            .onReceive(NotificationCenter.default.publisher(for: .abrirDesdeTarjeta)) { n in
+                guard let u = n.object as? URL else { return }
+                llamadaOculta = true
+                nav.web.load(URLRequest(url: u))
+            }
             // Los chips de la llamada (LlamadaVista): la pantalla de la llamada se baja y el inicio abre Personalidad de Alma.
             .onReceive(NotificationCenter.default.publisher(for: .abrirPersonalidad)) { _ in
                 llamadaOculta = true

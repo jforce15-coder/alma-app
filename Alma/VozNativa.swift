@@ -154,6 +154,15 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// ContentView abre el chat con esto y la llamada sigue; al cerrar ese chat se cuelga y la app vuelve al inicio.
     struct Mostrado: Equatable { let id: Int; let titulo: String; let contenido: String }
     @Published private(set) var mostrado: Mostrado?
+    /// Tarjeta de la llamada (#446 T2, TarjetaLlamada.swift): lo que el Hub armó con lo que la secretaria trajo (una reserva,
+    /// una conversación o un apartamento). La pintan LlamadaVista y la roca del inicio (AlmaVoz.evento «tarjeta»).
+    @Published private(set) var tarjeta: TarjetaVoz?
+    @Published private(set) var tarjetaVista: ReglasTarjeta.Vista = .nada
+    private var reglasTarjeta = ReglasTarjeta()
+    private var relojTarjeta: Timer?
+    /// La conversación de ElevenLabs de esta llamada (para pedir su tarjeta y decir si Juan ve la pantalla).
+    private var idLlamada: String?
+    private var avisoPantalla: [NSObjectProtocol] = []
     /// Medidor de personalidad (#410): en qué nivel de Modo Weebo va Alma en esta llamada (lo cuenta ella con la herramienta
     /// de cliente nivel_weebo) y cuánto se adapta a Juan (viene en la ficha del Hub). Solo con el administrador principal.
     @Published private(set) var weebo: Int?
@@ -320,6 +329,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                                 "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar"]
         // la página que se abre a media llamada (o se recarga) pinta los chips con esto
         if estado == .hablando || estado == .conectando, let p = personalidad { r["personalidad"] = p }
+        if estado == .hablando || estado == .conectando, let t = tarjeta, tarjetaVista != .nada { r["tarjeta"] = t.crudo; r["tarjetaVista"] = tarjetaVista.rawValue }
         return r
     }
     /// Lo que ven los chips de la llamada (alma/inicio.html · LlamadaVista). nil = no hay medidores (no es el principal).
@@ -501,6 +511,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0; inicioEnviado = false
         ultimaLlamada = (0, nil); motivoCalle = nil
         weebo = nil; weeboCambio = 0; adaptacion = nil; flechaT?.cancel()
+        idLlamada = nil; reglasTarjeta.terminar(); publicarTarjeta()
         sonido("alma-inicio", llamada: true)   // el segundo beep: el de la llamada a Alma, suena siempre (también en conferencia): lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
         if let f = fichaLista, Date().timeIntervalSince(f.t) < 540 {
@@ -752,12 +763,16 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             herramienta = true; ultimaActividad = Date()
             let tr = j["agent_tool_request"] as? [String: Any] ?? [:]
             if conferencia != nil, (tr["tool_name"] as? String ?? "secretaria") == "secretaria" { armarEspera() }
+            // Alma va a buscar otra cosa: la tarjeta que se ve se encoge a la pestañita
+            if (tr["tool_name"] as? String ?? "") == "secretaria" { reglasTarjeta.cambioDeTema(); publicarTarjeta() }
         case "client_tool_call":
             ultimaActividad = Date()
             herramientaCliente(j["client_tool_call"] as? [String: Any] ?? [:])
         case "agent_tool_response":
             herramienta = false; ultimaActividad = Date()
             relojEspera?.invalidate(); relojEspera = nil
+            let rt = j["agent_tool_response"] as? [String: Any] ?? [:]
+            if (rt["tool_name"] as? String ?? "") == "secretaria" { pedirTarjeta(intento: 0) }
         case "interruption":
             player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         case "ping":
@@ -931,6 +946,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         var b: [String: Any] = ["hub": 1, "action": "vozWebVincular", "app": "alma", "conv_id": id, "token": token, "session": sesion]
         let enConf = conferencia != nil
         if enConf { b["conferencia"] = true; b["hz"] = Int(formatoSalida.sampleRate) }
+        idLlamada = id; b["pantalla"] = pantallaVisible   // tarjeta de la llamada: con el teléfono bloqueado no se muestra
+        vigilarPantalla()
         r.httpBody = try? JSONSerialization.data(withJSONObject: b)
         let llamada = inicioLlamada
         URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
@@ -1005,6 +1022,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
         relojEspera?.invalidate(); relojEspera = nil; espera = nil
         conferencia = nil; textoInicial = nil; alOir = false; pantalla = nil; vistaPendiente = nil
+        reglasTarjeta.terminar(); publicarTarjeta(); idLlamada = nil   // lo que hubo queda en el Chat con Alma (lo guarda el Hub)
+        avisoPantalla.forEach { NotificationCenter.default.removeObserver($0) }; avisoPantalla = []
         if habia { paso("Pausa") }
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
@@ -1021,6 +1040,97 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             paso("La llamada larga pasó al modo conferencia")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { Conferencia.shared.encender(contexto: charla, apagarTras: 7 * 60) }   // si en 7 min nadie dice «Alma», se apaga
         }
+    }
+
+    // MARK: - Tarjeta de la llamada (#446 T2)
+
+    /// ¿Juan ve la pantalla? Con el teléfono bloqueado, en el Modo calle o en conferencia, no (la tarjeta queda en el chat).
+    private var pantallaVisible: Bool {
+        ReglasTarjeta.pantallaVisible(appActiva: UIApplication.shared.applicationState == .active, calle: desdeCalle, conferencia: conferencia != nil)
+    }
+
+    /// La secretaria contestó: si el Hub armó una tarjeta, se pide y se pinta. Se reintenta una vez a los 1.5 s.
+    private func pedirTarjeta(intento: Int) {
+        guard pantallaVisible, let id = idLlamada, let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"),
+              let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 12
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozTarjeta", "conv_id": id, "token": token, "session": sesion])
+        let llamada = inicioLlamada
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+            let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let t = (j?["tarjeta"] as? [String: Any]).flatMap { TarjetaVoz($0) }
+            DispatchQueue.main.async {
+                guard let self, self.inicioLlamada == llamada, self.estado == .hablando else { return }
+                guard let t else {
+                    if intento == 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.pedirTarjeta(intento: 1) } }
+                    return
+                }
+                if self.tarjeta?.id == t.id { return }   // la misma que ya llegó
+                let d = self.reglasTarjeta.recibir(t, pantalla: self.pantallaVisible, ahora: Date())
+                self.paso("Tarjeta de la llamada: " + t.tipo + (d == .mostrar ? "" : d == .repetida ? " (ya se vio)" : " (sin pantalla: queda en el chat)"))
+                if d == .mostrar { self.publicarTarjeta(); self.relojDeTarjeta() }
+            }
+        }.resume()
+    }
+
+    /// Lo que Juan toca en la tarjeta (LlamadaVista o la página del inicio): toque · detalle · abrir · plegar · conv · llamar · whatsapp.
+    func tarjetaAccion(_ hacer: String) {
+        let ahora = Date()
+        switch hacer {
+        case "toque": reglasTarjeta.toque(ahora: ahora); return   // solo vuelve a contar los 20 s
+        case "detalle": reglasTarjeta.detalle(ahora: ahora)
+        case "abrir": reglasTarjeta.abrir(ahora: ahora); relojDeTarjeta()
+        case "plegar": reglasTarjeta.plegar()
+        case "conv":   // abre la conversación en el navegador de la app; la llamada sigue
+            guard let c = tarjeta?.conv, !c.isEmpty, let q = c.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+                  let u = URL(string: "https://hub.spacioam.com/index.html?conv=" + q) else { return }
+            reglasTarjeta.plegar()
+            NotificationCenter.default.post(name: .abrirDesdeTarjeta, object: u)
+        case "llamar", "whatsapp":   // ya preguntó «¿Cuelgo a Alma?» y dijo que sí
+            guard let t = tarjeta else { return }
+            let u = hacer == "llamar" ? URL(string: "tel:" + t.tel.filter { $0.isNumber || $0 == "+" }) : URL(string: "https://wa.me/" + t.wa.filter { $0.isNumber })
+            guard let u, !(hacer == "llamar" ? t.tel : t.wa).isEmpty else { return }
+            colgar()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { UIApplication.shared.open(u) }
+            return
+        default: return
+        }
+        publicarTarjeta()
+    }
+
+    /// Cada segundo, mientras se ve abierta: a los 20 s sin tocarla se encoge.
+    private func relojDeTarjeta() {
+        relojTarjeta?.invalidate()
+        relojTarjeta = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] t in
+            guard let self, self.estado == .hablando, self.reglasTarjeta.vista != .nada else { t.invalidate(); return }
+            if self.reglasTarjeta.tic(ahora: Date()) { self.publicarTarjeta() }
+        }
+    }
+
+    /// Solo si algo cambió: LlamadaVista (lo publicado) y la página del inicio (AlmaVoz.evento «tarjeta»).
+    private func publicarTarjeta() {
+        let t = reglasTarjeta.actual, v = reglasTarjeta.vista
+        guard t != tarjeta || v != tarjetaVista else { return }
+        tarjeta = t; tarjetaVista = v
+        emitir(["tipo": "tarjeta", "vista": v.rawValue, "tarjeta": t.map { $0.crudo as Any } ?? NSNull()])
+    }
+
+    /// Juan bloquea el teléfono o vuelve a la app a media llamada: el Hub lo sabe antes de la próxima respuesta (con la
+    /// pantalla bloqueada Alma lee los datos en voz alta y la tarjeta queda solo en el chat).
+    private func vigilarPantalla() {
+        avisoPantalla.forEach { NotificationCenter.default.removeObserver($0) }
+        let nc = NotificationCenter.default
+        avisoPantalla = [
+            nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in self?.avisarPantalla() },
+            nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.avisarPantalla() }
+        ]
+    }
+    private func avisarPantalla() {
+        guard estado == .hablando, let id = idLlamada, let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"),
+              let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozPantalla", "conv_id": id, "visible": pantallaVisible, "token": token, "session": sesion])
+        URLSession.shared.dataTask(with: r).resume()
     }
 
     // MARK: - Sueño del Modo calle
