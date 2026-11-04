@@ -61,6 +61,14 @@ jobs:
           xcrun swiftc Alma/OidoCalle.swift Pruebas/OidoCalle/main.swift -o /tmp/oido-calle
           /tmp/oido-calle
 
+      # La tarjeta de la llamada (#446 T2): una a la vez, sin repetir, se encoge a los 20 s o al cambiar de tema, y nada con
+      # el teléfono bloqueado. Lógica pura, se prueba sola en segundos.
+      - name: Probar la tarjeta de la llamada
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/TarjetaLlamada.swift Pruebas/TarjetaLlamada/main.swift -o /tmp/tarjeta-llamada
+          /tmp/tarjeta-llamada
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen
