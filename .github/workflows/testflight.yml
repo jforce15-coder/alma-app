@@ -77,6 +77,13 @@ jobs:
           xcrun swiftc Alma/EstadoCalle.swift Pruebas/EstadoCalle/main.swift -o /tmp/estado-calle
           /tmp/estado-calle
 
+      # El inicio de la llamada (6-nov-2026): la ficha con quien_llama sale antes que cualquier cosa de la conversación.
+      - name: Probar el inicio de la llamada
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/InicioVoz.swift Pruebas/InicioVoz/main.swift -o /tmp/inicio-voz
+          /tmp/inicio-voz
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen
