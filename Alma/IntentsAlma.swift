@@ -42,7 +42,7 @@ struct ModoCalleAlma: AppIntent {
         if UIApplication.shared.applicationState != .active { try? await Task.sleep(nanoseconds: 800_000_000) }
         let m = ModoCalle.shared
         let on = encender ?? !m.encendido
-        m.poner(on)
+        m.poner(on, por: .siri)
         // Encender pide permisos y carga el detector: se espera un poco para decir lo que de verdad pasó.
         if on { try? await Task.sleep(nanoseconds: 1_500_000_000) }
         let frase: String

@@ -70,7 +70,7 @@ struct LlamadaVista: View {
                         .transition(sinMovimiento ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                         .padding(.bottom, 14)
                 }
-                if !conTarjeta { medidores }
+                // La Adaptación y el Modo Weebo se ven solo en Ajustes → Personalidad de Alma (Juan, 6-nov-2026), no aquí.
                 Button { voz.colgar() } label: {
                     HStack(spacing: 12) {
                         Circle().fill(Color.almaCoral).frame(width: 7, height: 7)
@@ -88,36 +88,6 @@ struct LlamadaVista: View {
             .animation(sinMovimiento ? .easeInOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.86), value: voz.tarjetaVista)
         }
         .onAppear { respira = true }
-    }
-
-    /// Medidor de personalidad (#410): «✨ Weebo 2 ▲» y «🪞 Adaptación 35 %», en vivo. Solo con el administrador principal
-    /// (la ficha del Hub los trae). Al tocarlos se abre el inicio en Ajustes → Personalidad de Alma (alma/inicio.html), donde
-    /// están los controles; la llamada sigue en la roca del inicio.
-    @ViewBuilder private var medidores: some View {
-        if voz.weebo != nil || voz.adaptacion != nil {
-            Button { NotificationCenter.default.post(name: .abrirPersonalidad, object: nil) } label: {
-                HStack(spacing: 8) {
-                    chip(textoWeebo)
-                    chip(textoAdaptacion)
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Personalidad de Alma en esta llamada")
-            .animation(.easeOut(duration: 0.3), value: voz.weeboCambio)
-            .padding(.bottom, 16)
-        }
-    }
-    private var textoWeebo: String {
-        let n: String = voz.weebo.map { String($0) } ?? "–"
-        let flecha: String = voz.weeboCambio > 0 ? " ▲" : (voz.weeboCambio < 0 ? " ▼" : "")
-        return "✨ Weebo \(n)\(flecha)"
-    }
-    private var textoAdaptacion: String { "🪞 Adaptación \(voz.adaptacion ?? 0) %" }
-    private func chip(_ t: String) -> some View {
-        Text(t).font(.custom("Montserrat", size: 13).weight(.semibold)).monospacedDigit().lineLimit(1).fixedSize()
-            .foregroundStyle(Color(red: 0.24, green: 0.25, blue: 0.25))
-            .padding(.horizontal, 14).frame(minHeight: 44)
-            .background(Capsule().fill(.white.opacity(0.9)))
     }
 
     /// La pestañita de la tarjeta: arriba, bajo «ALMA». Tocarla la abre otra vez.
@@ -153,17 +123,14 @@ struct LlamadaVista: View {
                 .animation(.spring(response: 0.22, dampingFraction: 0.8), value: voz.nivel)
             Image(systemName: "sparkle").font(.system(size: 28)).foregroundStyle(Color(red: 0.71, green: 0.38, blue: 0.31).opacity(0.45))
         }
-        // con los medidores, la roca ocupa menos alto (el halo difuminado sigue igual): así todo cabe en un iPhone SE.
         // Con la tarjeta de la llamada, la roca se achica a 96 px.
         .scaleEffect(conTarjeta ? 96.0 / 180.0 : 1)
-        .frame(height: conTarjeta ? 120 : (voz.weebo != nil || voz.adaptacion != nil) ? 220 : 260)
+        .frame(height: conTarjeta ? 120 : 260)
         .opacity(voz.estado == .conectando ? 0.7 : 1)
     }
 }
 
 extension Notification.Name {
-    /// Los chips de la llamada: abrir Ajustes → Personalidad de Alma en el inicio (ContentView).
-    static let abrirPersonalidad = Notification.Name("alma.personalidad.abrir")
     /// La tarjeta de la llamada: «Abrir conversación» abre el Hub en el navegador de la app y la llamada sigue (ContentView).
     static let abrirDesdeTarjeta = Notification.Name("alma.tarjeta.abrir")
 }
