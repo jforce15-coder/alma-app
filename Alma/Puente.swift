@@ -60,12 +60,12 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             let m = ModoCalle.shared
             m.alEvento = { [weak self] e in self?.responder("AlmaCalle.evento", [e]) }
             switch d["que"] as? String ?? "" {
-            case "on": m.poner(true)
-            case "off": m.poner(false)
+            case "on": m.poner(true)    // Ajustes → «Modo calle encendido»: queda guardado (EstadoCalle)
+            case "off": m.poner(false)  // apaga de verdad: detector, micrófono, audio de fondo y el aviso que se está diciendo
             case "ahora": m.escucharAhora()
             case "probar": m.probar((d["on"] as? Bool) ?? false)   // «Probar el Modo calle»: el estado y la fuerza del detector cada segundo
             case "calibrar": m.calibrar(linea: d["linea"] as? String, umbral: (d["umbral"] as? NSNumber)?.doubleValue, puntaje: (d["puntaje"] as? NSNumber)?.doubleValue)
-            default: break
+            default: m.retomarAlAbrir()   // «estado» al cargar la página: si Juan lo dejó encendido, vuelve; si no, queda apagado
             }
             responder("AlmaCalle.evento", [m.resumen])
         case "avisos":   // Ajustes → «Notificaciones habladas» y «Notificaciones del teléfono» (NivelAvisos, ModoCalle.swift):

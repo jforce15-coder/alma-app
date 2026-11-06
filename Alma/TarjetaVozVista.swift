@@ -10,7 +10,7 @@ struct TarjetaVozVista: View {
     @State private var pregunta: String?
     init(t: TarjetaVoz, detalle: Bool, accion: @escaping (String) -> Void) { self.t = t; self.detalle = detalle; self.accion = accion }
 
-    static func nombre(_ tipo: String) -> String { tipo == "reserva" ? "Reserva" : tipo == "conversacion" ? "Conversación" : "Apartamento" }
+    static func nombre(_ tipo: String) -> String { TarjetaVoz.nombre(tipo) }
     private let tinta = Color.almaTinta, gris = Color(red: 0.435, green: 0.408, blue: 0.404), borde = Color.almaBorde
 
     var body: some View {

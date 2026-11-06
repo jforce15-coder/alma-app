@@ -1,7 +1,7 @@
 import Foundation
 
 // Tarjeta de la llamada (#446 T2): la lógica pura (sin pantalla, sin iOS), para poder probarla sola (Pruebas/TarjetaLlamada).
-// El Hub arma la tarjeta (apps-script/tarjeta.js) cuando la secretaria trajo UNA reserva, conversación o apartamento; la
+// El Hub arma la tarjeta (apps-script/tarjeta.js) cuando la secretaria trajo UNA reserva, conversación, consulta o apartamento; la
 // app la pide (vozTarjeta) y la pinta en LlamadaVista o en la llamada de la roca del inicio (alma/inicio.html).
 // Decisiones de Juan (4-nov-2026):
 //   · Sube desde abajo sobre la roca (la roca se achica a 96 px y «Terminar» sigue a la vista, también en un iPhone SE).
@@ -26,7 +26,7 @@ struct TarjetaVoz: Equatable {
         func s(_ k: String, _ o: [String: Any] = j) -> String { (o[k] as? String) ?? ((o[k] as? NSNumber)?.stringValue ?? "") }
         func lista(_ k: String) -> [[String: Any]] { (j[k] as? [Any] ?? []).compactMap { $0 as? [String: Any] } }
         let clave = s("clave"), tipo = s("tipo")
-        guard !clave.isEmpty, ["reserva", "conversacion", "apartamento"].contains(tipo) else { return nil }
+        guard !clave.isEmpty, TarjetaVoz.tipos.contains(tipo) else { return nil }
         id = s("id").isEmpty ? clave : s("id"); self.clave = clave; self.tipo = tipo
         etiqueta = s("etiqueta"); titulo = s("titulo"); sub = s("sub"); chip = s("chip"); tono = s("tono"); foto = s("foto"); iniciales = s("iniciales")
         fechas = lista("fechas").map { Fecha(t: s("t", $0), v: s("v", $0), d: s("d", $0)) }
@@ -39,6 +39,18 @@ struct TarjetaVoz: Equatable {
         crudo = j
     }
     static func == (a: TarjetaVoz, b: TarjetaVoz) -> Bool { a.id == b.id && a.clave == b.clave }
+    /// Lo que la app sabe pintar. «consulta» (Hub #470): quien escribió por Airbnb sin reservar (persona, propiedad,
+    /// fechas, noches, su mensaje, el precio si lo hay y el borrador que saldría); se pinta como una reserva.
+    static let tipos = ["reserva", "conversacion", "apartamento", "consulta"]
+    /// El nombre del tipo (la etiqueta de la tarjeta y la pestañita).
+    static func nombre(_ tipo: String) -> String {
+        switch tipo {
+        case "reserva": return "Reserva"
+        case "conversacion": return "Conversación"
+        case "consulta": return "Consulta"
+        default: return "Apartamento"
+        }
+    }
 }
 
 /// Qué se ve de la tarjeta y cuándo. La usan LlamadaVista y la página del inicio (por AlmaVoz.evento).

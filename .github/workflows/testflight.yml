@@ -69,6 +69,21 @@ jobs:
           xcrun swiftc Alma/TarjetaLlamada.swift Pruebas/TarjetaLlamada/main.swift -o /tmp/tarjeta-llamada
           /tmp/tarjeta-llamada
 
+      # El encendido del Modo calle (Juan, 6-nov-2026): arranca como lo dejó Juan, apagar apaga de verdad, un aviso con la app
+      # abierta no se ve como Modo calle y la voz del aviso es la de Alma. Lógica pura, se prueba sola en segundos.
+      - name: Probar el encendido del Modo calle
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/EstadoCalle.swift Pruebas/EstadoCalle/main.swift -o /tmp/estado-calle
+          /tmp/estado-calle
+
+      # El inicio de la llamada (6-nov-2026): la ficha con quien_llama sale antes que cualquier cosa de la conversación.
+      - name: Probar el inicio de la llamada
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/InicioVoz.swift Pruebas/InicioVoz/main.swift -o /tmp/inicio-voz
+          /tmp/inicio-voz
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen

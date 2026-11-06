@@ -22,6 +22,16 @@ do {
     revisa(t.titulo == "Mariana López" && t.fechas.first?.v == "vie 6 nov" && t.semana.first?.n == 4 && t.semana.first?.hoy == true && t.conv == "HM4K2Q9XAB",
            "la tarjeta se lee del Hub (título, fechas, semana y la conversación)")
     revisa(TarjetaVoz(["clave": "x", "tipo": "lista"]) == nil && TarjetaVoz(["tipo": "reserva"]) == nil, "un tipo que no es v1, o sin clave, no es tarjeta")
+    // La consulta de Airbnb (Hub #470): se lee como una reserva, con su borrador y «Abrir conversación».
+    let c = TarjetaVoz(["id": "tv9", "clave": "consulta:HAX1:b120", "tipo": "consulta", "titulo": "Alison Prueba", "sub": "Likin · 28 noches",
+                        "etiqueta": "Consulta · Airbnb", "chip": "Borrador", "tono": "aviso",
+                        "fechas": [["t": "Llega", "v": "lun 1 dic", "d": ""], ["t": "Sale", "v": "lun 29 dic", "d": "28 noches"]],
+                        "mensajes": [["de": "huesped", "quien": "Alison", "texto": "¿Tienen tarifa por mes?", "hora": "10:12"],
+                                     ["de": "equipo", "quien": "Borrador · sale con tu sí", "texto": "Hola Alison…", "hora": ""]],
+                        "datos": ["Precio US$ 1450"], "conv": "HAX1"])
+    revisa(c != nil && c?.tipo == "consulta" && c?.fechas.count == 2 && c?.mensajes.last?.quien.hasPrefix("Borrador") == true && c?.datos.first == "Precio US$ 1450" && c?.conv == "HAX1",
+           "la consulta se lee: fechas, su mensaje, el borrador, el precio y la conversación")
+    revisa(TarjetaVoz.nombre("consulta") == "Consulta" && TarjetaVoz.nombre("reserva") == "Reserva" && TarjetaVoz.nombre("apartamento") == "Apartamento", "el nombre de cada tipo")
 }
 
 // MARK: - Una a la vez, sin repetir

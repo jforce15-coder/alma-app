@@ -63,6 +63,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// ¿Ya se mandó conversation_initiation_client_data? Antes de eso no va ningún audio al socket (ElevenLabs espera la
     /// ficha primero): tu voz se guarda en colaVoz y se manda justo después (el saludo se decide hasta 1.4 s tarde).
     private var inicioEnviado = false
+    /// Lo que se quiso mandar antes de la ficha (InicioVoz): sale en orden justo después de ella.
+    private var antesDeFicha: [[String: Any]] = []
     // pausa: Alma espera; si no se retoma en 25 s, responde a lo dicho y se cierra
     @Published private(set) var pausada = false
     private var pausaT: DispatchWorkItem?
@@ -332,7 +334,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if estado == .hablando || estado == .conectando, let t = tarjeta, tarjetaVista != .nada { r["tarjeta"] = t.crudo; r["tarjetaVista"] = tarjetaVista.rawValue }
         return r
     }
-    /// Lo que ven los chips de la llamada (alma/inicio.html · LlamadaVista). nil = no hay medidores (no es el principal).
+    /// Lo que se cuenta a la página: Ajustes → Personalidad de Alma muestra «en la llamada: 2» (los chips en la llamada ya no
+    /// existen: Juan, 6-nov-2026). nil = no hay medidores (no es el principal).
     private var personalidad: [String: Any]? {
         guard weebo != nil || adaptacion != nil else { return nil }
         return ["weebo": weebo.map { $0 as Any } ?? NSNull(), "cambio": weeboCambio, "adapt": adaptacion.map { $0 as Any } ?? NSNull(),
@@ -508,7 +511,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         inicioLlamada = Date()
         // Un solo micrófono: el Modo Inicio se calla ya (con la ficha pedida de antemano, la llamada abre el suyo enseguida).
         EscuchaInicio.shared.detener()
-        estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0; inicioEnviado = false
+        estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0; inicioEnviado = false; antesDeFicha = []
         ultimaLlamada = (0, nil); motivoCalle = nil
         weebo = nil; weeboCambio = 0; adaptacion = nil; flechaT?.cancel()
         idLlamada = nil; reglasTarjeta.terminar(); publicarTarjeta()
@@ -610,6 +613,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if !idioma.isEmpty { agent["language"] = idioma }
             self.mandar(["type": "conversation_initiation_client_data", "dynamic_variables": dvListas, "conversation_config_override": ["agent": agent]])
             self.inicioEnviado = true
+            // Lo que esperaba a la ficha (lo que dijo con «Alma» en la conferencia, la captura): sale ahora, detrás de ella.
+            let pendiente = self.antesDeFicha; self.antesDeFicha = []; pendiente.forEach { self.mandar($0) }
             // Si ElevenLabs ya contestó (no debería antes de la ficha), lo dicho mientras tanto se manda ahora, detrás de la ficha.
             if self.estado == .hablando { for c in self.colaVoz { self.mandar(["user_audio_chunk": c]) }; self.colaVoz = [] }
         }
@@ -933,6 +938,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     private func mandar(_ o: [String: Any]) {
+        // Nada de la conversación antes de la ficha: si no, ElevenLabs empieza sin quien_llama (InicioVoz, 6-nov-2026).
+        if InicioVoz.decidir(tipo: InicioVoz.tipo(o), inicioEnviado: inicioEnviado) == .esperar { antesDeFicha.append(o); return }
         guard let d = try? JSONSerialization.data(withJSONObject: o), let s = String(data: d, encoding: .utf8) else { return }
         ws?.send(.string(s)) { _ in }
     }
@@ -1018,7 +1025,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil
         let pasarAConferencia = aConferencia && (estado == .hablando || estado == .conectando); aConferencia = false
         let charla = pasarAConferencia ? charlaReciente : []   // de qué se hablaba: el modo conferencia lo lleva de contexto
-        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; inicioEnviado = false; mudo = false; enChat = false; player.volume = 1
+        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; inicioEnviado = false; antesDeFicha = []; mudo = false; enChat = false; player.volume = 1
         let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
         relojEspera?.invalidate(); relojEspera = nil; espera = nil
         conferencia = nil; textoInicial = nil; alOir = false; pantalla = nil; vistaPendiente = nil
@@ -1213,7 +1220,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         guard estado == .lista || estado == .apagada,
               let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 40
-        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozAvisos", "token": token, "session": sesion])
+        // La voz de Alma viene junto con el texto (Juan, 6-nov-2026): el Hub arma el audio de ElevenLabs de lo que se va a
+        // decir (hasta el nivel «Habladas»; en conferencia también lo que terminó en segundo plano), solo si ahora se puede
+        // decir (Modo calle, conferencia o la app abierta). Así suena sin esperar otra vuelta al Hub.
+        let hablado = NivelAvisos.nivel("hablado"), ahora = ModoCalle.shared.puedeHablarAvisos
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozAvisos", "token": token, "session": sesion,
+                                                                  "hablado": hablado, "conf": Conferencia.shared.activa, "ahora": ahora && hablado > 0])
         URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
             guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], (j["ok"] as? Bool) == true else { return }
             DispatchQueue.main.async { self?.novedades(j) }
@@ -1227,7 +1239,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if !l.isEmpty {
             ultimaNovedad = Date(); fichaLista = nil   // la próxima llamada ya empieza por lo nuevo
             // Cada selector de Ajustes filtra por el nivel del aviso (NivelAvisos, ModoCalle.swift): la notificación del
-            // teléfono y lo que Alma dice al oído (con el Modo calle o la app abierta).
+            // teléfono y lo que Alma dice al oído (con el Modo calle, en conferencia o con la app abierta en el inicio).
             for a in l {
                 let id = a["id"] as? String ?? UUID().uuidString, texto = a["texto"] as? String ?? "", n = NivelAvisos.deAviso(a)
                 // Con su tarjeta de Pendientes, la notificación lleva la respuesta: el título y hasta 3 líneas del resultado.
@@ -1236,7 +1248,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 // Modo conferencia: lo que terminó en segundo plano (resultado) se dice sea cual sea su nivel (salvo «Silencio»).
                 let resultado = (a["resultado"] as? Bool) == true, enConf = resultado && Conferencia.shared.activa
                 if n <= NivelAvisos.nivel("hablado") || (enConf && NivelAvisos.nivel("hablado") > 0) {
-                    ModoCalle.shared.avisoHablado(id: id, texto: texto, resultado: resultado)
+                    ModoCalle.shared.avisoHablado(id: id, texto: texto, resultado: resultado, hablar: a["hablar"] as? String ?? "",
+                                                  audio: a["audio"] as? String, vozMotivo: a["vozMotivo"] as? String)
                 }
             }
             paso("Aviso: " + String((l.first?["texto"] as? String ?? "").prefix(60)))
