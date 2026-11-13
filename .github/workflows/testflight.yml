@@ -84,6 +84,14 @@ jobs:
           xcrun swiftc Alma/InicioVoz.swift Pruebas/InicioVoz/main.swift -o /tmp/inicio-voz
           /tmp/inicio-voz
 
+      # Alma abre la conversación (Hub #509 T4): solo con el aviso que el Hub marcó, en Modo calle o conferencia, una vez,
+      # con la frase del aviso como primer mensaje y el sueño que cuelga si Juan no contesta. Lógica pura.
+      - name: Probar Alma abre
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/AlmaAbre.swift Pruebas/AlmaAbre/main.swift -o /tmp/alma-abre
+          /tmp/alma-abre
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen

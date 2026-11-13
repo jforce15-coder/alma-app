@@ -17,7 +17,8 @@ import UIKit
 ///     ElevenLabs y, al colgar, el Modo calle vuelve a esperar.
 ///   · Avisos hablados: lo importante que llega del Hub (vozAvisos) Alma lo dice al oído y escucha 8 s la respuesta, sin
 ///     «Alma». También con la app abierta (inicio o conferencia), y ahí no se ve como Modo calle. Siempre con la voz de
-///     Alma: el audio llega junto con el texto (vozAvisos). Los niveles están en NivelAvisos.
+///     Alma: el audio llega junto con el texto (vozAvisos). Los niveles están en NivelAvisos. Si el Hub marcó el aviso
+///     (el resultado de un pedido reciente, Hub #509 T4), Alma abre ella misma la conversación con esa frase (AlmaAbre.swift).
 ///   · Encendido (Juan, 6-nov-2026): arranca como Juan lo dejó (apagado de fábrica) y apagarlo apaga de verdad, también el
 ///     aviso que se está diciendo (EstadoCalle.swift, con sus pruebas en Pruebas/EstadoCalle).
 ///   · Se enciende con la app a la vista (iOS no deja abrir el micrófono con el teléfono bloqueado) y sigue bloqueado.
@@ -314,6 +315,8 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// ¿Puede decir un aviso ahora? Con el Modo calle, en conferencia o con la app abierta (vozAvisos trae el audio solo así).
     var puedeHablarAvisos: Bool { encendido || Conferencia.shared.activa || UIApplication.shared.applicationState == .active }
+    /// ¿Puede abrir Alma la conversación por un aviso? (Hub #509 T4, AlmaAbre.swift): solo en Modo calle o en conferencia.
+    func puedeAbrir(hablado: Int) -> Bool { AlmaAbre.pedir(calle: encendido, conferencia: Conferencia.shared.activa, hablado: hablado) }
 
     /// El botón del caminante: Alma escucha ya, sin «Alma» (BotonCalle). Con el Modo calle encendido, lo de ahora se deja
     /// (la respuesta que esperaba ya no se dice); apagado, abre el micrófono solo para este pedido (como un aviso con la
@@ -1301,15 +1304,15 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     // MARK: - La llamada real
 
     /// Hace falta conversar: se abre la llamada de ElevenLabs (la de siempre, VozNativa) con lo que pidió y, al colgar,
-    /// el Modo calle vuelve a esperar «Alma».
-    private func abrirLlamada(_ pedido: String) {
+    /// el Modo calle vuelve a esperar «Alma». `aviso`: la abre Alma por un aviso (Hub #509 T4) y habla primero con su frase.
+    private func abrirLlamada(_ pedido: String, aviso: AlmaAbre.Datos? = nil, avisoId: String = "") {
         cerrarMicrofono()
         fase = .llamada
         if encendido { uso.llamadas += 1 }
         let v = VozNativa.shared
         v.desdeCalle = encendido
         v.ultimaLlamada = (0, nil)   // si la llamada no llega a empezar, no se cuenta la anterior
-        v.hablarAlOir(pedido)
+        if let aviso { _ = v.hablarPorAviso(aviso, id: avisoId, conferencia: nil) } else { v.hablarAlOir(pedido) }
         llamadaVista = false; llamadaDesde = Date()
         reloj?.invalidate()
         reloj = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.revisarLlamada() }
@@ -1343,13 +1346,14 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     /// con la app abierta o en modo conferencia (también con el teléfono bloqueado); si no, queda solo la notificación.
     /// Nunca interrumpe una llamada: espera y lo dice después. `resultado`: terminó algo que Alma trabajaba en segundo plano.
     /// `hablar` y `audio`: la frase y la voz de Alma que ya vinieron con el aviso (vozAvisos), así suena sin esperar al Hub;
-    /// `vozMotivo`: por qué el Hub no mandó el audio (queda en el diagnóstico).
-    func avisoHablado(id: String, texto: String, resultado: Bool = false, hablar: String = "", audio: String? = nil, vozMotivo: String? = nil) {
+    /// `vozMotivo`: por qué el Hub no mandó el audio (queda en el diagnóstico). `abre`: el Hub marcó el aviso para que Alma
+    /// abra ella misma la conversación (Hub #509 T4, AlmaAbre.swift).
+    func avisoHablado(id: String, texto: String, resultado: Bool = false, hablar: String = "", audio: String? = nil, vozMotivo: String? = nil, abre: AlmaAbre.Datos? = nil) {
         let t = texto.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, puedeHablarAvisos else { return }
         let dichos = UserDefaults.standard.stringArray(forKey: "avisos_dichos") ?? []
-        guard !dichos.contains(id), !colaAvisos.contains(where: { $0.id == id }) else { return }
-        colaAvisos.append(AvisoHablado(id: id, texto: t, resultado: resultado, hablar: hablar.trimmingCharacters(in: .whitespacesAndNewlines), audio: audio, vozMotivo: vozMotivo))
+        guard AlmaAbre.nuevo(id, dichos: dichos, enFila: colaAvisos.map { $0.id }) else { return }
+        colaAvisos.append(AvisoHablado(id: id, texto: t, resultado: resultado, hablar: hablar.trimmingCharacters(in: .whitespacesAndNewlines), audio: audio, vozMotivo: vozMotivo, abre: abre))
         procesarAvisos()
     }
 
@@ -1368,6 +1372,20 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         relojAvisos?.invalidate(); relojAvisos = nil
         colaAvisos.removeFirst()
         marcarDicho(a)
+        // Alma abre la conversación (Hub #509 T4): el resultado de un pedido reciente de Juan, en Modo calle o conferencia.
+        // Abre la llamada de ElevenLabs con la frase del aviso como primer mensaje (con el sueño, que cuelga si Juan no
+        // contesta). Si no se puede (conferencia silenciada, esperó demasiado), va la notificación hablada de siempre.
+        if let ab = a.abre, AlmaAbre.decidir(ab, donde: AlmaAbre.donde(calle: encendido, conferencia: conf), espera: Date().timeIntervalSince(a.llego),
+                                               mudo: !encendido && Conferencia.shared.mudo) == .abrir {
+            if encendido {
+                uso.avisos += 1
+                anotar("Alma abre la conversación por un aviso")
+                abrirLlamada("", aviso: ab, avisoId: a.id)
+                return
+            }
+            if Conferencia.shared.abrirPorAviso(ab, id: a.id) { anotar("Alma abre la conversación por un aviso (conferencia)"); procesarAvisos(); return }
+            anotar("Alma no pudo abrir la conversación: va el aviso de siempre")
+        } else if a.abre != nil { anotar("El aviso esperó demasiado o no se puede abrir aquí: va el aviso de siempre") }
         if encendido {
             uso.avisos += 1
             decirAviso(a) { [weak self] in self?.escucharFrase(aviso: a.id) }
@@ -1613,6 +1631,10 @@ final class DetectorAlma {
 struct AvisoHablado {
     let id: String, texto: String, resultado: Bool
     let hablar: String, audio: String?, vozMotivo: String?
+    /// Alma abre la conversación por este aviso (Hub #509 T4); nil: la notificación hablada de siempre.
+    var abre: AlmaAbre.Datos? = nil
+    /// Cuándo llegó a la fila de la app (si Juan estaba hablando con Alma, espera; AlmaAbre.vence).
+    var llego = Date()
 }
 
 /// Niveles de las notificaciones, con dos selectores en Ajustes: «Notificaciones habladas» (hablado) y «Notificaciones del

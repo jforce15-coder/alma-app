@@ -348,7 +348,28 @@ final class Conferencia {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         let ctx = reciente.suffix(6).joined(separator: "\n")
         VozNativa.shared.hablarDesdeConferencia(contexto: ctx, texto: pide.isEmpty ? "" : "Alma, " + pide)
-        // al colgar, vuelve a escuchar sola
+        volverAlColgar()
+        ultimoCambio = Date()
+    }
+
+    /// Alma abre la conversación por un aviso (Hub #509 T4, AlmaAbre.swift): el resultado de un pedido reciente de Juan.
+    /// Como cuando la llaman con «Alma», pero habla ella primero con la frase del aviso, con lo último que se dijo de
+    /// contexto, y el sueño la cuelga si Juan no contesta. false: no se pudo (silenciada, otra app tiene el audio o ya hay
+    /// una llamada) y va la notificación hablada de siempre.
+    func abrirPorAviso(_ d: AlmaAbre.Datos, id: String) -> Bool {
+        guard activa, !enLlamada, !mudo, !interrumpida else { return false }
+        guardarTramo(); detener(); reloj?.invalidate(); relojApagar?.invalidate()
+        respuestaHasta = nil
+        let ctx = reciente.suffix(6).joined(separator: "\n")
+        guard VozNativa.shared.hablarPorAviso(d, id: id, conferencia: ctx) else { escuchar(); armarApagado(); return false }
+        enLlamada = true; emitir()
+        volverAlColgar()
+        ultimoCambio = Date()
+        return true
+    }
+
+    /// Al colgar, vuelve a escuchar sola.
+    private func volverAlColgar() {
         reloj = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self, self.enLlamada else { return }
             let e = VozNativa.shared.estado
