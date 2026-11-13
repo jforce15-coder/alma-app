@@ -9,7 +9,8 @@ import Foundation
 ///   · Apagar el Modo calle apaga de verdad: también lo que el micrófono hacía por un aviso o por el botón, y la fila de
 ///     avisos de esta vuelta (quedan como notificación y en Pendientes).
 ///   · La voz de un aviso: primero la que llegó con el aviso (vozAvisos ya la trae), luego la que se pide aparte, y la del
-///     iPhone solo si no hay red o el Hub no mandó audio; el porqué queda en el diagnóstico.
+///     iPhone solo si no hay red o el Hub no mandó audio; el porqué queda en el diagnóstico. Si el Hub tarda pero hay
+///     internet, se pide otra vez antes de la voz del iPhone (#509).
 enum EstadoCalle {
     /// UserDefaults: true si Juan dejó el Modo calle encendido.
     static let clave = "calle_encendido"
@@ -56,5 +57,21 @@ enum EstadoCalle {
         if hubSinAviso { return .soloFrase }
         if !hablar.isEmpty && vozMotivo != nil { return .soloFrase }   // el Hub ya intentó la voz con el aviso
         return .pedirAviso
+    }
+
+    /// Cuánto se espera al Hub por la voz de un aviso (#509, 13-nov-2026: «a veces sale la voz del iPhone»). Antes 12 s
+    /// (avisoHablar) y 8 s (calleVoz): el Hub arma la frase, lee Pendientes y llama a ElevenLabs, y se pasaba. Un aviso no
+    /// tiene prisa: nadie espera una respuesta.
+    static let esperaAviso: TimeInterval = 30
+    static let esperaVozAviso: TimeInterval = 20
+
+    /// ¿Se vuelve a pedir la voz al Hub? Solo si hay internet (tardó, pero el Hub siguió y dejó el audio en su caché) y
+    /// quedan intentos. Sin internet, la voz del iPhone de una vez.
+    static func reintentarVoz(sinRed: Bool, quedan: Int) -> Bool { !sinRed && quedan > 0 }
+
+    /// Los errores de URLSession que son «no hay internet» (no «tardó»): sin red, sin datos, avión, el host no se encuentra.
+    static func esSinRed(_ codigo: Int) -> Bool {
+        [NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorDataNotAllowed, NSURLErrorInternationalRoamingOff,
+         NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorCannotConnectToHost, NSURLErrorCallIsActive].contains(codigo)
     }
 }
