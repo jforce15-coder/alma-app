@@ -131,6 +131,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private var turnoVoz = 0                     // sube con cada frase y con callar(): una voz pedida tarde ya no suena
     private var vozGuardada: [String: Data] = [:]   // frases con la voz de Alma ya pedidas (solo en memoria)
     private var hubSinVoz = false                // el Hub todavía no tiene «calleVoz»: sin audio, habla el iPhone
+    private var sinRed = false                   // la última llamada al Hub falló porque no hay internet (no por tardar)
     private var vozUsada = ""                    // con qué voz se dijo lo último (para «Probar el Modo calle»)
     /// Lo que contestó Alma a un atajo («Mándale a Alma») con el Modo calle encendido: se dice con su voz, no con la de Siri.
     private var deFuera: (texto: String, desde: Date)?
@@ -1152,7 +1153,9 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
                 else if let h = resp as? HTTPURLResponse, h.statusCode != 200 { porque = "HTTP \(h.statusCode)" }
                 else { porque = "la respuesta no era JSON" }
             }
-            DispatchQueue.main.async { if j == nil, accion == "calle" || accion == "opEnviar" { self.errorRed = porque }; listo(j) }
+            // Sin internet de verdad (no solo lento): solo entonces habla la voz del iPhone sin volver a pedir (#509).
+            let sinRed = j == nil && err.map { EstadoCalle.esSinRed(($0 as NSError).code) } == true
+            DispatchQueue.main.async { self.sinRed = sinRed; if j == nil, accion == "calle" || accion == "opEnviar" { self.errorRed = porque }; listo(j) }
         }.resume()
     }
 
@@ -1183,9 +1186,12 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     // MARK: - Hablar
 
     /// Alma contesta al oído, siempre con su voz (ElevenLabs): el audio que mandó el Hub; si no vino, el que ya se guardó
-    /// para esa frase; si no, se pide aparte (acción «calleVoz», 6 s como mucho). Solo sin nada de eso habla el iPhone, con
-    /// una voz de mujer elegida a mano (VozIphone), nunca la de por defecto. `pedirVoz`: false si el Hub no contesta (sin red).
-    private func decir(_ texto: String, audio: String?, pedirVoz: Bool = true, vozAlma: String = "Alma (ElevenLabs)", luego: @escaping () -> Void) {
+    /// para esa frase; si no, se pide aparte (acción «calleVoz», `espera` s como mucho). Solo sin nada de eso habla el iPhone,
+    /// con una voz de mujer elegida a mano (VozIphone), nunca la de por defecto. `pedirVoz`: false si el Hub no contesta (sin
+    /// red). `reintentos` (#509, avisos): si el Hub tardó pero hay internet, se vuelve a pedir; la primera vez el Hub siguió
+    /// trabajando y dejó el audio en su caché, así que la segunda suele llegar al instante. `donde`: para el registro de la voz.
+    private func decir(_ texto: String, audio: String?, pedirVoz: Bool = true, vozAlma: String = "Alma (ElevenLabs)",
+                       espera: TimeInterval = 8, reintentos: Int = 0, donde: String = "calle", luego: @escaping () -> Void) {
         fase = .hablando
         candado.lock(); alimentarDetector = false; candado.unlock()
         trasHablar = luego
@@ -1194,16 +1200,26 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         if let a = audio, let d = Data(base64Encoded: a), tocar(d, voz: vozAlma) { guardarVoz(t, d); return }
         guard !t.isEmpty else { terminoDeHablar(); return }
         if let d = vozGuardada[t], tocar(d, voz: "Alma (ElevenLabs, guardada)") { return }
-        guard pedirVoz, !hubSinVoz else { hablarIphone(t, por: hubSinVoz ? "el Hub no tiene «calleVoz»" : "sin conexión con el Hub"); return }
-        llamarHub(["texto": t], accion: "calleVoz", timeout: 8) { [weak self] j in
-            guard let self, self.turnoVoz == mio, self.fase == .hablando, self.trasHablar != nil else { return }   // ya se calló
-            if (j?["error"] as? String) == "accion" { self.hubSinVoz = true }
-            if (j?["ok"] as? Bool) == true, let a = j?["audio"] as? String, let d = Data(base64Encoded: a),
-               self.tocar(d, voz: "Alma (ElevenLabs, pedida aparte)") { self.guardarVoz(t, d); return }
-            // El Hub dice por qué no hubo voz (sin llave, sin permiso, sin créditos, ElevenLabs falló…): queda en el diagnóstico.
-            let motivo = (j?["motivo"] as? String).map { ": " + ModoCalle.corto($0, palabras: 18) } ?? ((j?["error"] as? String).map { ": " + $0 } ?? "")
-            self.hablarIphone(t, por: j == nil ? "el Hub no contestó a tiempo" : "el Hub no mandó la voz" + motivo)
+        guard pedirVoz, !hubSinVoz else { hablarIphone(t, por: hubSinVoz ? "el Hub no tiene «calleVoz»" : "sin conexión con el Hub", donde: donde); return }
+        var cuerpo: [String: Any] = ["texto": t]
+        if donde == "aviso" { cuerpo["donde"] = "aviso" }
+        let inicio = Date()
+        func pedir(_ quedan: Int) {
+            llamarHub(cuerpo, accion: "calleVoz", timeout: espera) { [weak self] j in
+                guard let self, self.turnoVoz == mio, self.fase == .hablando, self.trasHablar != nil else { return }   // ya se calló
+                if (j?["error"] as? String) == "accion" { self.hubSinVoz = true }
+                if (j?["ok"] as? Bool) == true, let a = j?["audio"] as? String, let d = Data(base64Encoded: a),
+                   self.tocar(d, voz: "Alma (ElevenLabs, pedida aparte)") { self.guardarVoz(t, d); return }
+                if j == nil, EstadoCalle.reintentarVoz(sinRed: self.sinRed, quedan: quedan) {
+                    self.anotar("La voz de Alma tardó más de \(Int(espera)) s: la pido otra vez"); pedir(quedan - 1); return
+                }
+                // El Hub dice por qué no hubo voz (sin llave, sin permiso, sin créditos, ElevenLabs falló…): queda en el diagnóstico.
+                let motivo = (j?["motivo"] as? String).map { ": " + ModoCalle.corto($0, palabras: 18) } ?? ((j?["error"] as? String).map { ": " + $0 } ?? "")
+                self.hablarIphone(t, por: j == nil ? (self.sinRed ? "sin internet" : "el Hub no contestó a tiempo") : "el Hub no mandó la voz" + motivo,
+                                  donde: donde, ms: Int(Date().timeIntervalSince(inicio) * 1000))
+            }
         }
+        pedir(reintentos)
     }
 
     /// Suena el mp3 de la voz de Alma. false si no se pudo (entonces se intenta lo siguiente).
@@ -1215,14 +1231,16 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         return true
     }
 
-    /// La voz del iPhone, solo de respaldo: de mujer, en español, elegida a mano. Queda anotado por qué.
-    private func hablarIphone(_ t: String, por: String) {
+    /// La voz del iPhone, solo de respaldo: de mujer, en español, elegida a mano. Queda anotado por qué, aquí y en el
+    /// registro de la voz del Hub (acción «vozCaida», #509: solo dónde, el motivo y cuánto tardó; nunca la frase).
+    private func hablarIphone(_ t: String, por: String, donde: String = "calle", ms: Int = 0) {
         let u = AVSpeechUtterance(string: t)
         u.voice = VozIphone.elegida
         u.rate = AVSpeechUtteranceDefaultSpeechRate
         vozUsada = "iPhone: " + VozIphone.nombre + " (" + por + ")"
         anotar("Voz del iPhone: " + VozIphone.nombre + " · " + por)
         sintetizador.speak(u)
+        if !sinRed { llamarHub(["donde": "app · " + donde, "motivo": por, "ms": ms], accion: "vozCaida", timeout: 20) { _ in } }
     }
 
     /// Las frases cortas quedan con la voz de Alma (en memoria, 40 como mucho): la próxima vez suenan sin esperar al Hub.
@@ -1381,28 +1399,36 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     /// abierta»): primero el audio que llegó con el aviso (vozAvisos lo pide junto con el texto: suena sin esperar); si no
     /// vino, se pide al Hub la frase y su audio (avisoHablar: solo arma la frase, no responde el aviso); si tampoco, la voz
     /// aparte (calleVoz) y, solo sin red o sin audio del Hub, la del iPhone. Cuál sonó y por qué queda en el diagnóstico.
-    /// Lo que terminó en segundo plano suena «Ya quedó listo… ¿Quieres verlo?».
+    /// La frase la arma el Hub como una conversación (#509: «Juan, ya terminé lo que me pediste: … ¿Quieres que te cuente?»);
+    /// si no vino (Hub viejo), lo que terminó en segundo plano suena «Ya terminé lo que me pediste: … ¿Quieres que te cuente?».
     private func decirAviso(_ a: AvisoHablado, luego: @escaping () -> Void) {
-        let limpio = a.resultado ? "Ya quedó listo: " + ModoCalle.corto(a.texto, palabras: 16) + " ¿Quieres verlo ahora?" : ModoCalle.corto(a.texto, palabras: 22)
+        let limpio = a.resultado ? "Ya terminé lo que me pediste: " + ModoCalle.corto(a.texto, palabras: 16) + " ¿Quieres que te cuente?" : ModoCalle.corto(a.texto, palabras: 22)
         let frase = a.hablar.isEmpty ? limpio : a.hablar
         switch EstadoCalle.vozAviso(audio: a.audio != nil, hablar: a.hablar, vozMotivo: a.vozMotivo, hubSinAviso: hubSinAviso) {
         case .conElAviso:
             decir(frase, audio: a.audio, vozAlma: "Alma (ElevenLabs, llegó con el aviso)", luego: luego)
         case .soloFrase:
             if let m = a.vozMotivo { anotar("Aviso sin audio del Hub: " + ModoCalle.corto(m, palabras: 18)) }
-            decir(frase, audio: nil, luego: luego)
+            decir(frase, audio: nil, espera: EstadoCalle.esperaVozAviso, reintentos: 1, donde: "aviso", luego: luego)
         case .pedirAviso:
+            // Un aviso no tiene prisa (nadie espera respuesta): se le da al Hub 30 s (antes 12) y, si tardó pero hay
+            // internet, se pide otra vez; para entonces el audio ya está en su caché (#509).
             fase = .pensando
             var cuerpo: [String: Any] = ["aviso_id": a.id]
             if a.resultado { cuerpo["resultado"] = true }
-            llamarHub(cuerpo, accion: "avisoHablar", timeout: 12) { [weak self] j in
-                guard let self else { return }
-                if (j?["error"] as? String) == "accion" { self.hubSinAviso = true }
-                let ok = (j?["ok"] as? Bool) == true
-                let hablar = ok ? ((j?["hablar"] as? String) ?? "") : ""
-                if ok, j?["audio"] == nil, let m = j?["vozMotivo"] as? String { self.anotar("Aviso sin audio del Hub: " + ModoCalle.corto(m, palabras: 18)) }
-                self.decir(hablar.isEmpty ? frase : hablar, audio: ok ? j?["audio"] as? String : nil, vozAlma: "Alma (ElevenLabs, pedida con el aviso)", luego: luego)
+            func pedir(_ quedan: Int) {
+                llamarHub(cuerpo, accion: "avisoHablar", timeout: EstadoCalle.esperaAviso) { [weak self] j in
+                    guard let self else { return }
+                    if j == nil, EstadoCalle.reintentarVoz(sinRed: self.sinRed, quedan: quedan) { self.anotar("El aviso tardó más de \(Int(EstadoCalle.esperaAviso)) s: lo pido otra vez"); pedir(quedan - 1); return }
+                    if (j?["error"] as? String) == "accion" { self.hubSinAviso = true }
+                    let ok = (j?["ok"] as? Bool) == true
+                    let hablar = ok ? ((j?["hablar"] as? String) ?? "") : ""
+                    if ok, j?["audio"] == nil, let m = j?["vozMotivo"] as? String { self.anotar("Aviso sin audio del Hub: " + ModoCalle.corto(m, palabras: 18)) }
+                    self.decir(hablar.isEmpty ? frase : hablar, audio: ok ? j?["audio"] as? String : nil, pedirVoz: !(j == nil && self.sinRed),
+                               vozAlma: "Alma (ElevenLabs, pedida con el aviso)", espera: EstadoCalle.esperaVozAviso, reintentos: 1, donde: "aviso", luego: luego)
+                }
             }
+            pedir(1)
         }
     }
 

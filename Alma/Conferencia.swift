@@ -54,7 +54,7 @@ final class Conferencia {
     /// Encendida por una llamada larga: si en `apagarTras` segundos nadie dice «Alma», se apaga sola. (Encendida a mano o con
     /// el anillo queda prendida hasta que la apaguen.) El reloj vuelve a empezar después de cada vez que la llaman.
     private var apagarTras: TimeInterval?, relojApagar: Timer?
-    /// Alma acaba de decir un aviso (lo que terminó en segundo plano: «Ya quedó listo… ¿Quieres verlo ahora?»): lo que
+    /// Alma acaba de decir un aviso (lo que terminó en segundo plano: «Juan, ya terminé lo que me pediste… ¿Quieres que te cuente?»): lo que
     /// contesten en estos segundos abre la llamada con el aviso de contexto, sin tener que decir «Alma». «No» o «luego»: nada.
     private var respuestaHasta: Date?, respuestaAviso = ""
     private func armarApagado() {
