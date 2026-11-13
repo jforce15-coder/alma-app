@@ -157,11 +157,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     struct Mostrado: Equatable { let id: Int; let titulo: String; let contenido: String }
     @Published private(set) var mostrado: Mostrado?
     /// Tarjeta de la llamada (#446 T2, TarjetaLlamada.swift): lo que el Hub armó con lo que la secretaria trajo (una reserva,
-    /// una conversación o un apartamento). La pintan LlamadaVista y la roca del inicio (AlmaVoz.evento «tarjeta»).
+    /// una conversación, un apartamento o un edificio). La pintan LlamadaVista y la roca del inicio (AlmaVoz.evento «tarjeta»).
+    /// Tablero bento (Hub #508): se queda mientras dure la llamada y lo reemplaza la próxima tarjeta (ya no se encoge a los 20 s).
     @Published private(set) var tarjeta: TarjetaVoz?
     @Published private(set) var tarjetaVista: ReglasTarjeta.Vista = .nada
     private var reglasTarjeta = ReglasTarjeta()
-    private var relojTarjeta: Timer?
     /// La conversación de ElevenLabs de esta llamada (para pedir su tarjeta y decir si Juan ve la pantalla).
     private var idLlamada: String?
     private var avisoPantalla: [NSObjectProtocol] = []
@@ -768,8 +768,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             herramienta = true; ultimaActividad = Date()
             let tr = j["agent_tool_request"] as? [String: Any] ?? [:]
             if conferencia != nil, (tr["tool_name"] as? String ?? "secretaria") == "secretaria" { armarEspera() }
-            // Alma va a buscar otra cosa: la tarjeta que se ve se encoge a la pestañita
-            if (tr["tool_name"] as? String ?? "") == "secretaria" { reglasTarjeta.cambioDeTema(); publicarTarjeta() }
+            // El tablero se queda mientras Alma busca otra cosa: lo reemplaza la próxima tarjeta (Hub #508, por estado)
         case "client_tool_call":
             ultimaActividad = Date()
             herramientaCliente(j["client_tool_call"] as? [String: Any] ?? [:])
@@ -954,6 +953,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let enConf = conferencia != nil
         if enConf { b["conferencia"] = true; b["hz"] = Int(formatoSalida.sampleRate) }
         idLlamada = id; b["pantalla"] = pantallaVisible   // tarjeta de la llamada: con el teléfono bloqueado no se muestra
+        b["tablero"] = "estado"   // Hub #508: esta app deja el tablero por estado (se queda y se reemplaza; puede volver a lo ya visto)
         vigilarPantalla()
         r.httpBody = try? JSONSerialization.data(withJSONObject: b)
         let llamada = inicioLlamada
@@ -1051,9 +1051,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     // MARK: - Tarjeta de la llamada (#446 T2)
 
-    /// ¿Juan ve la pantalla? Con el teléfono bloqueado, en el Modo calle o en conferencia, no (la tarjeta queda en el chat).
+    /// ¿Juan ve la pantalla? Con el teléfono bloqueado o en el Modo calle, no (la tarjeta queda en el chat). En el modo
+    /// conferencia con la app a la vista, sí (Juan, 13-nov-2026).
     private var pantallaVisible: Bool {
-        ReglasTarjeta.pantallaVisible(appActiva: UIApplication.shared.applicationState == .active, calle: desdeCalle, conferencia: conferencia != nil)
+        ReglasTarjeta.pantallaVisible(appActiva: UIApplication.shared.applicationState == .active, calle: desdeCalle)
     }
 
     /// La secretaria contestó: si el Hub armó una tarjeta, se pide y se pinta. Se reintenta una vez a los 1.5 s.
@@ -1072,21 +1073,20 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                     if intento == 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.pedirTarjeta(intento: 1) } }
                     return
                 }
-                if self.tarjeta?.id == t.id { return }   // la misma que ya llegó
-                let d = self.reglasTarjeta.recibir(t, pantalla: self.pantallaVisible, ahora: Date())
-                self.paso("Tarjeta de la llamada: " + t.tipo + (d == .mostrar ? "" : d == .repetida ? " (ya se vio)" : " (sin pantalla: queda en el chat)"))
-                if d == .mostrar { self.publicarTarjeta(); self.relojDeTarjeta() }
+                let d = self.reglasTarjeta.recibir(t, pantalla: self.pantallaVisible)
+                if d == .igual { return }   // la misma que ya se ve
+                self.paso("Tarjeta de la llamada: " + t.tipo + (d == .mostrar ? "" : " (sin pantalla: queda en el chat)"))
+                if d == .mostrar { self.publicarTarjeta() }
             }
         }.resume()
     }
 
     /// Lo que Juan toca en la tarjeta (LlamadaVista o la página del inicio): toque · detalle · abrir · plegar · conv · llamar · whatsapp.
     func tarjetaAccion(_ hacer: String) {
-        let ahora = Date()
         switch hacer {
-        case "toque": reglasTarjeta.toque(ahora: ahora); return   // solo vuelve a contar los 20 s
-        case "detalle": reglasTarjeta.detalle(ahora: ahora)
-        case "abrir": reglasTarjeta.abrir(ahora: ahora); relojDeTarjeta()
+        case "toque": return   // la página lo manda cada 12 s (para las apps de antes, que la encogían a los 20 s); ya no cuenta
+        case "detalle": reglasTarjeta.detalle()
+        case "abrir": reglasTarjeta.abrir()
         case "plegar": reglasTarjeta.plegar()
         case "conv":   // abre la conversación en el navegador de la app; la llamada sigue
             guard let c = tarjeta?.conv, !c.isEmpty, let q = c.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
@@ -1103,15 +1103,6 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         default: return
         }
         publicarTarjeta()
-    }
-
-    /// Cada segundo, mientras se ve abierta: a los 20 s sin tocarla se encoge.
-    private func relojDeTarjeta() {
-        relojTarjeta?.invalidate()
-        relojTarjeta = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] t in
-            guard let self, self.estado == .hablando, self.reglasTarjeta.vista != .nada else { t.invalidate(); return }
-            if self.reglasTarjeta.tic(ahora: Date()) { self.publicarTarjeta() }
-        }
     }
 
     /// Solo si algo cambió: LlamadaVista (lo publicado) y la página del inicio (AlmaVoz.evento «tarjeta»).

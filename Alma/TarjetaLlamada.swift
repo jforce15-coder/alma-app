@@ -5,10 +5,16 @@ import Foundation
 // app la pide (vozTarjeta) y la pinta en LlamadaVista o en la llamada de la roca del inicio (alma/inicio.html).
 // Decisiones de Juan (4-nov-2026):
 //   · Sube desde abajo sobre la roca (la roca se achica a 96 px y «Terminar» sigue a la vista, también en un iPhone SE).
-//   · Al cambiar de tema, o a los 20 s sin tocarla, se encoge a una pestañita; tocar la pestañita la abre otra vez.
-//   · Con el teléfono bloqueado (Modo calle, anillo, conferencia) no sale nada en la llamada: al colgar queda en el Chat
-//     con Alma junto a esa llamada (lo guarda el Hub en la columna tarjeta), sin notificación.
-// Reglas: una a la vez (la nueva reemplaza a la anterior) y nunca la misma cosa dos veces en la llamada.
+//   · Con el teléfono bloqueado o en el Modo calle no sale nada en la llamada: al colgar queda en el Chat con Alma junto a
+//     esa llamada (lo guarda el Hub en la columna tarjeta), sin notificación.
+// Tablero bento (Hub #508, Juan 13-nov-2026): se maneja por ESTADO, no por segundos.
+//   · Se queda en pantalla mientras dure la llamada: no se encoge solo (antes, a los 20 s o al cambiar de tema).
+//   · Una tarjeta nueva de otra cosa lo reemplaza; volver a algo que ya se vio en la llamada también lo muestra otra vez
+//     (el Hub lo sabe porque la app avisa «tablero: estado» al vincular).
+//   · Al colgar (o cuando el modo conferencia vuelve a esperar «Alma») se quita; la página del inicio espera ~3 s y
+//     vuelve a la pantalla de siempre.
+//   · También en el modo conferencia, con la pantalla encendida. Con el teléfono bloqueado, solo el chat (como siempre).
+//   · Juan lo puede guardar en la pestañita (el asa, o tocar a Alma en la esquina) y abrirlo otra vez.
 
 /// La tarjeta como la manda el Hub. `crudo` va tal cual a la página del inicio.
 struct TarjetaVoz: Equatable {
@@ -40,14 +46,16 @@ struct TarjetaVoz: Equatable {
     }
     static func == (a: TarjetaVoz, b: TarjetaVoz) -> Bool { a.id == b.id && a.clave == b.clave }
     /// Lo que la app sabe pintar. «consulta» (Hub #470): quien escribió por Airbnb sin reservar (persona, propiedad,
-    /// fechas, noches, su mensaje, el precio si lo hay y el borrador que saldría); se pinta como una reserva.
-    static let tipos = ["reserva", "conversacion", "apartamento", "consulta"]
+    /// fechas, noches, su mensaje, el precio si lo hay y el borrador que saldría); se pinta como una reserva. «edificio»
+    /// (Hub #508 T2): el edificio completo (foto, apartamentos, llegadas y salidas de hoy); se pinta como un apartamento.
+    static let tipos = ["reserva", "conversacion", "apartamento", "consulta", "edificio"]
     /// El nombre del tipo (la etiqueta de la tarjeta y la pestañita).
     static func nombre(_ tipo: String) -> String {
         switch tipo {
         case "reserva": return "Reserva"
         case "conversacion": return "Conversación"
         case "consulta": return "Consulta"
+        case "edificio": return "Edificio"
         default: return "Apartamento"
         }
     }
@@ -56,46 +64,36 @@ struct TarjetaVoz: Equatable {
 /// Qué se ve de la tarjeta y cuándo. La usan LlamadaVista y la página del inicio (por AlmaVoz.evento).
 struct ReglasTarjeta {
     enum Vista: String { case nada, abierta, detalle, pestana }
-    enum Decision: Equatable { case mostrar, repetida, soloChat }
-
-    /// Sin tocarla, a los 20 s se encoge a la pestañita.
-    static let encogerTras: TimeInterval = 20
+    /// mostrar: cambia lo que se ve · igual: ya es la que se ve · soloChat: sin pantalla (el Hub ya la dejó en el chat).
+    enum Decision: Equatable { case mostrar, igual, soloChat }
 
     private(set) var actual: TarjetaVoz?
     private(set) var vista: Vista = .nada
-    private(set) var vistas: Set<String> = []
-    private var desde = Date.distantPast
 
-    /// ¿Juan ve la pantalla? Con el teléfono bloqueado, en el Modo calle o en el modo conferencia, no.
-    static func pantallaVisible(appActiva: Bool, calle: Bool, conferencia: Bool) -> Bool { appActiva && !calle && !conferencia }
+    /// ¿Juan ve la pantalla? Con el teléfono bloqueado o en el Modo calle, no. En el modo conferencia, sí si la app está a
+    /// la vista (Juan, 13-nov-2026).
+    static func pantallaVisible(appActiva: Bool, calle: Bool) -> Bool { appActiva && !calle }
 
-    /// Llegó una tarjeta del Hub. Sin pantalla no se muestra (el Hub ya la dejó en el chat); la misma cosa no sale dos veces.
-    mutating func recibir(_ t: TarjetaVoz, pantalla: Bool, ahora: Date) -> Decision {
+    /// Llegó una tarjeta del Hub. Sin pantalla no se muestra. Una a la vez: la nueva reemplaza a la anterior y se queda
+    /// hasta que llegue otra o se cuelgue. La misma (mismo id) no cambia nada; si estaba en la pestañita, se abre.
+    mutating func recibir(_ t: TarjetaVoz, pantalla: Bool) -> Decision {
         guard pantalla else { return .soloChat }
-        if vistas.contains(t.clave) { return .repetida }
-        vistas.insert(t.clave)
-        actual = t; vista = .abierta; desde = ahora   // una a la vez: la nueva reemplaza a la anterior
+        if let a = actual, a.id == t.id {
+            if vista == .pestana || vista == .nada { vista = .abierta; return .mostrar }
+            return .igual
+        }
+        actual = t; vista = .abierta
         return .mostrar
     }
-    /// Cualquier toque en la tarjeta: vuelve a contar los 20 s.
-    mutating func toque(ahora: Date) { if vista == .abierta || vista == .detalle { desde = ahora } }
     /// Tocar la tarjeta: muestra más (o menos); la llamada sigue.
-    mutating func detalle(ahora: Date) {
+    mutating func detalle() {
         guard actual != nil else { return }
-        if vista == .abierta { vista = .detalle } else if vista == .detalle { vista = .abierta } else { return }
-        desde = ahora
+        if vista == .abierta { vista = .detalle } else if vista == .detalle { vista = .abierta }
     }
     /// Tocar la pestañita: la abre otra vez.
-    mutating func abrir(ahora: Date) { guard actual != nil, vista == .pestana else { return }; vista = .abierta; desde = ahora }
-    /// Bajarla con el asa.
+    mutating func abrir() { guard actual != nil, vista == .pestana else { return }; vista = .abierta }
+    /// Bajarla con el asa o tocar a Alma en la esquina: se guarda en la pestañita (no se va).
     mutating func plegar() { if actual != nil, vista == .abierta || vista == .detalle { vista = .pestana } }
-    /// Cambió el tema (Alma va a buscar otra cosa): se encoge.
-    mutating func cambioDeTema() { plegar() }
-    /// Cada segundo: ¿ya pasaron 20 s sin tocarla? Devuelve true si cambió.
-    mutating func tic(ahora: Date) -> Bool {
-        guard vista == .abierta || vista == .detalle, ahora.timeIntervalSince(desde) >= ReglasTarjeta.encogerTras else { return false }
-        vista = .pestana; return true
-    }
-    /// Colgó: no queda nada en la llamada (lo que hubo vive en el Chat con Alma).
-    mutating func terminar() { actual = nil; vista = .nada; vistas = []; desde = .distantPast }
+    /// Colgó, o el modo conferencia volvió a esperar «Alma»: no queda nada en la llamada (lo que hubo vive en el Chat con Alma).
+    mutating func terminar() { actual = nil; vista = .nada }
 }
