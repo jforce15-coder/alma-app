@@ -61,8 +61,8 @@ jobs:
           xcrun swiftc Alma/OidoCalle.swift Pruebas/OidoCalle/main.swift -o /tmp/oido-calle
           /tmp/oido-calle
 
-      # La tarjeta de la llamada (#446 T2): una a la vez, sin repetir, se encoge a los 20 s o al cambiar de tema, y nada con
-      # el teléfono bloqueado. Lógica pura, se prueba sola en segundos.
+      # La tarjeta de la llamada (#446 T2) y el tablero bento por estado (Hub #508): una a la vez, se queda hasta que llega
+      # otra o se cuelga, también en conferencia con la pantalla encendida, y nada con el teléfono bloqueado. Lógica pura.
       - name: Probar la tarjeta de la llamada
         if: env.SUBIR != 'true'
         run: |

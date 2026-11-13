@@ -13,7 +13,6 @@ func tarjeta(_ clave: String, id: String) -> TarjetaVoz {
                 "fechas": [["t": "Llega", "v": "vie 6 nov", "d": "15:00"]], "datos": ["Registro completo"],
                 "semana": [["letra": "M", "n": 4, "e": "res", "hoy": true]], "conv": "HM4K2Q9XAB"])!
 }
-let t0 = Date(timeIntervalSince1970: 1_000_000)
 
 // MARK: - Lo que manda el Hub
 
@@ -21,7 +20,7 @@ do {
     let t = tarjeta("reserva:HM4K2Q9XAB", id: "tv1")
     revisa(t.titulo == "Mariana López" && t.fechas.first?.v == "vie 6 nov" && t.semana.first?.n == 4 && t.semana.first?.hoy == true && t.conv == "HM4K2Q9XAB",
            "la tarjeta se lee del Hub (título, fechas, semana y la conversación)")
-    revisa(TarjetaVoz(["clave": "x", "tipo": "lista"]) == nil && TarjetaVoz(["tipo": "reserva"]) == nil, "un tipo que no es v1, o sin clave, no es tarjeta")
+    revisa(TarjetaVoz(["clave": "x", "tipo": "lista"]) == nil && TarjetaVoz(["tipo": "reserva"]) == nil, "un tipo que la app no pinta, o sin clave, no es tarjeta")
     // La consulta de Airbnb (Hub #470): se lee como una reserva, con su borrador y «Abrir conversación».
     let c = TarjetaVoz(["id": "tv9", "clave": "consulta:HAX1:b120", "tipo": "consulta", "titulo": "Alison Prueba", "sub": "Likin · 28 noches",
                         "etiqueta": "Consulta · Airbnb", "chip": "Borrador", "tono": "aviso",
@@ -34,51 +33,50 @@ do {
     revisa(TarjetaVoz.nombre("consulta") == "Consulta" && TarjetaVoz.nombre("reserva") == "Reserva" && TarjetaVoz.nombre("apartamento") == "Apartamento", "el nombre de cada tipo")
 }
 
-// MARK: - Una a la vez, sin repetir
+// MARK: - Por estado (Hub #508, Juan 13-nov-2026): se queda, se reemplaza y se va al colgar
 
 do {
     var r = ReglasTarjeta()
-    revisa(r.recibir(tarjeta("reserva:A", id: "1"), pantalla: true, ahora: t0) == .mostrar && r.vista == .abierta, "la primera se muestra abierta")
-    revisa(r.recibir(tarjeta("conversacion:B", id: "2"), pantalla: true, ahora: t0) == .mostrar && r.actual?.clave == "conversacion:B", "una a la vez: la nueva reemplaza a la anterior")
-    revisa(r.recibir(tarjeta("reserva:A", id: "3"), pantalla: true, ahora: t0) == .repetida && r.actual?.clave == "conversacion:B", "la misma cosa no vuelve a salir en la llamada")
+    revisa(r.recibir(tarjeta("reserva:A", id: "1"), pantalla: true) == .mostrar && r.vista == .abierta, "la primera se muestra abierta")
+    revisa(r.recibir(tarjeta("reserva:A", id: "1"), pantalla: true) == .igual && r.vista == .abierta, "la misma (mismo id) no cambia nada")
+    revisa(r.recibir(tarjeta("conversacion:B", id: "2"), pantalla: true) == .mostrar && r.actual?.clave == "conversacion:B" && r.vista == .abierta, "una a la vez: otra cosa la reemplaza")
+    revisa(r.recibir(tarjeta("reserva:A", id: "3"), pantalla: true) == .mostrar && r.actual?.clave == "reserva:A", "volver a algo que ya se vio en la llamada lo muestra otra vez")
     r.terminar()
-    revisa(r.vista == .nada && r.actual == nil && r.recibir(tarjeta("reserva:A", id: "4"), pantalla: true, ahora: t0) == .mostrar, "al colgar se olvida: en otra llamada sí sale")
+    revisa(r.vista == .nada && r.actual == nil, "al colgar (o al volver la conferencia a esperar) no queda nada")
+    revisa(r.recibir(tarjeta("reserva:A", id: "4"), pantalla: true) == .mostrar, "en otra llamada sale de nuevo")
 }
-
-// MARK: - Se encoge a los 20 s o al cambiar de tema
 
 do {
     var r = ReglasTarjeta()
-    _ = r.recibir(tarjeta("reserva:A", id: "1"), pantalla: true, ahora: t0)
-    revisa(!r.tic(ahora: t0.addingTimeInterval(19)) && r.vista == .abierta, "a los 19 s sigue abierta")
-    revisa(r.tic(ahora: t0.addingTimeInterval(20)) && r.vista == .pestana, "a los 20 s sin tocarla se encoge a la pestañita")
-    r.abrir(ahora: t0.addingTimeInterval(30))
-    revisa(r.vista == .abierta, "tocar la pestañita la abre otra vez")
-    r.toque(ahora: t0.addingTimeInterval(45))
-    revisa(!r.tic(ahora: t0.addingTimeInterval(60)) && r.vista == .abierta, "tocarla vuelve a contar los 20 s")
-    revisa(r.tic(ahora: t0.addingTimeInterval(65)), "… y a los 20 s del último toque se encoge")
-    r.abrir(ahora: t0.addingTimeInterval(70)); r.detalle(ahora: t0.addingTimeInterval(71))
+    _ = r.recibir(tarjeta("reserva:A", id: "1"), pantalla: true)
+    revisa(r.vista == .abierta, "no hay reloj: sigue abierta mientras dure la llamada (ya no se encoge a los 20 s)")
+    r.detalle()
     revisa(r.vista == .detalle, "tocar la tarjeta muestra más")
-    r.detalle(ahora: t0.addingTimeInterval(72))
+    r.detalle()
     revisa(r.vista == .abierta, "otro toque, menos")
-    r.cambioDeTema()
-    revisa(r.vista == .pestana && r.actual != nil, "al cambiar de tema se encoge (no se va)")
-    r.cambioDeTema()
-    revisa(r.vista == .pestana, "la pestañita no cambia con otro tema")
-    r.plegar(); r.detalle(ahora: t0)
+    r.plegar()
+    revisa(r.vista == .pestana && r.actual != nil, "el asa (o tocar a Alma en la esquina) la guarda en la pestañita, no se va")
+    r.detalle()
     revisa(r.vista == .pestana, "en la pestañita, «ver más» no hace nada: primero se abre")
+    r.abrir()
+    revisa(r.vista == .abierta, "tocar la pestañita la abre otra vez")
+    r.plegar()
+    revisa(r.recibir(tarjeta("reserva:A", id: "1"), pantalla: true) == .mostrar && r.vista == .abierta, "en la pestañita, si Alma vuelve a hablar de lo mismo, se abre")
+    r.plegar()
+    revisa(r.recibir(tarjeta("apartamento:C", id: "5"), pantalla: true) == .mostrar && r.vista == .abierta && r.actual?.clave == "apartamento:C", "en la pestañita, una tarjeta nueva se abre")
 }
 
-// MARK: - Teléfono bloqueado: nada en la llamada, queda en el chat
+// MARK: - Pantalla: bloqueada o Modo calle, nada; conferencia con la pantalla encendida, sí
 
 do {
-    revisa(!ReglasTarjeta.pantallaVisible(appActiva: false, calle: false, conferencia: false), "con el teléfono bloqueado no hay pantalla")
-    revisa(!ReglasTarjeta.pantallaVisible(appActiva: true, calle: true, conferencia: false), "en el Modo calle no hay pantalla")
-    revisa(!ReglasTarjeta.pantallaVisible(appActiva: true, calle: false, conferencia: true), "en el modo conferencia no hay pantalla")
-    revisa(ReglasTarjeta.pantallaVisible(appActiva: true, calle: false, conferencia: false), "con la app a la vista, sí")
+    revisa(!ReglasTarjeta.pantallaVisible(appActiva: false, calle: false), "con el teléfono bloqueado no hay pantalla")
+    revisa(!ReglasTarjeta.pantallaVisible(appActiva: true, calle: true), "en el Modo calle no hay pantalla")
+    revisa(ReglasTarjeta.pantallaVisible(appActiva: true, calle: false), "con la app a la vista, sí (también en el modo conferencia)")
     var r = ReglasTarjeta()
-    revisa(r.recibir(tarjeta("reserva:A", id: "1"), pantalla: false, ahora: t0) == .soloChat && r.vista == .nada && r.actual == nil, "bloqueado: no se muestra, queda para el chat")
-    revisa(r.recibir(tarjeta("reserva:A", id: "2"), pantalla: true, ahora: t0) == .mostrar, "lo que no se vio bloqueado sí sale al volver a la pantalla")
+    revisa(r.recibir(tarjeta("reserva:A", id: "1"), pantalla: false) == .soloChat && r.vista == .nada && r.actual == nil, "bloqueado: no se muestra, queda para el chat")
+    revisa(r.recibir(tarjeta("reserva:A", id: "2"), pantalla: true) == .mostrar, "lo que no se vio bloqueado sí sale al volver a la pantalla")
+    let e = TarjetaVoz(["id": "tv7", "clave": "edificio:z10brunelo", "tipo": "edificio", "titulo": "Edificio Brunelo"])
+    revisa(e != nil && TarjetaVoz.nombre("edificio") == "Edificio", "el edificio (Hub #508 T2) es tarjeta")
 }
 
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallaron.")

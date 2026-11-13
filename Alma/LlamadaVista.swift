@@ -81,7 +81,7 @@ struct LlamadaVista: View {
                     .foregroundStyle(.white)
                 }
                 .buttonStyle(.plain)
-                Text(conTarjeta ? "Toca la tarjeta para ver más · se encoge sola" : "Dos toques en tu anillo: pausa · otros dos: sigue")
+                Text(conTarjeta ? "Toca la tarjeta para ver más · la llamada sigue" : "Dos toques en tu anillo: pausa · otros dos: sigue")
                     .font(.custom("Montserrat", size: 11)).foregroundStyle(.white.opacity(0.7)).padding(.top, conTarjeta ? 8 : 12)
             }
             .padding(.horizontal, conTarjeta ? 12 : 24).padding(.vertical, 18)
