@@ -31,7 +31,9 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
     /// `titulo` y `lineas` (del Hub, vozAvisos): lo que terminó en segundo plano llega con la respuesta, no solo el aviso
     /// («Alma · Operación de hoy», el aviso de subtítulo y hasta 3 líneas del resultado). Sin ellos, como antes.
     /// Sin Notification Service Extension: no hay imagen ni botones por aviso; lo completo está en la tarjeta de Pendientes.
-    func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = []) {
+    /// `seDice`: Alma lo va a decir en voz alta (Modo calle, conferencia o la app abierta). Entonces la notificación va callada
+    /// (EstadoCalle.notificacionCallada): sin sonido y pasiva, para que Siri no la lea con la voz del iPhone encima de Alma.
+    func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = [], seDice: Bool = false) {
         guard !texto.isEmpty else { return }
         conPermiso {
             let n = UNMutableNotificationContent()
@@ -49,7 +51,8 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
                 if t.count > 90, !primera.isEmpty, primera.count <= 90 { n.subtitle = primera }
                 n.body = String(t.prefix(1000))
             }
-            n.categoryIdentifier = "alma.aviso"; n.userInfo = ["id": id]
+            if EstadoCalle.notificacionCallada(seDice: seDice) { n.sound = nil; n.interruptionLevel = .passive }
+            n.categoryIdentifier = "alma.aviso"; n.userInfo = ["id": id, "seDice": seDice]
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: n, trigger: nil))
         }
     }
@@ -59,9 +62,11 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
         conPermiso(pedir: n > 0) { UNUserNotificationCenter.current().setBadgeCount(max(0, n)) }
     }
 
-    /// Con la app abierta, la notificación igual se ve arriba (y suena).
+    /// Con la app abierta, la notificación igual se ve arriba (y suena). Si Alma la dice en voz alta, solo queda en la lista:
+    /// ni banner ni sonido, así nada se encima a su voz.
     func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification,
                                 withCompletionHandler fin: @escaping (UNNotificationPresentationOptions) -> Void) {
+        if (n.request.content.userInfo["seDice"] as? Bool) == true { fin([.list]); return }
         fin([.banner, .sound, .list])
     }
 }

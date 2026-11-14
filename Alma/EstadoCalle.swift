@@ -50,7 +50,7 @@ enum EstadoCalle {
     enum VozAviso: Equatable {
         case conElAviso          // el audio de ElevenLabs llegó con el aviso: suena ya
         case pedirAviso          // se pide al Hub la frase y su audio (avisoHablar)
-        case soloFrase           // el Hub ya dio la frase pero no el audio: se pide la voz aparte (calleVoz) o habla el iPhone
+        case soloFrase           // el Hub ya dio la frase pero no el audio: se pide la voz aparte (calleVoz)
     }
     static func vozAviso(audio: Bool, hablar: String, vozMotivo: String?, hubSinAviso: Bool) -> VozAviso {
         if audio { return .conElAviso }
@@ -65,8 +65,16 @@ enum EstadoCalle {
     static let esperaAviso: TimeInterval = 30
     static let esperaVozAviso: TimeInterval = 20
 
+    /// ¿Puede hablar la voz del iPhone? (Juan, 14-nov-2026: «debe sonar únicamente la voz de ElevenLabs, siempre, y que no
+    /// se solapen»). En los avisos nunca: si no llegó la voz de Alma, suena la señal de Alma y el aviso queda en la notificación.
+    static func vozIphone(donde: String) -> Bool { donde != "aviso" }
+
+    /// La notificación de un aviso que Alma va a decir en voz alta va callada: sin sonido y pasiva, para que Siri no la lea
+    /// con la voz del iPhone («Anunciar notificaciones» con AirPods o CarPlay) encima de la voz de Alma (Juan, 14-nov-2026).
+    static func notificacionCallada(seDice: Bool) -> Bool { seDice }
+
     /// ¿Se vuelve a pedir la voz al Hub? Solo si hay internet (tardó, pero el Hub siguió y dejó el audio en su caché) y
-    /// quedan intentos. Sin internet, la voz del iPhone de una vez.
+    /// quedan intentos. Sin internet, de una vez lo de respaldo (en un aviso, la señal de Alma; nunca la voz del iPhone).
     static func reintentarVoz(sinRed: Bool, quedan: Int) -> Bool { !sinRed && quedan > 0 }
 
     /// Los errores de URLSession que son «no hay internet» (no «tardó»): sin red, sin datos, avión, el host no se encuentra.

@@ -1262,10 +1262,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 let id = a["id"] as? String ?? UUID().uuidString, texto = a["texto"] as? String ?? "", n = NivelAvisos.deAviso(a)
                 // Con su tarjeta de Pendientes, la notificación lleva la respuesta: el título y hasta 3 líneas del resultado.
                 let titulo = a["titulo"] as? String ?? "", lineas = a["lineas"] as? [String] ?? []
-                if n <= NivelAvisos.nivel("telefono") { Notificaciones.shared.mostrar(id: id, texto: texto, titulo: titulo, lineas: lineas) }
                 // Modo conferencia: lo que terminó en segundo plano (resultado) se dice sea cual sea su nivel (salvo «Silencio»).
                 let resultado = (a["resultado"] as? Bool) == true, enConf = resultado && Conferencia.shared.activa
-                if n <= NivelAvisos.nivel("hablado") || (enConf && NivelAvisos.nivel("hablado") > 0) {
+                let hablarlo = n <= NivelAvisos.nivel("hablado") || (enConf && NivelAvisos.nivel("hablado") > 0)
+                // Si Alma lo va a decir, la notificación va callada: Siri no la lee con la voz del iPhone encima (14-nov-2026).
+                let seDice = hablarlo && ModoCalle.shared.puedeHablarAvisos
+                if n <= NivelAvisos.nivel("telefono") { Notificaciones.shared.mostrar(id: id, texto: texto, titulo: titulo, lineas: lineas, seDice: seDice) }
+                if hablarlo {
                     ModoCalle.shared.avisoHablado(id: id, texto: texto, resultado: resultado, hablar: a["hablar"] as? String ?? "",
                                                   audio: a["audio"] as? String, vozMotivo: a["vozMotivo"] as? String, abre: AlmaAbre.desde(a))
                 }

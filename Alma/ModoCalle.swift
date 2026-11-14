@@ -1236,7 +1236,21 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// La voz del iPhone, solo de respaldo: de mujer, en español, elegida a mano. Queda anotado por qué, aquí y en el
     /// registro de la voz del Hub (acción «vozCaida», #509: solo dónde, el motivo y cuánto tardó; nunca la frase).
+    /// En un aviso nunca habla el iPhone (Juan, 14-nov-2026: «únicamente la voz de ElevenLabs»): suena la señal de Alma y
+    /// el aviso queda en la notificación y en Pendientes.
     private func hablarIphone(_ t: String, por: String, donde: String = "calle", ms: Int = 0) {
+        guard EstadoCalle.vozIphone(donde: donde) else {
+            vozUsada = "Señal de Alma (" + por + ")"
+            anotar("Aviso sin la voz de Alma (" + por + "): suena la señal y queda en la notificación; el iPhone no habla")
+            VozNativa.shared.senal()
+            if !sinRed { llamarHub(["donde": "app · " + donde, "motivo": por, "ms": ms], accion: "vozCaida", timeout: 20) { _ in } }
+            let mio = turnoVoz
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                guard let self, self.turnoVoz == mio else { return }   // ya se calló o empezó otra frase
+                self.terminoDeHablar()
+            }
+            return
+        }
         let u = AVSpeechUtterance(string: t)
         u.voice = VozIphone.elegida
         u.rate = AVSpeechUtteranceDefaultSpeechRate
@@ -1416,7 +1430,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     /// Siempre con la voz de Alma (Juan, 6-nov-2026: «con la voz de Alma, no la del iPhone, sobre todo con la app
     /// abierta»): primero el audio que llegó con el aviso (vozAvisos lo pide junto con el texto: suena sin esperar); si no
     /// vino, se pide al Hub la frase y su audio (avisoHablar: solo arma la frase, no responde el aviso); si tampoco, la voz
-    /// aparte (calleVoz) y, solo sin red o sin audio del Hub, la del iPhone. Cuál sonó y por qué queda en el diagnóstico.
+    /// aparte (calleVoz) y, solo sin red o sin audio del Hub, la señal de Alma (nunca la voz del iPhone, 14-nov-2026). Cuál sonó y por qué queda en el diagnóstico.
     /// La frase la arma el Hub como una conversación (#509: «Juan, ya terminé lo que me pediste: … ¿Quieres que te cuente?»);
     /// si no vino (Hub viejo), lo que terminó en segundo plano suena «Ya terminé lo que me pediste: … ¿Quieres que te cuente?».
     private func decirAviso(_ a: AvisoHablado, luego: @escaping () -> Void) {
