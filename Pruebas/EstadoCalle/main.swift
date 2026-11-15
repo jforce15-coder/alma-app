@@ -48,10 +48,16 @@ revisa(EstadoCalle.vozAviso(audio: false, hablar: "", vozMotivo: nil, hubSinAvis
 
 revisa(EstadoCalle.reintentarVoz(sinRed: false, quedan: 1), "el Hub tardó y hay internet: se pide otra vez (el audio ya quedó en su caché)")
 revisa(!EstadoCalle.reintentarVoz(sinRed: false, quedan: 0), "ya se pidió otra vez: no insiste más")
-revisa(!EstadoCalle.reintentarVoz(sinRed: true, quedan: 1), "sin internet: la voz del iPhone de una vez")
+revisa(!EstadoCalle.reintentarVoz(sinRed: true, quedan: 1), "sin internet: no se vuelve a pedir")
 revisa(EstadoCalle.esSinRed(NSURLErrorNotConnectedToInternet) && EstadoCalle.esSinRed(NSURLErrorNetworkConnectionLost), "sin internet o se cortó la red cuentan como «sin red»")
 revisa(!EstadoCalle.esSinRed(NSURLErrorTimedOut), "tardar no es «sin red»: se vuelve a pedir")
 revisa(EstadoCalle.esperaAviso >= 25 && EstadoCalle.esperaVozAviso >= 15, "un aviso le da al Hub tiempo de sobra (antes 12 s y 8 s)")
+
+// MARK: - Una sola voz: la de Alma (Juan, 14-nov-2026)
+
+revisa(!EstadoCalle.vozIphone(donde: "aviso"), "un aviso nunca habla con la voz del iPhone: sin la voz de Alma, suena la señal")
+revisa(EstadoCalle.notificacionCallada(seDice: true), "si Alma dice el aviso, la notificación va sin sonido y pasiva (Siri no la lee encima)")
+revisa(!EstadoCalle.notificacionCallada(seDice: false), "si Alma no lo dice (app cerrada, sin Modo calle), la notificación suena como siempre")
 
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")
