@@ -25,7 +25,8 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
     func registrarCategorias() {
         let abrir = UNNotificationAction(identifier: "alma.abrir", title: "Abrir", options: [.foreground])
         UNUserNotificationCenter.current().setNotificationCategories([
-            UNNotificationCategory(identifier: "alma.aviso", actions: [abrir], intentIdentifiers: [], options: [])])
+            UNNotificationCategory(identifier: "alma.aviso", actions: [abrir], intentIdentifiers: [],
+                                   hiddenPreviewsBodyPlaceholder: AjustesNotif.generico, options: [])])
     }
 
     /// `titulo` y `lineas` (del Hub, vozAvisos): lo que terminó en segundo plano llega con la respuesta, no solo el aviso
@@ -33,8 +34,13 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
     /// Sin Notification Service Extension: no hay imagen ni botones por aviso; lo completo está en la tarjeta de Pendientes.
     /// `seDice`: Alma lo va a decir en voz alta (Modo calle, conferencia o la app abierta). Entonces la notificación va callada
     /// (EstadoCalle.notificacionCallada): sin sonido y pasiva, para que Siri no la lea con la voz del iPhone encima de Alma.
-    func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = [], seDice: Bool = false) {
+    /// `tipo` (Hub #551, `notif_tipo` del aviso): se arma con los ajustes de su tipo (AjustesNotif.swift, NotifArmar.swift).
+    /// Sin tipo (los avisos propios de la app, como la pausa del Modo calle), como antes.
+    func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = [], seDice: Bool = false, tipo: String? = nil) {
         guard !texto.isEmpty else { return }
+        let clase = AjustesNotif.tipo(tipo)
+        let plan = clase.map { AjustesNotif.plan(tipo: $0, ajuste: AjustesNotif.leer()[$0] ?? .deFabrica($0), momento: momentoAhora(seDice: seDice), id: id) }
+        if plan?.mostrar == false { return }   // los tres lugares apagados: este tipo no llega
         conPermiso {
             let n = UNMutableNotificationContent()
             n.title = "Alma"; n.sound = .default; n.threadIdentifier = "alma.retomar"
@@ -53,6 +59,7 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
             }
             if EstadoCalle.notificacionCallada(seDice: seDice) { n.sound = nil; n.interruptionLevel = .passive }
             n.categoryIdentifier = "alma.aviso"; n.userInfo = ["id": id, "seDice": seDice]
+            if let clase, let plan { self.publicar(n, id: id, plan: plan, tipo: clase); return }
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: n, trigger: nil))
         }
     }
@@ -66,7 +73,15 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
     /// ni banner ni sonido, así nada se encima a su voz.
     func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification,
                                 withCompletionHandler fin: @escaping (UNNotificationPresentationOptions) -> Void) {
-        if (n.request.content.userInfo["seDice"] as? Bool) == true { fin([.list]); return }
+        let u = n.request.content.userInfo
+        if let banner = u["banner"] as? Bool {   // armada con los ajustes de su tipo (NotifArmar.swift)
+            var o: UNNotificationPresentationOptions = []
+            if banner { o.insert(.banner) }
+            if (u["sonido"] as? Bool) == true { o.insert(.sound) }
+            if (u["lista"] as? Bool) != false { o.insert(.list) }
+            fin(o); return
+        }
+        if (u["seDice"] as? Bool) == true { fin([.list]); return }
         fin([.banner, .sound, .list])
     }
 }
