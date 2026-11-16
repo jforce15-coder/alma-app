@@ -11,7 +11,12 @@ final class Navegador: NSObject, ObservableObject {
     static let homeSpacio = URL(string: "https://hub.spacioam.com/")!
 
     let web: WKWebView
-    @Published var direccion = ""
+    @Published var direccion = "" {
+        // Desliza para actualizar en todas las páginas, menos en las pantallas completas (el inicio con Alma y Health).
+        didSet { let r: UIRefreshControl? = enInicio ? nil : tirar; if web.scrollView.refreshControl !== r { web.scrollView.refreshControl = r } }
+    }
+    /// Desliza para actualizar (Juan, 16-nov-2026): reemplaza el botón de recargar de la barra.
+    private let tirar = UIRefreshControl()
     @Published var titulo = ""
     @Published var puedeAtras = false
     @Published var puedeAdelante = false
@@ -58,6 +63,9 @@ final class Navegador: NSObject, ObservableObject {
         web.configuration.userContentController.add(PuenteDebil(puente), name: Puente.nombre)
         web.configuration.userContentController.add(PuenteDebil(self), name: "almaCampo")
         web.configuration.userContentController.addUserScript(WKUserScript(source: Navegador.scriptCampo, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        web.scrollView.alwaysBounceVertical = true   // páginas más cortas que la pantalla también se pueden tirar
+        tirar.tintColor = UIColor(red: 0xE9 / 255, green: 0x82 / 255, blue: 0x6A / 255, alpha: 1)
+        tirar.addTarget(self, action: #selector(alTirar), for: .valueChanged)
         observaciones = [
             web.observe(\.url, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.direccion = w.url?.absoluteString ?? ""; self?.campo = nil } },
             web.observe(\.title, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.titulo = w.title ?? "" } },
@@ -270,15 +278,30 @@ extension Navegador: WKNavigationDelegate {
         return true
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { destapar() }
+    /// Al soltar: en Spacio AM decide la página (js/sa-tirar.js del Hub: su forma de actualizar o el botón de esa pantalla,
+    /// que en el teléfono ya no se ve); en cualquier otra página, se recarga como en Safari.
+    @objc private func alTirar() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        web.evaluateJavaScript("(function(){try{if(window.SATirar){window.SATirar.refrescar();return 'pagina'}}catch(e){}return ''})()") { [weak self] r, _ in
+            guard let self else { return }
+            if (r as? String) == "pagina" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in if self?.cargando == false { self?.tirar.endRefreshing() } }
+            } else {
+                self.web.reload()
+            }
+        }
+    }
+    private func terminarTirar() { if tirar.isRefreshing { tirar.endRefreshing() } }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { terminarTirar(); destapar() }
     /// iOS cerró el proceso de la página (memoria, o el audio de la voz en la página): se vuelve a cargar sola en vez de
     /// quedar en blanco o parecer que la app se cerró. Queda anotado en Ajustes («voz_ultimo_error»).
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         UserDefaults.standard.set("La página se cerró sola (iOS) y se volvió a abrir", forKey: "voz_ultimo_error")
         if webView.url != nil { webView.reload() } else { webView.load(URLRequest(url: Navegador.inicio)) }
     }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { destapar() }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { destapar() }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { terminarTirar(); destapar() }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { terminarTirar(); destapar() }
     private func destapar() {
         guard cargaTapada else { return }
         cargaTapada = false

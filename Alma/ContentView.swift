@@ -231,7 +231,8 @@ extension ContentView {
     }
 }
 
-/// ‹ › · dirección o búsqueda · compartir · recargar. Línea coral de progreso debajo mientras carga.
+/// ‹ › · dirección o búsqueda · compartir · (× para detener mientras carga). Línea coral de progreso debajo mientras carga.
+/// Para actualizar se desliza la página hacia abajo (Navegador.alTirar); ya no hay botón de recargar.
 struct BarraDireccion: View {
     @EnvironmentObject var nav: Navegador
     @State private var texto = ""
@@ -270,8 +271,8 @@ struct BarraDireccion: View {
                     }
                     .tint(Color.almaTinta)
                 }
-                Boton(simbolo: nav.cargando ? "xmark" : "arrow.clockwise", activo: true) {
-                    if nav.cargando { nav.web.stopLoading() } else { nav.web.reload() }
+                if nav.cargando {
+                    Boton(simbolo: "xmark", activo: true) { nav.web.stopLoading() }
                 }
             }
             .padding(.horizontal, 10)
