@@ -60,5 +60,12 @@ revisa(AgenteVoz.enCalle(["ok": false, "error": "Claudio todavía no está listo
 revisa(AgenteVoz.enCalle(nil) == .decir(AgenteVoz.noPase) && AgenteVoz.enCalle(["ok": false, "error": "ElevenLabs 401", "codigo": "sin_url"]) == .decir(AgenteVoz.noPase), "el Hub no contestó o ElevenLabs falló: una frase, sin quedarse colgado")
 revisa(AgenteVoz.sinClaudio.split(separator: " ").count <= 12 && AgenteVoz.noPase.split(separator: " ").count <= 12, "las frases son cortas y simples")
 
+// El socket de antes de cambiar de agente no corta la conversación nueva (16-nov-2026: así se caía el paso a Claudio)
+final class SocketDoble {}
+let viejoS = SocketDoble(), nuevoS = SocketDoble()
+revisa(AgenteVoz.esSocketActual(nuevoS, nuevoS), "el socket de ahora sí cuenta")
+revisa(!AgenteVoz.esSocketActual(viejoS, nuevoS), "el error del socket viejo no es de la conversación nueva")
+revisa(!AgenteVoz.esSocketActual(viejoS, nil) && !AgenteVoz.esSocketActual(nil, nuevoS), "sin socket (ya se colgó) no cuenta ninguno")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")

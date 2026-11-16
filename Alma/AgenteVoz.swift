@@ -22,6 +22,10 @@ enum AgenteVoz: String, Equatable {
     static func esCambio(_ herramienta: String) -> Bool { herramienta == "hablar_con_claudio" || herramienta == "volver_con_alma" }
 
     var nombre: String { self == .claudio ? "Claudio" : "Alma" }
+
+    /// ¿Este socket es el de la conversación de ahora? Al cambiar de agente, el socket de antes se cierra a propósito y su
+    /// escucha termina con un error («El socket no está conectado»): no es de la conversación nueva y no debe cortarla.
+    static func esSocketActual(_ tarea: AnyObject?, _ actual: AnyObject?) -> Bool { tarea != nil && tarea === actual }
     /// La acción del Hub que da su conversación (URL firmada y ficha).
     var accion: String { self == .claudio ? "vozClaudio" : "vozWeb" }
 
