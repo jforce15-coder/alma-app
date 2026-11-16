@@ -85,6 +85,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var ultimoAudioAlma = Date.distantPast
     // avisos al oído
     private var avisosT: Timer?
+    private var avisoDuerme: NSObjectProtocol?
     /// Lista para el anillo «un rato» sin tener el modo anillo: mientras Alma trabaja en segundo plano o hay temas por retomar.
     private var unRato = false
     /// ¿Se queda lista «un rato» sin el modo anillo? Apagado: tomaría el audio que no se mezcla con el anillo apagado.
@@ -1428,12 +1429,23 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     private func empezarAvisos() {
         if avisosT == nil { avisosT = Timer.scheduledTimer(withTimeInterval: 45, repeats: true) { [weak self] _ in self?.buscarAvisos() } }
+        // Notificaciones push (Ticket #28, NotifPush.swift): al irse a segundo plano sin nada que la mantenga despierta, la app
+        // le dice al Hub que se duerme; lo que nazca mientras duerme le llega por push (y, si sigue despierta, su próxima
+        // pregunta lo corrige sola).
+        if avisoDuerme == nil {
+            avisoDuerme = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                guard let self, NotifPush.avisaQueDuerme(calle: ModoCalle.shared.encendido, conferencia: Conferencia.shared.activa, anillo: self.modoAnillo || self.unRato) else { return }
+                var tarea = UIBackgroundTaskIdentifier.invalid
+                tarea = UIApplication.shared.beginBackgroundTask { UIApplication.shared.endBackgroundTask(tarea); tarea = .invalid }
+                self.buscarAvisos(duerme: true) { if tarea != .invalid { UIApplication.shared.endBackgroundTask(tarea); tarea = .invalid } }
+            }
+        }
     }
 
-    private func buscarAvisos() {
+    private func buscarAvisos(duerme: Bool = false, listo: (() -> Void)? = nil) {
         guard estado == .lista || estado == .apagada,
-              let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
-        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 40
+              let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { listo?(); return }
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = duerme ? 20 : 40
         // La voz de Alma viene junto con el texto (Juan, 6-nov-2026): el Hub arma el audio de ElevenLabs de lo que se va a
         // decir (hasta el nivel «Habladas»; en conferencia también lo que terminó en segundo plano), solo si ahora se puede
         // decir (Modo calle, conferencia o la app abierta). Así suena sin esperar otra vuelta al Hub.
@@ -1447,11 +1459,17 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let ud = UserDefaults.standard
         let nuevos = PasosAnillo.nuevos(ud.stringArray(forKey: "voz_pasos") ?? [], ultimoEnviado: ud.string(forKey: "voz_pasos_enviado"))
         if !nuevos.isEmpty { cuerpo["pasos"] = PasosAnillo.limpiar(nuevos); cuerpo["anillo"] = modoAnillo }
+        // Notificaciones push (Ticket #28): si su push está listo y si se va a dormir (el Hub manda por push solo así).
+        // En segundo plano sin nada que la mantenga despierta, cada pregunta dice «duerme»: iOS la suspende enseguida.
+        let dormida = UIApplication.shared.applicationState == .background
+            && NotifPush.avisaQueDuerme(calle: ModoCalle.shared.encendido, conferencia: Conferencia.shared.activa, anillo: modoAnillo || unRato)
+        if let p = PushAlma.shared.estado { cuerpo["push"] = p }
+        if duerme || dormida { cuerpo["duerme"] = true }
         r.httpBody = try? JSONSerialization.data(withJSONObject: cuerpo)
         URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
-            guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], (j["ok"] as? Bool) == true else { return }
+            guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], (j["ok"] as? Bool) == true else { DispatchQueue.main.async { listo?() }; return }
             if let u = nuevos.last { ud.set(u, forKey: "voz_pasos_enviado") }
-            DispatchQueue.main.async { self?.novedades(j) }
+            DispatchQueue.main.async { self?.novedades(j); listo?() }
         }.resume()
     }
 
@@ -1459,6 +1477,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         trabajando = (j["trabajando"] as? NSNumber)?.intValue ?? 0
         porRetomar = (j["pendientes"] as? NSNumber)?.intValue ?? 0
         AjustesNotif.guardar(j["notif_ajustes"])   // ajustes por tipo (Hub #551): con ellos se arma cada notificación
+        PushAlma.shared.configurar(j["push"])      // notificaciones push (Ticket #28): con qué registrarse en OneSignal; sin eso, nada
         let l = j["avisos"] as? [[String: Any]] ?? []
         if !l.isEmpty {
             ultimaNovedad = Date(); fichaLista = nil   // la próxima llamada ya empieza por lo nuevo
@@ -1466,7 +1485,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // teléfono y lo que Alma dice al oído (con el Modo calle, en conferencia o con la app abierta en el inicio).
             for a in l {
                 // «Probar con Siri» pedido desde el Hub web (acción notifPrueba): sale ya por el camino de Siri y no se dice.
-                if (a["prueba"] as? Bool) == true { paso("Prueba de Siri pedida desde el Hub"); Notificaciones.shared.probarSiri(en: AjustesNotif.pruebaDesdeHub) { _, _ in }; continue }
+                // Si ya salió por push (Ticket #28), la trajo la extensión: no se vuelve a programar.
+                if (a["prueba"] as? Bool) == true {
+                    if (a["push"] as? Bool) == true { paso("Prueba de Siri pedida desde el Hub: llegó por push") }
+                    else { paso("Prueba de Siri pedida desde el Hub"); Notificaciones.shared.probarSiri(en: AjustesNotif.pruebaDesdeHub) { _, _ in } }
+                    continue
+                }
                 let id = a["id"] as? String ?? UUID().uuidString, texto = a["texto"] as? String ?? "", n = NivelAvisos.deAviso(a)
                 // Con su tarjeta de Pendientes, la notificación lleva la respuesta: el título y hasta 3 líneas del resultado.
                 let titulo = a["titulo"] as? String ?? "", lineas = a["lineas"] as? [String] ?? []
@@ -1475,7 +1499,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 let hablarlo = n <= NivelAvisos.nivel("hablado") || (enConf && NivelAvisos.nivel("hablado") > 0)
                 // Si Alma lo va a decir, la notificación va callada: Siri no la lee con la voz del iPhone encima (14-nov-2026).
                 let seDice = hablarlo && ModoCalle.shared.puedeHablarAvisos
-                if n <= NivelAvisos.nivel("telefono") { Notificaciones.shared.mostrar(id: id, texto: texto, titulo: titulo, lineas: lineas, seDice: seDice, tipo: a["notif_tipo"] as? String) }
+                // Lo que ya salió por push (Ticket #28) no se vuelve a mostrar; tampoco si una con su id ya está en el centro.
+                if n <= NivelAvisos.nivel("telefono"), NotifPush.mostrarLocal(a, enCentro: []) {
+                    Notificaciones.shared.mostrar(id: id, texto: texto, titulo: titulo, lineas: lineas, seDice: seDice, tipo: a["notif_tipo"] as? String, siNoEsta: true)
+                }
                 if hablarlo {
                     ModoCalle.shared.avisoHablado(id: id, texto: texto, resultado: resultado, hablar: a["hablar"] as? String ?? "",
                                                   audio: a["audio"] as? String, vozMotivo: a["vozMotivo"] as? String, abre: AlmaAbre.desde(a))

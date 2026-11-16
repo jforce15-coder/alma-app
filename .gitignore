@@ -5,3 +5,4 @@ build/
 DerivedData/
 # El modelo del Modo calle lo baja el robot (testflight.yml)
 Modelos/
+NotifAlma/Info.plist

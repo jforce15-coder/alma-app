@@ -20,6 +20,11 @@ packages:
   SherpaOnnx:
     url: https://github.com/k2-fsa/sherpa-onnx
     exactVersion: 1.13.8
+  # Notificaciones push reales (Hub, Ticket #28): el SDK de OneSignal (MIT modificada), versión fija. Sus frameworks son
+  # dinámicos y solo arm64: el robot los firma como los demás (testflight.yml).
+  OneSignal:
+    url: https://github.com/OneSignal/OneSignal-XCFramework
+    exactVersion: 5.8.0
 targets:
   Alma:
     type: application
@@ -37,6 +42,11 @@ targets:
         product: sherpa-onnx
       # onnxruntime (estático) usa Core ML y la biblioteca de C++.
       - sdk: CoreML.framework
+      # Notificaciones push (Ticket #28): el registro en OneSignal (PushAlma.swift) y la extensión que arma cada push
+      # como mensaje de Alma (NotifAlma), dentro de la app en PlugIns.
+      - package: OneSignal
+        product: OneSignalFramework
+      - target: NotifAlma
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spacioam.alma
@@ -54,6 +64,8 @@ targets:
         com.apple.developer.healthkit.access: []
         com.apple.developer.usernotifications.communication: true
         com.apple.developer.usernotifications.time-sensitive: true
+        # Notificaciones push (Ticket #28). «development» aquí; la exportación para TestFlight la firma como «production».
+        aps-environment: development
     info:
       path: Alma/Info.plist
       properties:
@@ -102,8 +114,54 @@ targets:
         UIBackgroundModes:
           - bluetooth-central
           - audio
+          - remote-notification
+        # El número del ícono es de Alma (temas por retomar): OneSignal no lo borra al abrir la app (Ticket #28).
+        OneSignal_disable_badge_clearing: true
         NSCameraUsageDescription: Algunas páginas (Epi, Hola) usan la cámara para tomar fotos de los reportes y documentos.
         NSPhotoLibraryUsageDescription: Para subir fotos o documentos a las páginas que lo piden.
         # La foto del contacto en la bandeja del Hub (#567 T4, FotosContactosIOS.swift): solo los números sin foto que pide el Hub.
         NSContactsUsageDescription: Alma busca en tus contactos solo los números de las conversaciones de tu bandeja que no tienen foto, para mostrar su foto ahí. No sube tu agenda ni los nombres.
         NSLocationWhenInUseUsageDescription: Algunas páginas usan tu ubicación, por ejemplo para las rutas del equipo.
+  # Extensión de notificaciones (Ticket #28): cada push del Hub pasa por aquí antes de verse (con la app cerrada o dormida)
+  # y se arma con los ajustes de su tipo; si el tipo tiene Siri, como mensaje de Alma con su foto. Comparte con la app la
+  # lógica pura (AjustesNotif, NotifPush) y el mensaje de Alma (NotifComunicacion). No lleva el SDK de OneSignal ni App Group.
+  NotifAlma:
+    type: app-extension
+    platform: iOS
+    sources:
+      - NotifAlma
+      - Alma/AjustesNotif.swift
+      - Alma/NotifPush.swift
+      - Alma/NotifComunicacion.swift
+      - path: Alma/Recursos/Notif/alma-foto.png
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spacioam.alma.notificaciones
+        PRODUCT_NAME: NotifAlma
+        SKIP_INSTALL: YES
+    # Como la app: notificación de comunicación (Siri la anuncia). La exportación la activa en su App ID.
+    entitlements:
+      path: NotifAlma/NotifAlma.entitlements
+      properties:
+        com.apple.developer.usernotifications.communication: true
+    info:
+      path: NotifAlma/Info.plist
+      properties:
+        CFBundleDevelopmentRegion: es
+        CFBundleDisplayName: Alma
+        CFBundleName: NotifAlma
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSUserActivityTypes:
+          - INSendMessageIntent
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+          NSExtensionAttributes:
+            IntentsSupported:
+              - INSendMessageIntent

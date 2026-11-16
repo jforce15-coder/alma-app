@@ -65,18 +65,9 @@ extension Notificaciones {
         }
     }
 
-    /// Notificación de comunicación: Siri la anuncia con su voz («Alma dice…»).
-    private func comunicacion(_ n: UNMutableNotificationContent) -> UNNotificationContent? {
-        let alma = INPerson(personHandle: INPersonHandle(value: "alma", type: .unknown), nameComponents: nil, displayName: "Alma",
-                            image: nil, contactIdentifier: nil, customIdentifier: "alma")
-        let texto = [n.subtitle, n.body].filter { !$0.isEmpty }.joined(separator: "\n")
-        let intent = INSendMessageIntent(recipients: nil, outgoingMessageType: .outgoingMessageText, content: texto, speakableGroupName: nil,
-                                         conversationIdentifier: n.threadIdentifier, serviceName: nil, sender: alma, attachments: nil)
-        let i = INInteraction(intent: intent, response: nil)
-        i.direction = .incoming
-        i.donate(completion: nil)
-        return try? n.updating(from: intent)
-    }
+    /// Notificación de comunicación: Siri la anuncia con su voz («Alma dice…»), con la foto de Alma (NotifComunicacion.swift,
+    /// lo mismo que usa la extensión con las push).
+    private func comunicacion(_ n: UNMutableNotificationContent) -> UNNotificationContent? { NotifComunicacion.armarYa(n) }
 
     static func quitarDespues(_ id: String) {
         DispatchQueue.main.asyncAfter(deadline: .now() + AjustesNotif.quitarEn) {
