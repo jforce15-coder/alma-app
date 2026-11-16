@@ -21,16 +21,19 @@ revisa(!C.regla.contains("te despid") || C.regla.contains("no te despidas"), "si
 
 // MARK: - Cuándo cierra sola la app
 
-let calle = C.Tiempos(silencio: 6, tope: 45), conf = C.Tiempos(silencio: C.silencioConferencia, tope: C.topeConferencia)
+let calle = C.Tiempos(silencio: 6, tope: 45), conf = C.Tiempos(silencio: C.silencioConferencia, tope: C.topeConferencia, ruido: C.ruidoConferencia, pausa: C.pausaConferencia)
 revisa(C.tiempos(calle: false, conferencia: false, porAviso: false, juanHablo: false, deCalle: calle, deConferencia: conf) == nil, "una llamada normal (la roca, el anillo) no la cierra el silencio")
-revisa(C.tiempos(calle: false, conferencia: true, porAviso: false, juanHablo: false, deCalle: calle, deConferencia: conf) == conf, "conferencia: 30 s de silencio o 60 s sin que Alma hable")
-revisa(conf.silencio == 30 && conf.tope == 60, "de fábrica en conferencia: 30 y 60 s")
+revisa(C.tiempos(calle: false, conferencia: true, porAviso: false, juanHablo: false, deCalle: calle, deConferencia: conf) == conf, "conferencia: 45 s de silencio de verdad o 60 s sin que Alma hable (en una pausa de 8 s)")
+revisa(conf.silencio == 45 && conf.tope == 60 && conf.ruido == 180 && conf.pausa == 8, "de fábrica en conferencia: 45 s, 60 s, ruido a los 3 min, pausa de 8 s")
+revisa(C.tiempos(calle: false, conferencia: true, porAviso: false, juanHablo: true, claudio: true, deCalle: calle, deConferencia: conf) == nil, "con Claudio nunca se cierra por silencio (23:43: lo cortaba explicándole un pedido)")
+revisa(C.tiempos(calle: true, conferencia: false, porAviso: false, juanHablo: true, claudio: true, deCalle: calle, deConferencia: conf) == nil, "con Claudio desde el Modo calle tampoco")
 revisa(C.tiempos(calle: true, conferencia: false, porAviso: false, juanHablo: true, deCalle: calle, deConferencia: conf) == calle, "Modo calle: los segundos del sueño de siempre")
 revisa(C.tiempos(calle: false, conferencia: true, porAviso: true, juanHablo: false, deCalle: calle, deConferencia: conf) == calle, "Alma abre en conferencia y nadie contesta: cierra rápido")
 revisa(C.tiempos(calle: false, conferencia: true, porAviso: true, juanHablo: true, deCalle: calle, deConferencia: conf) == conf, "Alma abre en conferencia y Juan contesta: ya es una conversación continua")
 revisa(C.segundos(nil, fabrica: 30, desde: 10, hasta: 120) == 30, "un Hub de antes (sin el dato): el de fábrica")
 revisa(C.segundos(40, fabrica: 30, desde: 10, hasta: 120) == 40, "el Hub lo ajusta sin otra versión de la app")
 revisa(C.segundos(2, fabrica: 30, desde: 10, hasta: 120) == 10 && C.segundos(9999, fabrica: 30, desde: 10, hasta: 120) == 120, "siempre entre sus límites")
+revisa(C.segundos(30, fabrica: C.silencioConferencia, desde: C.silencioConferenciaMinimo, hasta: 120) == 45, "el Hub manda 30 en conferencia: la app usa 45 como mínimo")
 revisa(C.segundos(0, fabrica: 45, desde: 20, hasta: 300) == 45, "un cero no apaga el cierre: cada minuto abierto gasta créditos")
 
 // Con las reglas del sueño (SuenoCalle.decidir) y los segundos de conferencia.
@@ -39,21 +42,29 @@ func momentos(alma: TimeInterval, juan: TimeInterval? = nil, sonido: TimeInterva
     SuenoCalle.Momentos(conectada: t0, finVozAlma: t0.addingTimeInterval(alma), vozJuan: juan.map { t0.addingTimeInterval($0) } ?? .distantPast,
                         sonido: sonido.map { t0.addingTimeInterval($0) } ?? .distantPast, herramientaDesde: herramienta.map { t0.addingTimeInterval($0) }, finHerramienta: .distantPast)
 }
-func decide(_ m: SuenoCalle.Momentos, a s: TimeInterval) -> SuenoCalle.Motivo? { SuenoCalle.decidir(m, ahora: t0.addingTimeInterval(s), silencio: conf.silencio, tope: conf.tope) }
+func decide(_ m: SuenoCalle.Momentos, a s: TimeInterval) -> SuenoCalle.Motivo? {
+    SuenoCalle.decidir(m, ahora: t0.addingTimeInterval(s), silencio: conf.silencio, tope: conf.tope, ruido: conf.ruido, pausa: conf.pausa)
+}
 revisa(decide(momentos(alma: 5), a: 6) == nil, "Alma acaba de responder: la llamada sigue (antes colgaba en ese mismo turno)")
-revisa(decide(momentos(alma: 5), a: 25) == nil, "20 s pensando: sigue ahí")
+revisa(decide(momentos(alma: 5), a: 40) == nil, "35 s pensando: sigue ahí")
 revisa(decide(momentos(alma: 5, juan: 20), a: 40) == nil, "Juan siguió hablando sin decir «Alma»: sigue")
-revisa(decide(momentos(alma: 5), a: 36) == .silencio, "30 s sin que nadie hable: cierra sola")
+revisa(decide(momentos(alma: 5), a: 51) == .silencio, "46 s sin que nadie suene: cierra sola")
+// Lo que vivió Juan (16-nov-2026, 23:43): 50 s explicando un pedido, sin que llegara su texto, y la app cerró «por silencio».
+var juanHablando: [SuenoCalle.Motivo?] = []
+for s in stride(from: 6.0, through: 56.0, by: 0.5) { juanHablando.append(decide(momentos(alma: 5, sonido: s - 0.3), a: s)) }
+revisa(juanHablando.allSatisfy { $0 == nil }, "50 s de Juan hablando sin que llegue nada escrito: no se cierra")
+revisa(decide(momentos(alma: 5, sonido: 70), a: 75) == nil, "una pausa de 5 s pensando a media idea (a los 70 s): no se cierra, ni por el tope")
 revisa(decide(momentos(alma: 5, juan: 50, sonido: 65), a: 66) == nil, "60 s sin que Alma hable pero alguien habla ahora: no se corta a media frase")
-revisa(decide(momentos(alma: 5, juan: 64, sonido: 65), a: 67) == .tope, "60 s sin que Alma hable: cierra en la primera pausa")
-// Juan (16-nov-2026): «si el usuario está hablando, la comunicación no se puede cortar y debe permanecer abierta».
+revisa(decide(momentos(alma: 5, juan: 64, sonido: 65), a: 74) == .tope, "60 s sin que Alma hable: cierra en una pausa de verdad (8 s)")
 revisa(decide(momentos(alma: 5, juan: 40, sonido: 59), a: 59.5) == nil, "Juan habla una frase larga (lo escrito aún no llega): sigue abierta")
-revisa(decide(momentos(alma: 5, juan: 20, sonido: 60), a: 61) == .silencio, "la frase lleva 41 s de sonido sin nada escrito: es ruido, cierra")
+revisa(decide(momentos(alma: 5, juan: 20, sonido: 60), a: 61) == nil, "41 s de voz sin nada escrito: todavía es alguien hablando (antes cerraba)")
+revisa(decide(momentos(alma: 5, sonido: 199.5), a: 200) == .tope, "3 min de sonido sin una palabra escrita: es ruido de fondo, cierra")
 revisa(decide(momentos(alma: 5, juan: 45, sonido: 69.5), a: 70) == nil, "Juan sigue hablando pasado el tope: no se corta")
-revisa(decide(momentos(alma: 20, juan: 25), a: 56) == .silencio, "Juan dejó de hablar hace 31 s: cierra")
-let callePrueba = { (m: SuenoCalle.Momentos, s: TimeInterval) in SuenoCalle.decidir(m, ahora: t0.addingTimeInterval(s), silencio: calle.silencio, tope: calle.tope) }
+revisa(decide(momentos(alma: 20, juan: 25), a: 71) == .silencio, "Juan dejó de hablar hace 46 s: cierra")
+let callePrueba = { (m: SuenoCalle.Momentos, s: TimeInterval) in SuenoCalle.decidir(m, ahora: t0.addingTimeInterval(s), silencio: calle.silencio, tope: calle.tope, ruido: calle.ruido, pausa: calle.pausa) }
 revisa(callePrueba(momentos(alma: 5, sonido: 23.5), 24) == nil, "Modo calle: Juan empezó una frase larga tras el silencio: no se corta (antes, a los 8 s de gracia)")
 revisa(callePrueba(momentos(alma: 5), 12) == .silencio, "Modo calle: 6 s callado: cuelga como siempre")
+revisa(callePrueba(momentos(alma: 5, sonido: 10), 17) == .silencio, "Modo calle: habló un momento y calló 7 s: cuelga")
 revisa(callePrueba(momentos(alma: 5, juan: 49, sonido: 50), 51) == nil && callePrueba(momentos(alma: 5, juan: 49, sonido: 50), 52) == .tope, "Modo calle: el tope de 45 s espera a que Juan termine")
 revisa(decide(momentos(alma: 5, juan: 50, sonido: 55), a: 56) == nil, "a los 50 s todavía no")
 revisa(decide(momentos(alma: 5, herramienta: 10), a: 80) == nil, "mientras Alma trabaja (la secretaria tarda) no se cierra")

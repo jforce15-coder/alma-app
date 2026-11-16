@@ -172,8 +172,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var confSilencio = LlamadaContinua.silencioConferencia, confTope = LlamadaContinua.topeConferencia
     /// ¿La app cierra sola esta llamada, y con qué segundos? (Modo calle, conferencia o la que abrió un aviso.)
     private var tiemposCierre: LlamadaContinua.Tiempos? {
-        LlamadaContinua.tiempos(calle: desdeCalle, conferencia: conferencia != nil, porAviso: porAviso != nil, juanHablo: vozJuanCalle != .distantPast,
-                                deCalle: .init(silencio: calleSilencio, tope: calleTope), deConferencia: .init(silencio: confSilencio, tope: confTope))
+        LlamadaContinua.tiempos(calle: desdeCalle, conferencia: conferencia != nil, porAviso: porAviso != nil, juanHablo: vozJuanCalle != .distantPast, claudio: agente == .claudio,
+                                deCalle: .init(silencio: calleSilencio, tope: calleTope),
+                                deConferencia: .init(silencio: confSilencio, tope: confTope, ruido: LlamadaContinua.ruidoConferencia, pausa: LlamadaContinua.pausaConferencia))
     }
     /// Cada intento de conexión lleva su número: el reloj de «no contestó» de un intento anterior no corta el de ahora.
     private var intentoConexion = 0
@@ -715,7 +716,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         segundosLargo = (ficha["conferencia_tras"] as? NSNumber).map { max(30, $0.doubleValue) } ?? 240
         calleSilencio = (ficha["calle_silencio_s"] as? NSNumber).map { min(30, max(3, $0.doubleValue)) } ?? SuenoCalle.silencioDeFabrica
         calleTope = (ficha["calle_tope_s"] as? NSNumber).map { min(180, max(15, $0.doubleValue)) } ?? SuenoCalle.topeDeFabrica
-        confSilencio = LlamadaContinua.segundos((ficha["conferencia_silencio_s"] as? NSNumber)?.doubleValue, fabrica: LlamadaContinua.silencioConferencia, desde: 10, hasta: 120)
+        confSilencio = LlamadaContinua.segundos((ficha["conferencia_silencio_s"] as? NSNumber)?.doubleValue, fabrica: LlamadaContinua.silencioConferencia, desde: LlamadaContinua.silencioConferenciaMinimo, hasta: 120)
         confTope = LlamadaContinua.segundos((ficha["conferencia_tope_s"] as? NSNumber)?.doubleValue, fabrica: LlamadaContinua.topeConferencia, desde: 20, hasta: 300)
         // Medidores de la llamada (solo vienen con el administrador principal): el nivel de partida y la adaptación.
         weebo = (ficha["weebo_nivel"] as? NSNumber)?.intValue; weeboCambio = 0
@@ -879,7 +880,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             self.vozEnviada += seg; self.ultimaVoz = Date(); self.mandar(["user_audio_chunk": datos.base64EncodedString()])
             if !self.almaHabla { self.nivel = min(1, CGFloat(rmsTu) * 9) }
-            if rmsTu > 0.05 && !suenaAlma { self.ultimaActividad = Date(); self.sonidoCalle = Date() }   // Juan hablando también cuenta (no es pausa larga)
+            // Juan hablando (también bajito, con el micrófono de unos audífonos): cuenta como voz para no cortarlo a media frase.
+            if rmsTu > 0.02 && !suenaAlma { self.ultimaActividad = Date(); self.sonidoCalle = Date() }   // Juan hablando también cuenta (no es pausa larga)
         }
     }
 
@@ -1449,7 +1451,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             guard !self.enChat, !self.mudo else { return }   // modo chat o mudo con la pantalla a la vista: no se cuelga sola
             let m = SuenoCalle.Momentos(conectada: self.conectadaDesde, finVozAlma: self.finVozAlma, vozJuan: self.vozJuanCalle,
                                         sonido: self.sonidoCalle, herramientaDesde: self.herramientaDesde, finHerramienta: self.finHerramienta)
-            if let motivo = SuenoCalle.decidir(m, ahora: Date(), silencio: tc.silencio, tope: tc.tope) { self.colgarCalle(motivo) }
+            if let motivo = SuenoCalle.decidir(m, ahora: Date(), silencio: tc.silencio, tope: tc.tope, ruido: tc.ruido, pausa: tc.pausa) { self.colgarCalle(motivo) }
         }
     }
 
