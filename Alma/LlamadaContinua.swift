@@ -18,7 +18,14 @@ enum LlamadaContinua {
 
     // MARK: - Cuándo cierra sola la app
 
-    static let silencioConferencia: TimeInterval = 30
+    /// 16-nov-2026 (23:43, Juan): con 30 s y el silencio contado desde lo último ESCRITO, la app cerraba mientras Juan
+    /// explicaba un pedido largo. Ahora el silencio es silencio de verdad (nadie suena) y como mínimo 45 s.
+    static let silencioConferencia: TimeInterval = 45
+    static let silencioConferenciaMinimo: TimeInterval = 45
+    /// En conferencia, la voz sin nada escrito cuenta como alguien hablando hasta 3 min (luego es ruido de fondo), y el tope
+    /// sin que Alma hable solo cierra en una pausa de 8 s (no en la que se hace al pensar a media frase).
+    static let ruidoConferencia: TimeInterval = 180
+    static let pausaConferencia: TimeInterval = 8
     static let topeConferencia: TimeInterval = 60
 
     /// Un número de la ficha del Hub, entre sus límites; si no viene (un Hub de antes), el de fábrica.
@@ -30,12 +37,17 @@ enum LlamadaContinua {
     struct Tiempos: Equatable {
         let silencio: TimeInterval
         let tope: TimeInterval
+        /// Voz sin nada escrito en este tiempo: ruido (no alguien hablando). Y la pausa que tiene que haber para el tope.
+        var ruido: TimeInterval = SuenoCalle.soloRuido
+        var pausa: TimeInterval = SuenoCalle.oyendo
     }
 
     /// ¿La app cierra sola esta llamada, y con qué segundos? nil: una llamada normal (no la cierra el silencio).
     /// La que abrió un aviso en conferencia (Alma abre) usa los segundos cortos del sueño hasta que Juan conteste: si nadie
     /// contesta el aviso, no se queda abierta medio minuto.
-    static func tiempos(calle: Bool, conferencia: Bool, porAviso: Bool, juanHablo: Bool, deCalle: Tiempos, deConferencia: Tiempos) -> Tiempos? {
+    /// Con Claudio nunca: la app no cierra por silencio una llamada con Claudio (Juan le explica pedidos largos; 16-nov-2026).
+    static func tiempos(calle: Bool, conferencia: Bool, porAviso: Bool, juanHablo: Bool, claudio: Bool = false, deCalle: Tiempos, deConferencia: Tiempos) -> Tiempos? {
+        if claudio { return nil }
         if calle { return deCalle }
         if conferencia { return porAviso && !juanHablo ? deCalle : deConferencia }
         return porAviso ? deCalle : nil

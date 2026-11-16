@@ -37,17 +37,22 @@ enum SuenoCalle {
     static let topeHerramienta: TimeInterval = 90
 
     /// ¿Hay que colgar ya? nil = la llamada sigue.
-    static func decidir(_ m: Momentos, ahora: Date, silencio: TimeInterval, tope: TimeInterval) -> Motivo? {
+    /// `ruido`: voz sin nada escrito en ese tiempo ya no cuenta como alguien hablando. `pausa`: el tope (sin que Alma hable)
+    /// solo cierra cuando nadie suena desde hace esto. 16-nov-2026 (23:43): el silencio se contaba desde lo último ESCRITO, y
+    /// Juan, explicándole 50 s un pedido sin que llegara su texto, quedaba «callado»: ahora el silencio es que nadie suene.
+    static func decidir(_ m: Momentos, ahora: Date, silencio: TimeInterval, tope: TimeInterval,
+                        ruido: TimeInterval = soloRuido, pausa: TimeInterval = oyendo) -> Motivo? {
         if let h = m.herramientaDesde { return ahora.timeIntervalSince(h) > topeHerramienta ? .tope : nil }
         let alma = max(m.conectada, m.finVozAlma, m.finHerramienta)
-        let callado = ahora.timeIntervalSince(max(alma, m.vozJuan))
-        if hablando(m, ahora: ahora, callado: callado) { return nil }   // alguien habla: no se corta, ni por el tope
+        let palabras = max(alma, m.vozJuan)
+        let esVoz = ahora.timeIntervalSince(palabras) < ruido   // la voz sin nada escrito por mucho rato es ruido de fondo
+        if esVoz && ahora.timeIntervalSince(m.sonido) < pausa { return nil }   // alguien habla (o hace una pausa corta): no se corta
         if ahora.timeIntervalSince(alma) >= tope { return .tope }
+        let callado = ahora.timeIntervalSince(esVoz ? max(palabras, m.sonido) : palabras)
         return callado < silencio ? nil : .silencio
     }
 
-    /// ¿Alguien está hablando ahora? Hubo voz hace menos de `oyendo` s y no es solo ruido (algo se dijo en los últimos
-    /// `soloRuido` s).
+    /// ¿Alguien está hablando ahora? Hubo voz hace menos de `oyendo` s y no es solo ruido.
     static func hablando(_ m: Momentos, ahora: Date, callado: TimeInterval) -> Bool {
         ahora.timeIntervalSince(m.sonido) < oyendo && callado < soloRuido
     }
