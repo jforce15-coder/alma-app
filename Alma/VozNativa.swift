@@ -1190,7 +1190,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             tramo += 1
             if self.cerrarTrasRespuesta {   // pausa sin retomar: cuando Alma terminó de responder (o a los 45 s), se cierra
                 let callada = Date().timeIntervalSince(self.ultimoAudioAlma) > 5 && self.ultimoAudioAlma > self.desdeCierre
-                if (callada && !self.almaHabla) || Date().timeIntervalSince(self.desdeCierre) > 45 { self.motivoFin = "pausa de 25 s sin retomar"; self.terminar() }
+                let juanHabla = Date().timeIntervalSince(self.sonidoCalle) < SuenoCalle.oyendo   // si Juan habla, no se corta (16-nov-2026)
+                if !juanHabla && ((callada && !self.almaHabla) || Date().timeIntervalSince(self.desdeCierre) > 45) { self.motivoFin = "pausa de 25 s sin retomar"; self.terminar() }
                 return
             }
             if self.pausada { self.ultimaVoz = Date(); return }

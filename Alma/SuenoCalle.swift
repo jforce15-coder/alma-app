@@ -5,9 +5,13 @@ import Foundation
 /// detector del teléfono. Aquí solo están las reglas, sin audio ni relojes: VozNativa las consulta cada medio segundo.
 ///   · silencio: Alma terminó de hablar y Juan no dijo nada en `silencio` s (6 de fábrica; `calle_silencio_s` en la ficha
 ///     del Hub). Silencio es «Juan no habló» (no llegó lo que dijo, user_transcript), no «no hubo sonido»: el ruido de la
-///     calle solo da un poco más de margen (`gracia`), por si Juan está a media frase.
+///     calle no cuenta como Juan si no llega nada escrito en `soloRuido` s.
 ///   · cierre: Juan dijo «espera», «ahorita no», «luego», «gracias, es todo» o algo parecido (esCierre).
-///   · tope: `tope` s (45 de fábrica; `calle_tope_s`) sin que Alma hable ni trabaje: aunque haya gente hablando cerca.
+///   · tope: `tope` s (45 de fábrica; `calle_tope_s`) sin que Alma hable ni trabaje: aunque haya gente hablando cerca, pero
+///     se espera a la primera pausa (nunca a media frase).
+///   · Si alguien está hablando, la llamada NO se corta (Juan, 16-nov-2026: «si el usuario está hablando, la comunicación no
+///     se puede cortar»): ni el silencio ni el tope cuelgan mientras se oye voz. Solo el ruido sin palabras (`soloRuido` s
+///     de sonido sin que llegue nada escrito) deja de contar como voz.
 ///   · corte: otra llamada, Siri, los audífonos que se desconectan, el micrófono que se cae: se cuelga sin reintentar.
 enum SuenoCalle {
     enum Motivo: String { case silencio, cierre, tope, corte }
@@ -26,8 +30,9 @@ enum SuenoCalle {
     static let topeDeFabrica: TimeInterval = 45
     /// Un sonido de hace menos de esto puede ser Juan a media frase (lo escrito llega al final): se espera un poco más…
     static let oyendo: TimeInterval = 1.5
-    /// …pero nunca más de esto después del silencio: así el ruido solo no deja la llamada abierta.
-    static let gracia: TimeInterval = 8
+    /// Sonido sin que llegue nada escrito (ni de Juan ni de Alma) en tanto tiempo: es ruido, no alguien hablando. Antes eran
+    /// 8 s después del silencio y cortaba a Juan a media frase larga (lo escrito llega al final de la frase).
+    static let soloRuido: TimeInterval = 30
     /// Una herramienta (la secretaria tarda de 15 a 57 s) no es silencio; si pasa de esto, algo se trabó.
     static let topeHerramienta: TimeInterval = 90
 
@@ -35,11 +40,16 @@ enum SuenoCalle {
     static func decidir(_ m: Momentos, ahora: Date, silencio: TimeInterval, tope: TimeInterval) -> Motivo? {
         if let h = m.herramientaDesde { return ahora.timeIntervalSince(h) > topeHerramienta ? .tope : nil }
         let alma = max(m.conectada, m.finVozAlma, m.finHerramienta)
-        if ahora.timeIntervalSince(alma) >= tope { return .tope }
         let callado = ahora.timeIntervalSince(max(alma, m.vozJuan))
-        if callado < silencio { return nil }
-        if ahora.timeIntervalSince(m.sonido) < oyendo && callado < silencio + gracia { return nil }
-        return .silencio
+        if hablando(m, ahora: ahora, callado: callado) { return nil }   // alguien habla: no se corta, ni por el tope
+        if ahora.timeIntervalSince(alma) >= tope { return .tope }
+        return callado < silencio ? nil : .silencio
+    }
+
+    /// ¿Alguien está hablando ahora? Hubo voz hace menos de `oyendo` s y no es solo ruido (algo se dijo en los últimos
+    /// `soloRuido` s).
+    static func hablando(_ m: Momentos, ahora: Date, callado: TimeInterval) -> Bool {
+        ahora.timeIntervalSince(m.sonido) < oyendo && callado < soloRuido
     }
 
     /// ¿Juan cerró la plática? Toda la frase (8 palabras como mucho) es de despedida o de «ahora no», con al menos una
