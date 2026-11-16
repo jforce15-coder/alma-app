@@ -109,6 +109,7 @@ jobs:
 
       # Notificaciones push reales (Hub, Ticket #28): lo que trae el push, el plan con la app dormida (Siri por tipo, genérica sin
       # vista previa), cómo se ve (igual que las locales), sin duplicados y cuándo la app está lista o avisa que se duerme.
+      # Hub #583 T1.3: al tocarla, el id del anillo o del tema (solo ids del Hub) y el JavaScript que abre el chat con ese id.
       - name: Probar las notificaciones push
         if: env.SUBIR != 'true'
         run: |

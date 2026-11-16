@@ -28,6 +28,7 @@ final class NotificationService: UNNotificationServiceExtension {
         n.interruptionLevel = p.nivel == .pasiva ? .passive : (p.nivel == .urgente ? .timeSensitive : .active)
         n.categoryIdentifier = "alma.aviso"
         n.userInfo["id"] = d.id; n.userInfo["tipo"] = d.tipo.rawValue; n.userInfo["push"] = true
+        if !d.orbita.isEmpty { n.userInfo["orbita"] = d.orbita; n.userInfo["titulo"] = d.titulo }   // al tocarla, el chat con su id (Hub #583)
         // Con la app abierta (raro: el Hub solo manda push con la app dormida), como las locales armadas por tipo.
         n.userInfo["banner"] = p.bannerAbierta; n.userInfo["lista"] = p.listaAbierta; n.userInfo["sonido"] = p.sonido
         guard p.siri else { terminar(n); return }

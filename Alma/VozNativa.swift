@@ -1515,7 +1515,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 let seDice = hablarlo && ModoCalle.shared.puedeHablarAvisos
                 // Lo que ya salió por push (Ticket #28) no se vuelve a mostrar; tampoco si una con su id ya está en el centro.
                 if n <= NivelAvisos.nivel("telefono"), NotifPush.mostrarLocal(a, enCentro: []) {
-                    Notificaciones.shared.mostrar(id: id, texto: texto, titulo: titulo, lineas: lineas, seDice: seDice, tipo: a["notif_tipo"] as? String, siNoEsta: true)
+                    Notificaciones.shared.mostrar(id: id, texto: texto, titulo: titulo, lineas: lineas, seDice: seDice, tipo: a["notif_tipo"] as? String, siNoEsta: true,
+                                                  orbita: a["orbita"] as? String)   // al tocarla, el chat con su id (Hub #583)
                 }
                 if hablarlo {
                     ModoCalle.shared.avisoHablado(id: id, texto: texto, resultado: resultado, hablar: a["hablar"] as? String ?? "",
