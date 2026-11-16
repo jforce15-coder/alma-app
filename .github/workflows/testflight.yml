@@ -130,6 +130,13 @@ jobs:
         run: |
           xcrun swiftc Alma/FotosContactos.swift Pruebas/FotosContactos/main.swift -o /tmp/fotos-contactos
           /tmp/fotos-contactos
+      # Diagnóstico del anillo por Bluetooth (ticket #29, paso 1): el nombre de una persona no sale, «solo teclado» se dice
+      # claro, los servicios propios se anotan y el registro cabe en el Hub (recorta lo más viejo). Lógica pura.
+      - name: Probar el diagnóstico del anillo
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/DiagnosticoAnilloPuro.swift Pruebas/DiagnosticoAnillo/main.swift -o /tmp/diagnostico-anillo
+          /tmp/diagnostico-anillo
 
       - name: Generar el proyecto (XcodeGen)
         run: |

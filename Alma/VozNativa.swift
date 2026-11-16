@@ -360,7 +360,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
                                 "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
                                 "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar",
-                                "agente": agente.rawValue]
+                                "agente": agente.rawValue, "diagBle": true]   // la app sabe abrir el Diagnóstico del anillo (Bluetooth)
         // la página que se abre a media llamada (o se recarga) pinta los chips con esto
         if estado == .hablando || estado == .conectando, let p = personalidad { r["personalidad"] = p }
         if estado == .hablando || estado == .conectando, let t = tarjeta, tarjetaVista != .nada { r["tarjeta"] = t.crudo; r["tarjetaVista"] = tarjetaVista.rawValue }
@@ -1081,6 +1081,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if let pa = porAviso { b["aviso_id"] = pa.id }   // Alma abre (Hub #509 T4): ese aviso cuenta como dicho, no el saludo de retomar
         idLlamada = id; b["pantalla"] = pantallaVisible   // tarjeta de la llamada: con el teléfono bloqueado no se muestra
         b["tablero"] = "estado"   // Hub #508: esta app deja el tablero por estado (se queda y se reemplaza; puede volver a lo ya visto)
+        b["tipos"] = TarjetaVoz.tipos   // Hub #508 Fase 2: los tipos que esta app pinta (un tipo nuevo, como «socio», sale en pantalla solo si va aquí)
         vigilarPantalla()
         r.httpBody = try? JSONSerialization.data(withJSONObject: b)
         let llamada = inicioLlamada
