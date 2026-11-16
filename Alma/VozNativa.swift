@@ -34,7 +34,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static let shared = VozNativa()
 
     enum Estado: String { case apagada, lista, conectando, hablando }
-    @Published private(set) var estado: Estado = .apagada { didSet { avisar(); if estado != .hablando { nivel = 0 }; DispatchQueue.main.async { EscuchaInicio.shared.evaluar() } } }
+    @Published private(set) var estado: Estado = .apagada { didSet { avisar(); if estado != .hablando { nivel = 0 }; DispatchQueue.main.async { EscuchaInicio.shared.evaluar() }
+        if estado != oldValue { Companero.shared.estado(estado == .hablando ? "hablando" : estado == .conectando ? "conectando" : "fin") } } }   // modo compañero (Hub #607)
     /// Para la pantalla de la llamada: cuánto suena la voz (0…1), quién habla y lo último que se dijo.
     @Published private(set) var nivel: CGFloat = 0 { didSet { nivelAPagina() } }
     @Published private(set) var almaHabla = false
@@ -971,11 +972,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             mandar(["type": "pong", "event_id": ev["event_id"] ?? 0])
         case "agent_response":
             let ev = j["agent_response_event"] as? [String: Any] ?? [:]
-            if let t = ev["agent_response"] as? String { emitir(["tipo": "alma", "texto": t]); linea(true, t) }
+            if let t = ev["agent_response"] as? String { emitir(["tipo": "alma", "texto": t]); linea(true, t); Companero.shared.sub(alma: true, t) }   // modo compañero (Hub #607)
         case "user_transcript":
             let ev = j["user_transcription_event"] as? [String: Any] ?? [:]
             if let t = ev["user_transcript"] as? String {
-                ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t)
+                ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t); Companero.shared.sub(alma: false, t)
                 if tiemposCierre != nil, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     vozJuanCalle = Date()
                     if SuenoCalle.esCierre(t) { colgarCalle(.cierre) }
@@ -1147,6 +1148,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let enConf = conferencia != nil
         if enConf { b["conferencia"] = true; b["hz"] = Int(formatoSalida.sampleRate) }
         if let pa = porAviso { b["aviso_id"] = pa.id }   // Alma abre (Hub #509 T4): ese aviso cuenta como dicho, no el saludo de retomar
+        Companero.shared.empezo(id)   // modo compañero (Hub #607): el otro dispositivo ve esta llamada
         idLlamada = id; b["pantalla"] = pantallaVisible   // tarjeta de la llamada: con el teléfono bloqueado no se muestra
         b["tablero"] = "estado"   // Hub #508: esta app deja el tablero por estado (se queda y se reemplaza; puede volver a lo ya visto)
         b["tipos"] = TarjetaVoz.tipos   // Hub #508 Fase 2: los tipos que esta app pinta (un tipo nuevo, como «socio», sale en pantalla solo si va aquí)

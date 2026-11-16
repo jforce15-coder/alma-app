@@ -69,6 +69,13 @@ jobs:
           xcrun swiftc Alma/TarjetaLlamada.swift Pruebas/TarjetaLlamada/main.swift -o /tmp/tarjeta-llamada
           /tmp/tarjeta-llamada
 
+      # Modo compañero (Hub #607 T-C1): cuándo se manda al Hub el estado y los subtítulos de la llamada. Lógica pura.
+      - name: Probar el modo compañero
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/ColaVivo.swift Pruebas/Companero/main.swift -o /tmp/companero
+          /tmp/companero
+
       # El encendido del Modo calle (Juan, 6-nov-2026): arranca como lo dejó Juan, apagar apaga de verdad, un aviso con la app
       # abierta no se ve como Modo calle y la voz del aviso es la de Alma. Lógica pura, se prueba sola en segundos.
       - name: Probar el encendido del Modo calle
