@@ -91,6 +91,13 @@ enum LlamadaContinua {
     static let duracionMaxima: TimeInterval = 900
     static func cerroPorDuracion(conectada: TimeInterval) -> Bool { conectada >= duracionMaxima - 20 }
 
+    /// Claudio «colgó» a los pocos segundos de entrar y sin que Juan le dijera nada: no es una despedida, algo cerró su
+    /// conversación al empezar (una protección, un permiso). Se trata como un corte: vuelve Alma y lo dice.
+    static let claudioRecienEntro: TimeInterval = 10
+    static func cierreAlEmpezar(claudio: Bool, conectada: TimeInterval, juanHablo: Bool) -> Bool {
+        claudio && conectada < claudioRecienEntro && !juanHablo
+    }
+
     /// El reloj de «no contestó en 12 s» es de UN intento de conexión: el de un intento anterior (otra llamada, o el
     /// agente de antes de cambiar a Claudio) no puede cortar la conexión de ahora.
     static func vencio(intentoDelReloj: Int, intentoActual: Int, conectando: Bool) -> Bool {

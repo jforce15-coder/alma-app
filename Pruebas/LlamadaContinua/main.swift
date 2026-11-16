@@ -74,6 +74,9 @@ revisa(C.trasCorte(claudio: false, calle: true, conferencia: false, conectada: 1
 revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 12, reabiertas: 0, sinCreditos: false) == .colgar, "conferencia: se cierra sin error y vuelve a escuchar «Alma»")
 revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: nil, reabiertas: 0, sinCreditos: false) == .fallar, "conferencia y Alma nunca contestó: se dice por qué")
 
+revisa(C.cierreAlEmpezar(claudio: true, conectada: 3, juanHablo: false), "Claudio «colgó» a los 3 s sin que Juan dijera nada: algo lo cerró al empezar; vuelve Alma")
+revisa(!C.cierreAlEmpezar(claudio: true, conectada: 3, juanHablo: true) && !C.cierreAlEmpezar(claudio: true, conectada: 40, juanHablo: false), "si Juan ya le habló o llevaban rato, Claudio colgó de verdad")
+revisa(!C.cierreAlEmpezar(claudio: false, conectada: 3, juanHablo: false), "con Alma no aplica: ella sí puede colgar pronto")
 revisa(!C.cerroPorDuracion(conectada: 300) && C.cerroPorDuracion(conectada: 899), "un cierre a los 15 min no es que Alma colgó: es el tope de ElevenLabs")
 
 revisa(C.vencio(intentoDelReloj: 3, intentoActual: 3, conectando: true), "12 s sin contestar en este intento: no contestó")

@@ -1621,6 +1621,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if LlamadaContinua.cerroPorDuracion(conectada: conectada), agente == .alma, tiemposCierre == nil {
                 corte("ElevenLabs cerró la conversación a los 15 minutos"); return
             }
+            // Claudio «colgó» recién entrado y sin que Juan le hablara: algo cerró su conversación al empezar. Vuelve Alma.
+            if LlamadaContinua.cierreAlEmpezar(claudio: agente == .claudio, conectada: conectada, juanHablo: lineas.contains { !$0.alma }) {
+                corte("La conversación de Claudio se cerró al empezar" + (por.isEmpty ? "" : " (" + String(por.prefix(60)) + ")")); return
+            }
             // Cierre normal con la llamada en curso: colgó (end_call), por ejemplo porque sigue el pedido en segundo plano.
             paso(agente.nombre + " colgó" + (por.isEmpty ? "" : " (" + String(por.prefix(60)) + ")")); motivoFin = "colgó " + agente.nombre; terminar(); return
         }
