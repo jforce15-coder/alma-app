@@ -147,6 +147,18 @@ enum LlamadaContinua {
         return ahora < finVoz.addingTimeInterval(colaSaludo)
     }
 
+    // MARK: - La voz de Alma se oye (Juan, 16-nov-2026: «todo el audio previo estaba en mute y el saludo no se escuchó»)
+
+    /// El volumen de la voz de Alma en la llamada: siempre entero. El micrófono en pausa y el modo chat ya no lo bajan
+    /// (antes el mudo la dejaba en 0 y Alma hablaba sin que se oyera).
+    static let volumenVoz: Float = 1
+    /// ¿Se pasa la voz al parlante? Solo si sale por el auricular de oreja (AVAudioSession.Port.builtInReceiver, «Receiver»):
+    /// con la cancelación de eco iOS a veces la deja ahí y, lejos de la cara, suena como en mudo. Audífonos, Bluetooth,
+    /// CarPlay o el parlante no se tocan.
+    static func aParlante(salida: String) -> Bool { salida == "Receiver" }
+    /// El volumen del teléfono casi en cero (menos de 10 %): se avisa en el registro.
+    static func volumenBajo(_ v: Float) -> Bool { v < 0.1 }
+
     // MARK: - El registro de pasos (para saber por qué se cortó)
 
     /// Cuántos pasos se guardan en el teléfono para el Hub. Antes la lista se borraba al empezar cada llamada: si la

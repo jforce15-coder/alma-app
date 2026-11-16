@@ -150,6 +150,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var alOir = false
     /// Micrófono en mudo (el botón del micrófono): no se manda nada de lo que oyes.
     private var mudo = false
+    /// Cuántas veces ElevenLabs cortó la voz de Alma en esta llamada (para el registro).
+    private var cortesVoz = 0
+    /// La última vez que la voz que llegaba volvió a abrir el audio apagado (una vez cada 2 s como mucho).
+    private var revividoPorVoz = Date.distantPast
     private var nivelT = Date.distantPast
     /// Nivel de la voz de Alma en ventanas de 50 ms, con la hora en que suena cada una (la roca late con lo que se oye ahora).
     private var ventanasAlma: [(inicio: Date, nivel: CGFloat)] = []
@@ -386,10 +390,15 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         mandar(["type": "user_message", "text": t])
     }
     private var enChat = false
-    func silenciar(_ on: Bool) { mudo = on; player.volume = on ? 0 : 1 }
+    /// Micrófono en pausa (el botón o un toque del anillo): solo deja de mandar tu voz. La de Alma sigue sonando, como en la
+    /// web (Juan, 16-nov-2026: «todo el audio previo estaba en mute»; antes el mudo también la dejaba en volumen 0).
+    func silenciar(_ on: Bool) {
+        mudo = on; player.volume = LlamadaContinua.volumenVoz
+        if estado == .hablando || estado == .conectando { paso(on ? "Micrófono en pausa (la voz de Alma se sigue oyendo)" : "Micrófono abierto otra vez") }
+    }
     /// Modo chat de la roca: Alma sigue oyendo (el micrófono sigue), su respuesta se ve escrita en la página y también
     /// suena con su voz (Hub #561: antes se callaba). enChat solo evita que la llamada se cuelgue sola mientras escribes.
-    func sinVoz(_ on: Bool) { enChat = on; player.volume = mudo ? 0 : 1 }
+    func sinVoz(_ on: Bool) { enChat = on; player.volume = LlamadaContinua.volumenVoz }
 
     /// Cuánto suena la voz, para que la roca de la página lata con ella (unas 10 veces por segundo).
     private func nivelAPagina() {
@@ -608,7 +617,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         // Si iOS reinicia el audio (cambio de audífonos, por ejemplo), se vuelve a encender.
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
-            guard let self, self.modoAnillo else { return }
+            guard let self else { return }
+            // También en plena llamada sin el anillo: si iOS apagó el audio, la voz de Alma no sonaba hasta el próximo arreglo.
+            let enLlamada = self.estado == .hablando || self.estado == .conectando
+            guard self.modoAnillo || (enLlamada && !self.engine.isRunning) else { return }
             self.paso("iOS reacomodó el audio" + (self.engine.isRunning ? "" : " y apagó el micrófono"))
             self.revivirMicrofono()
         }
@@ -622,6 +634,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // El tipo de salida (no su nombre: «AirPods de …» lleva un nombre y estos pasos van al Hub).
             let salida = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue ?? "?"
             self.paso("Cambió la salida de audio (motivo \(r)) → \(salida)")
+            if LlamadaContinua.aParlante(salida: salida) { self.asegurarSalida("Cambió la salida") }   // al auricular de oreja: de vuelta al parlante
             // Modo calle: se desconectaron los audífonos: cuelga sin reintentar y el Modo calle vuelve a esperar «Alma».
             if self.desdeCalle && r == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self.colgarCalle(.corte) }
         }
@@ -659,6 +672,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Un solo micrófono: el Modo Inicio se calla ya (con la ficha pedida de antemano, la llamada abre el suyo enseguida).
         EscuchaInicio.shared.detener()
         estado = .conectando; colaVoz = []; saludoDesde = nil; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0; inicioEnviado = false; antesDeFicha = []
+        mudo = false; enChat = false; player.volume = LlamadaContinua.volumenVoz; cortesVoz = 0   // cada llamada empieza oyéndose
         ultimaLlamada = (0, nil); motivoCalle = nil; reabiertas = 0; reabierta = nil; motivoFin = nil
         weebo = nil; weeboCambio = 0; adaptacion = nil; flechaT?.cancel(); reglasGif.reiniciar()
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()
@@ -926,6 +940,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 formatoSalida = nuevo; player.stop(); engine.disconnectNodeOutput(player); engine.connect(player, to: engine.mainMixerNode, format: nuevo); player.play()
             }
             estado = .hablando; conectadaDesde = Date(); vozEnPausa = 0
+            asegurarSalida("Al conectar")
             vigilar()
             aConferencia = false; relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; ultimaActividad = Date(); herramienta = false
             if tiemposCierre != nil { vigilarCalle() }   // Modo calle, conferencia (conversación continua) o la que abrió un aviso
@@ -956,7 +971,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             ultimaActividad = Date()
             if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) {
                 let primera = !sono
-                if primera { sono = true; paso("Alma está hablando") }
+                if primera { sono = true; paso("Alma está hablando"); asegurarSalida("Su primera frase") }
                 sonar(d, respiro: primera)
             }
         case "agent_tool_request":
@@ -975,6 +990,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if agente == .claudio, (rt["tool_name"] as? String ?? "").hasPrefix("claudio_") { pedirPanelClaudio(intento: 0) }   // lo que dejó la herramienta de Claudio
         case "interruption":
             if let d = saludoDesde, Date().timeIntervalSince(d) < LlamadaContinua.topeSaludo { paso("ElevenLabs cortó el saludo (oyó voz)") }
+            // Cuánta voz de Alma se tiró (lo que faltaba por sonar): si se repite, se ve en el registro por qué no se oyó.
+            let tirada = max(0, finVozAlma.timeIntervalSinceNow); cortesVoz += 1
+            if tirada > 0.3 { paso(String(format: "ElevenLabs cortó a Alma (oyó voz): %.1f s de su voz no sonaron (corte %d)", tirada, cortesVoz)) }
             player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         case "ping":
             let ev = j["ping_event"] as? [String: Any] ?? [:]
@@ -1104,8 +1122,30 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         finHabla?.cancel()
         let w = DispatchWorkItem { [weak self] in self?.almaHabla = false; self?.nivel = 0; self?.ventanasAlma = [] }
         finHabla = w; DispatchQueue.main.asyncAfter(deadline: .now() + dur + 0.25, execute: w)
+        if !engine.isRunning, Date().timeIntervalSince(revividoPorVoz) > 2 {
+            // iOS apagó el audio (otra app, un cambio de salida): la voz se agendaba pero no sonaba. Se vuelve a abrir.
+            revividoPorVoz = Date(); paso("La voz de Alma llegó con el audio apagado: lo vuelvo a abrir"); revivirMicrofono()
+        }
         player.scheduleBuffer(buf, completionHandler: nil)
         if !player.isPlaying { player.play() }
+    }
+
+    /// La voz de Alma tiene que oírse (Juan, 16-nov-2026: «todo el audio previo estaba en mute y el saludo no se escuchó»).
+    /// Con la cancelación de eco, iOS a veces manda la voz al auricular de oreja aunque la sesión pida el parlante: con el
+    /// teléfono lejos de la cara suena como si estuviera en mudo. Si sale por ahí, se pasa al parlante (con audífonos,
+    /// Bluetooth o el carro no se toca). También queda en el registro por dónde sale, el volumen del teléfono y si hay eco.
+    private func asegurarSalida(_ cuando: String) {
+        let s = AVAudioSession.sharedInstance()
+        if player.volume < LlamadaContinua.volumenVoz { player.volume = LlamadaContinua.volumenVoz }
+        if !player.isPlaying, engine.isRunning { player.play() }
+        let salida = s.currentRoute.outputs.first?.portType.rawValue ?? "?"
+        var t = cuando + ": la voz sale por " + salida + String(format: " · volumen del teléfono %d %%", Int((s.outputVolume * 100).rounded())) + (sinEco ? " · sin cancelación de eco" : "")
+        if LlamadaContinua.aParlante(salida: salida) {
+            do { try s.overrideOutputAudioPort(.speaker); t += " → la paso al parlante" }
+            catch { t += " → no pude pasarla al parlante (\((error as NSError).code))" }
+        }
+        if LlamadaContinua.volumenBajo(s.outputVolume) { t += " · el volumen del teléfono está casi en cero: súbelo para oír a Alma" }
+        paso(t)
     }
 
     /// Parte el trozo en ventanas de 50 ms y las pone a la hora en que van a sonar: así el nivel que ve la roca sigue la voz
@@ -1226,7 +1266,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Si no se deja abrir a la primera (iOS a veces tarda un momento en soltar el audio), se intenta una vez más antes de
     /// dar la llamada por perdida.
     private func revivirMicrofono(segundoIntento: Bool = false) {
-        do { try prepararMotor(); paso("Micrófono abierto otra vez") }
+        do { try prepararMotor(); paso("Micrófono abierto otra vez"); if estado == .hablando { asegurarSalida("Audio abierto otra vez") } }
         catch {
             paso("No pude volver a abrir el micrófono (\((error as NSError).code))" + (segundoIntento ? "" : ": lo intento otra vez"))
             guard estado == .hablando else { return }
@@ -1251,7 +1291,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil
         let pasarAConferencia = aConferencia && (estado == .hablando || estado == .conectando); aConferencia = false
         let charla = pasarAConferencia ? charlaReciente : []   // de qué se hablaba: el modo conferencia lo lleva de contexto
-        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; saludoDesde = nil; inicioEnviado = false; antesDeFicha = []; mudo = false; enChat = false; player.volume = 1
+        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; saludoDesde = nil; inicioEnviado = false; antesDeFicha = []; mudo = false; enChat = false; player.volume = LlamadaContinua.volumenVoz
         let habia = estado == .hablando || estado == .conectando
         relojEspera?.invalidate(); relojEspera = nil; espera = nil
         conferencia = nil; textoInicial = nil; alOir = false; pantalla = nil; vistaPendiente = nil; porAviso = nil
