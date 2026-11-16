@@ -92,6 +92,14 @@ jobs:
           xcrun swiftc Alma/AlmaAbre.swift Pruebas/AlmaAbre/main.swift -o /tmp/alma-abre
           /tmp/alma-abre
 
+      # Hablar con Claudio (Hub #550): quién cambia a quién, qué se pide al Hub, cuándo se corta la frase de antes y el halo
+      # naranja de Claudio. Lógica pura.
+      - name: Probar Hablar con Claudio
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/AgenteVoz.swift Pruebas/AgenteVoz/main.swift -o /tmp/agente-voz
+          /tmp/agente-voz
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen

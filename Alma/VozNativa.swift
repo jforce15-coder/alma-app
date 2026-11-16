@@ -30,6 +30,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Para la pantalla de la llamada: cuánto suena la voz (0…1), quién habla y lo último que se dijo.
     @Published private(set) var nivel: CGFloat = 0 { didSet { nivelAPagina() } }
     @Published private(set) var almaHabla = false
+    /// Hablar con Claudio (Hub #550, AgenteVoz.swift): con quién se habla ahora. Con Claudio: otro agente, otra voz y el halo
+    /// todo naranja (la página lo pinta con el evento «agente»; LlamadaVista, con este valor).
+    @Published private(set) var agente: AgenteVoz = .alma { didSet { if agente != oldValue { emitir(["tipo": "agente", "agente": agente.rawValue]) } } }
+    private var cambiando = false   // pidiendo la conversación del otro agente
+    private var volviendo = false   // la conversación que conecta es Alma que vuelve de Claudio: dice que está de nuevo
     struct Linea: Identifiable { let id: Int; let alma: Bool; let texto: String }
     @Published private(set) var lineas: [Linea] = []
     private var campanas: [String: AVAudioPlayer] = [:]
@@ -344,7 +349,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     var resumen: [String: Any] {
         var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
                                 "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
-                                "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar"]
+                                "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar",
+                                "agente": agente.rawValue]
         // la página que se abre a media llamada (o se recarga) pinta los chips con esto
         if estado == .hablando || estado == .conectando, let p = personalidad { r["personalidad"] = p }
         if estado == .hablando || estado == .conectando, let t = tarjeta, tarjetaVista != .nada { r["tarjeta"] = t.crudo; r["tarjetaVista"] = tarjetaVista.rawValue }
@@ -538,7 +544,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         paso("Pidiendo tu ficha al Hub" + (UIApplication.shared.applicationState == .active ? "" : " (en segundo plano)"))
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
-        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWeb", "app": "alma", "token": token, "session": sesion])
+        r.httpBody = try? JSONSerialization.data(withJSONObject: AgenteVoz.pedido(.alma, token: token, sesion: sesion))   // con «claudio»: esta app sabe pasar a Claudio
         URLSession.shared.dataTask(with: r) { [weak self] data, resp, err in
             guard let self else { return }
             guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], (j["ok"] as? Bool) == true,
@@ -588,25 +594,26 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // La despertaron solo con «Alma» (el anillo, o «Alma» en la conferencia o el Modo Inicio, sin pedido): saluda con el
         // saludo variado. Si ya dijeron el pedido junto con «Alma», no saluda: va directo a eso.
         let sinPedido = (textoInicial ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if !desdePantalla {
+        let esAlma = self.agente == .alma   // Claudio (Hub #550) no lleva los modos de Alma: su ficha la arma el Hub
+        if esAlma && !desdePantalla {
             let empieza: String = retomar == nil ? "Ya sonó la señal y ya saludaste (o Juan ya empezó a hablar): NO saludes otra vez ni hables más. Escucha." : "Empiezas tú con el tema por retomar (ya está en tu primer mensaje); después escucha."
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO ANILLO: Juan te habla desde su anillo, casi siempre con el teléfono bloqueado (solo voz, sin pantalla). " + empieza + " Habla en tramos, con pausas, como quien piensa en voz alta: mientras no haya pedido algo concreto o su idea quede a medias, usa skip_turn y sigue escuchando; junta todo lo que dijo como un solo mensaje. Responde solo cuando ya pidió algo claro o terminó de hablar. Respuestas cortas, claras y cálidas."
         }
-        if let cf = conferencia {
+        if esAlma, let cf = conferencia {
             // Alma abre (Hub #509 T4): esta vez nadie la nombró; abrió ella para contar un resultado (ALMA ABRE, al final).
             let quien = porAviso != nil ? " Esta vez abriste tú la conversación para contarle un resultado (ALMA ABRE, al final): no saludes ni te presentes." :
                 " Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste con un saludo corto; escucha lo que te piden." : "")
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio." + quien + " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
         }
-        if desdeCalle {
+        if esAlma && desdeCalle {
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CALLE: Juan va caminando, con el teléfono bloqueado y audífonos; hay ruido y gente alrededor. Responde en una o dos frases cortas. Si lo que oyes no va dirigido a ti, usa skip_turn y no contestes. Nunca preguntes si sigue ahí ni te despidas: si se queda callado, la app cuelga sola y él te vuelve a llamar con «Alma»."
         }
         // Manos de Alma (navegador): qué tiene abierto el navegador de la app (las reglas están en el Hub, voz.js).
         let manos = ManosAlma.shared.ficha
-        if !manos.isEmpty { dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\n" + manos }
+        if esAlma && !manos.isEmpty { dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\n" + manos }
         // Alma abre (Hub #509 T4): qué pedido es y qué falta, para seguir la conversación si Juan contesta.
-        if let pa = porAviso { dv["quien_llama"] = AlmaAbre.ficha((dv["quien_llama"] as? String) ?? "", pa.datos) }
-        if let pt = pantalla {
+        if esAlma, let pa = porAviso { dv["quien_llama"] = AlmaAbre.ficha((dv["quien_llama"] as? String) ?? "", pa.datos) }
+        if esAlma, let pt = pantalla {
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO PANTALLA: Juan está en el navegador de la app de Alma viendo " + pt + " y tocó tres veces la roca para hablar contigo de lo que ve. Ya le dijiste «\(VozNativa.saludoPantalla)»: no saludes otra vez; escucha. En unos segundos te llega LO QUE SE VE EN LA PANTALLA (lo que muestra su captura): úsalo como contexto. Si pregunta antes de que llegue, dile que lo estás mirando."
         }
         // Saludo variado (#410): sin tema por retomar, Alma abre con una frase natural y completa que cambia cada vez (antes
@@ -617,12 +624,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let enPantalla = pantalla != nil, enConferencia = conferencia != nil || alOir
         let fm = ficha["first_message"] as? String ?? "", idioma = ficha["language"] as? String ?? ""
         let deRoca = desdePantalla, llamada = inicioLlamada, dvListas = dv, abre = porAviso?.datos
+        let cambio: AgenteVoz? = self.agente == .claudio || volviendo ? self.agente : nil   // Hablar con Claudio: el saludo de quien entra
         let espera = max(0, VozNativa.ventanaSaludo - Date().timeIntervalSince(inicioLlamada))
         escuchar()
         DispatchQueue.main.asyncAfter(deadline: .now() + espera) { [weak self] in
             guard let self, self.inicioLlamada == llamada, self.estado == .conectando || self.estado == .hablando, !self.inicioEnviado, self.ws != nil else { return }
             let primero: String
-            if let abre {   // Alma abre (Hub #509 T4): habla primero con la frase del aviso; Juan no la llamó, el ruido no la calla
+            if let cambio { primero = AgenteVoz.primerMensaje(cambio, ficha: fm); self.volviendo = false }
+            else if let abre {   // Alma abre (Hub #509 T4): habla primero con la frase del aviso; Juan no la llamó, el ruido no la calla
                 primero = AlmaAbre.primerMensaje(abre, deSiempre: "")
             }
             else if self.vozAlConectar >= 0.25 {   // Juan ya habla: primer mensaje vacío, Alma lo escucha
@@ -759,7 +768,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             vigilar()
             aConferencia = false; relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; ultimaActividad = Date(); herramienta = false
             if AlmaAbre.sueno(calle: desdeCalle, porAviso: porAviso != nil) { vigilarCalle() }   // también la que abrió un aviso
-            if conferencia == nil && !desdeCalle {   // en el Modo calle manda el sueño (más corto); pasar a conferencia apagaría el Modo calle
+            if conferencia == nil && !desdeCalle && agente == .alma {   // en el Modo calle manda el sueño (más corto); pasar a conferencia apagaría el Modo calle
                 relojLargo = Timer.scheduledTimer(withTimeInterval: segundosLargo, repeats: false) { [weak self] _ in
                     guard let self, self.estado == .hablando else { return }
                     self.aConferencia = true; self.paso("Llamada larga: en la próxima pausa larga pasa al modo conferencia")
@@ -779,7 +788,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let v = vistaPendiente { vistaPendiente = nil; mandar(["type": "contextual_update", "text": v]) }   // la captura llegó mientras conectaba
             infoBloqueo("Te escucho · dos toques para pausar")
             emitirPersonalidad()   // los chips de la llamada (si es el principal)
-            if let id = ev["conversation_id"] as? String { vincular(id) }
+            if agente == .alma, let id = ev["conversation_id"] as? String { vincular(id) }   // Claudio: el Hub lo reconoce por su firma (claudio.js)
         case "audio":
             let ev = j["audio_event"] as? [String: Any] ?? [:]
             ultimaActividad = Date()
@@ -833,6 +842,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         guard let id = ev["tool_call_id"] as? String else { return }
         let nombre = ev["tool_name"] as? String ?? ""
         let p = ev["parameters"] as? [String: Any] ?? [:]
+        // Hablar con Claudio (Hub #550): no se contestan (expects_response false), así no hacen hablar al agente.
+        if AgenteVoz.esCambio(nombre) {
+            if let nuevo = AgenteVoz.cambio(herramienta: nombre, actual: agente) { cambiarAgente(nuevo, motivo: p["motivo"] as? String ?? "") }
+            return
+        }
         if ManosAlma.herramientas.contains(nombre) || nombre == "correr_atajo" {
             herramienta = true; paso("Alma usa " + nombre)
             let llamada = inicioLlamada
@@ -1054,6 +1068,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
         relojEspera?.invalidate(); relojEspera = nil; espera = nil
         conferencia = nil; textoInicial = nil; alOir = false; pantalla = nil; vistaPendiente = nil; porAviso = nil
+        cambiando = false; volviendo = false
         reglasTarjeta.terminar(); publicarTarjeta(); idLlamada = nil   // lo que hubo queda en el Chat con Alma (lo guarda el Hub)
         avisoPantalla.forEach { NotificationCenter.default.removeObserver($0) }; avisoPantalla = []
         if habia { paso("Pausa") }
@@ -1065,6 +1080,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         else { engine.inputNode.removeTap(onBus: 0); if engine.isRunning { engine.stop() } }
         if habia { if !enConferencia { sonido("alma-fin") }; fichaLista = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.buscarAvisos() } }
         estado = .apagada
+        if agente != .alma { agente = .alma }   // colgó con Claudio: vuelve el halo de Alma (después de «apagada»: la página ya cerró la llamada)
         if modoAnillo || unRato { quedarLista(); DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.fichaLista = nil; self?.precargarSiToca() } }
         else { apagar() }
         // la llamada larga terminó: queda el modo conferencia, escuchando hasta que digan «Alma»
@@ -1072,6 +1088,58 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             paso("La llamada larga pasó al modo conferencia")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { Conferencia.shared.encender(contexto: charla, apagarTras: 7 * 60) }   // si en 7 min nadie dice «Alma», se apaga
         }
+    }
+
+    // MARK: - Hablar con Claudio (Hub #550)
+
+    /// Alma dijo «te paso con Claudio» (o Claudio «te paso con Alma»). Mientras termina esa frase se pide al Hub la
+    /// conversación nueva; cuando las dos cosas están, se cambia el socket sin colgar: el micrófono y el audio siguen.
+    /// Si el Hub no la da, sigue quien estaba y lo dice en una frase.
+    private func cambiarAgente(_ nuevo: AgenteVoz, motivo: String) {
+        guard !cambiando, estado == .hablando, let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"),
+              let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
+        cambiando = true
+        let llamada = inicioLlamada, pedido = Date()
+        paso("Cambiando a " + nuevo.nombre)
+        var ficha: [String: Any]?, error: String?
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 15
+        r.httpBody = try? JSONSerialization.data(withJSONObject: AgenteVoz.pedido(nuevo, token: token, sesion: sesion, motivo: motivo))
+        URLSession.shared.dataTask(with: r) { data, _, err in
+            let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            DispatchQueue.main.async {
+                if let j, (j["ok"] as? Bool) == true, j["signed_url"] is String { ficha = j }
+                else { error = (j?["error"] as? String) ?? err?.localizedDescription ?? "sin respuesta del Hub" }
+            }
+        }.resume()
+        Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] t in
+            guard let self, self.inicioLlamada == llamada, self.estado == .hablando else { t.invalidate(); return }   // colgó: terminar() ya lo dejó en cero
+            if let e = error {
+                t.invalidate(); self.cambiando = false; self.paso("No se pudo cambiar a " + nuevo.nombre + ": " + e)
+                self.mandar(["type": "contextual_update", "text": "No se pudo " + (nuevo == .claudio ? "pasar con Claudio" : "volver con Alma") + ": " + e + ". Díselo a Juan en una frase y sigue tú."])
+                return
+            }
+            guard let f = ficha, AgenteVoz.listo(finVoz: self.finVozAlma, pedido: pedido, ahora: Date()) else { return }
+            t.invalidate()
+            self.reconectar(nuevo, ficha: f)
+        }
+    }
+
+    /// Cierra el socket de quien estaba (sin la señal de fin ni apagar el micrófono) y abre el del otro agente.
+    private func reconectar(_ nuevo: AgenteVoz, ficha: [String: Any]) {
+        relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; aConferencia = false
+        relojEspera?.invalidate(); relojEspera = nil; herramienta = false
+        let viejo = ws, viejaSesion = sesionURL
+        ws = nil; sesionURL = nil
+        viejo?.cancel(with: .normalClosure, reason: nil); viejaSesion?.invalidateAndCancel()
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        inicioEnviado = false; antesDeFicha = []; colaVoz = []; sono = false
+        idLlamada = nil; reglasTarjeta.terminar(); publicarTarjeta()
+        volviendo = nuevo == .alma
+        agente = nuevo
+        estado = .conectando
+        cambiando = false
+        paso("Conectando con " + nuevo.nombre)
+        conectar(agente: ficha["agent_id"] as? String ?? "", ficha: ficha)
     }
 
     // MARK: - Tarjeta de la llamada (#446 T2)
@@ -1213,7 +1281,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
         pidiendoFicha = true
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
-        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozWeb", "app": "alma", "token": token, "session": sesion])
+        r.httpBody = try? JSONSerialization.data(withJSONObject: AgenteVoz.pedido(.alma, token: token, sesion: sesion))   // con «claudio»: esta app sabe pasar a Claudio
         URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
             DispatchQueue.main.async {
                 guard let self else { return }; self.pidiendoFicha = false
@@ -1302,6 +1370,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     func urlSession(_ s: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith code: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         let por = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        guard webSocketTask === ws else { return }   // el socket de antes de cambiar de agente (Hablar con Claudio) no corta la llamada
         guard estado == .conectando || estado == .hablando else { return }
         // Cierre normal con la llamada en curso: Alma colgó (end_call), por ejemplo porque sigue el pedido en segundo plano.
         if code == .normalClosure && estado == .hablando { paso("Alma colgó"); terminar(); return }
