@@ -48,7 +48,9 @@ struct TarjetaVoz: Equatable {
     /// Lo que la app sabe pintar. «consulta» (Hub #470): quien escribió por Airbnb sin reservar (persona, propiedad,
     /// fechas, noches, su mensaje, el precio si lo hay y el borrador que saldría); se pinta como una reserva. «edificio»
     /// (Hub #508 T2): el edificio completo (foto, apartamentos, llegadas y salidas de hoy); se pinta como un apartamento.
-    static let tipos = ["reserva", "conversacion", "apartamento", "consulta", "edificio"]
+    /// «claudio» (Hub #550, Panel de Claudio): con Claudio en la llamada, la lista de trabajos o el del que se habla; la
+    /// página del inicio lo pinta como el tablero y LlamadaVista con la tarjeta de siempre (título, etapa y sus líneas).
+    static let tipos = ["reserva", "conversacion", "apartamento", "consulta", "edificio", "claudio"]
     /// El nombre del tipo (la etiqueta de la tarjeta y la pestañita).
     static func nombre(_ tipo: String) -> String {
         switch tipo {
@@ -56,6 +58,7 @@ struct TarjetaVoz: Equatable {
         case "conversacion": return "Conversación"
         case "consulta": return "Consulta"
         case "edificio": return "Edificio"
+        case "claudio": return "Claudio"
         default: return "Apartamento"
         }
     }

@@ -110,7 +110,7 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         }
     }
 
-    /// Alma con el teléfono bloqueado (VozNativa.swift): { accion: "voz", que: "configurar" | "anillo" | "alternar" | "hablar" | "colgar" | "texto" | "mudo" | "personalidad" | "tarjeta" | "estado", … }
+    /// Alma con el teléfono bloqueado (VozNativa.swift): { accion: "voz", que: "configurar" | "anillo" | "alternar" | "hablar" | "colgar" | "texto" | "mudo" | "personalidad" | "tarjeta" | "claudioPanel" | "estado", … }
     /// Lo que pasa (estado, lo que dices, lo que responde Alma) va a la página como AlmaVoz.evento({ tipo, … }).
     private func voz(_ d: [String: Any]) {
         let v = VozNativa.shared
@@ -130,6 +130,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         case "personalidad": v.ajustarWeebo(modo: d["modo"] as? String ?? "auto", nivel: (d["nivel"] as? NSNumber)?.intValue ?? 1)
         // Tarjeta de la llamada (#446 T2): lo que Juan toca en la tarjeta de la roca del inicio (alma/inicio.html)
         case "tarjeta": v.tarjetaAccion(d["hacer"] as? String ?? ""); return
+        // Panel de Claudio (Hub #550): Juan respondió una pregunta tocando una opción del panel en la roca del inicio
+        case "claudioPanel": v.panelClaudio(d); return
         default: break
         }
         responder("AlmaVoz.evento", [v.resumen])

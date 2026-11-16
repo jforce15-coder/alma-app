@@ -33,6 +33,24 @@ do {
     revisa(TarjetaVoz.nombre("consulta") == "Consulta" && TarjetaVoz.nombre("reserva") == "Reserva" && TarjetaVoz.nombre("apartamento") == "Apartamento", "el nombre de cada tipo")
 }
 
+// MARK: - Panel de Claudio (Hub #550): la lista de trabajos o el del que se habla, por estado como el tablero
+
+do {
+    let a = TarjetaVoz(["id": "cpA", "clave": "claudio:lista", "tipo": "claudio", "vista": "lista", "titulo": "Trabajando en 3", "etiqueta": "Claudio · Desarrollo",
+                        "datos": ["Botón de facturas · Revisiones", "Reporte de limpieza · Te pregunta algo"],
+                        "trabajos": [["id": "mp:mpB", "nombre": "Reporte de limpieza", "etapa": "pregunta", "pasos": ["hecho", "espera", "pendiente", "pendiente"]]]])
+    revisa(a != nil && a?.tipo == "claudio" && a?.datos.count == 2 && (a?.crudo["vista"] as? String) == "lista", "el Panel de Claudio se lee (y lo demás va tal cual a la página)")
+    revisa(TarjetaVoz.nombre("claudio") == "Claudio", "su nombre en la pestañita: Claudio")
+    let b = TarjetaVoz(["id": "cpB", "clave": "claudio:trabajo:mp:mpA", "tipo": "claudio", "vista": "trabajo", "titulo": "Botón de facturas"])!
+    var r = ReglasTarjeta()
+    revisa(r.recibir(a!, pantalla: true) == .mostrar && r.vista == .abierta, "A al entrar con Claudio")
+    revisa(r.recibir(a!, pantalla: true) == .igual, "el mismo panel no cambia nada")
+    revisa(r.recibir(b, pantalla: true) == .mostrar && r.actual?.clave == "claudio:trabajo:mp:mpA", "B (el trabajo del que se habla) reemplaza a A")
+    revisa(r.recibir(a!, pantalla: false) == .soloChat && r.actual?.id == "cpB", "con el teléfono bloqueado no cambia lo que se ve")
+    r.terminar()
+    revisa(r.actual == nil && r.vista == .nada, "al volver con Alma o al colgar se quita")
+}
+
 // MARK: - Por estado (Hub #508, Juan 13-nov-2026): se queda, se reemplaza y se va al colgar
 
 do {
