@@ -301,6 +301,11 @@ struct DiagnosticoAnilloVista: View {
     }
 
     @ViewBuilder private var lista: some View {
+        // Los lentes AURA (Dispositivos, 16-nov-2026): como audífonos Bluetooth clásicos no siempre aparecen abajo; la ruta de
+        // audio dice si están conectados como salida. Si se anuncian por Bluetooth de baja energía, salen en la lista («AURA»).
+        Fila("Salida de audio ahora", Lentes.shared.salidaAhora.isEmpty ? "—" : Lentes.shared.salidaAhora) {
+            Text(Lentes.shared.sonSalida ? "Lentes" : "").font(Tipo.sans(12, .medium)).foregroundStyle(Tinta.suave)
+        }.padding(.top, 10).onAppear { Lentes.shared.mirarAudio() }
         Etiqueta(d.fase == .elegir ? "Toca el tuyo" : "Buscando…", punto: d.fase != .elegir).padding(.top, 10)
         if d.vistos.isEmpty && d.fase == .elegir {
             aviso("No apareció nada. Acerca el anillo al teléfono y vuelve a buscar.")

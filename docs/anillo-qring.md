@@ -1,6 +1,6 @@
 # Anillo QRing: lo que hace su app (para reemplazarla con Alma)
 
-Tomado de 32 capturas de la app QRing (28 oct 2026). Anillo **R08_8105**, firmware **3.10.46**.
+Tomado de 32 capturas de la app QRing (28 oct 2026). Anillo **R08_8105**, firmware **3.10.46** (el 16-nov-2026 ya traía **3.10.48**).
 
 ## Lo que mide y muestra
 
@@ -37,3 +37,44 @@ Inicio de Health: tarjetas (Activity, Sleep, Heart Rate, Sport Record, Body temp
 1. **Music**: el anillo actúa como control multimedia; iOS manda «reproducir/pausa» a la app que tiene el audio aun bloqueado. Alma queda como la app de audio activa y el toque la llama.
 2. **Avisos por Bluetooth**: la prueba de toques en Health muestra si el anillo manda algo por su canal de datos al tocarlo (en el modo que tenga puesto); si lo hace, Alma lo oye aunque el teléfono esté bloqueado.
 3. Respaldo: Siri, botón de Acción, control en la pantalla de bloqueo.
+
+## Lo que Alma ya maneja (rebanada 2, 16-nov-2026)
+
+`AnilloAlma.swift` (herramientas de la voz y la pantalla Dispositivos) y `AnilloDatos.swift` (lectura pura, probada en `Pruebas/AnilloDatos`).
+
+| Herramienta de la voz | Comando | Qué contesta |
+|---|---|---|
+| `anillo_estado` (con `mostrar` abre Dispositivos) | `0x03` | conectado, batería y si carga, firmware (servicio 180A, 2A26), última sincronización |
+| `anillo_medidas` (día 0–6) | `0x43` pasos · `0x15` historial del ritmo | pasos, kcal, km; ritmo del día (mín., máx., promedio, la última con su hora); último ritmo y oxígeno en vivo |
+| `anillo_medir_ahora` (ritmo u oxígeno, `cancelar`) | `0x69` y `0x6A` para parar | el valor tras 3 lecturas buenas del ritmo (2 del oxígeno) o la última buena a los 30 s |
+| `anillo_ajustes` (ver o cambiar) | `0x16 01` leer · `0x16 02` guardar | monitoreo del ritmo: encendido y cada cuántos minutos (5 a 60) |
+| `anillo_buscar` | `0x10` | el anillo parpadea |
+
+- Sin conexión, cada herramienta lo dice (`conectado: false`) y da lo último leído con su hora; nunca inventa.
+- La ficha de la llamada lleva «ANILLO DE JUAN (QRing): conectado · batería 64 % (hace 5 min)…» solo si hay un anillo guardado.
+- La app manda la Lectura del anillo al Hub como mucho cada 10 min (`anilloResumen` → `ANILLO_RES_<clave>`): solo números con su hora,
+  sin nombre ni dirección del anillo. Por WhatsApp, chat o teléfono Alma la dice con la herramienta `anillo` del chat.
+- Al conectar se leen los pasos y el ritmo de hoy (como mucho cada 30 min).
+
+Paquetes que se leen (byte 0 = comando, byte 15 = suma):
+- Batería `03 nivel carga`. Ajustes del ritmo `16 01 activo(1/2) minutos`. En vivo `69 tipo(1 ritmo · 3 oxígeno) error valor` (valor 0 = todavía mide).
+- Pasos `43 F0 … b3` (b3 = 1: kcal en decenas) · `43 año mes día cuarto índice total kcal(2) pasos(2) metros(2)` · `43 FF` sin datos.
+- Historial del ritmo `15 00 paquetes minutos` · `15 01 hora(4) 9 valores` · `15 nn 13 valores` · `15 FF` sin datos.
+
+**Por confirmar contra la app QRing:** las kcal (con el protocolo nuevo vienen en decenas; si la suma del día pasa de 20 000 se toma
+como calorías y se pasa a kcal) y el oxígeno automático (por ahora solo el medido en vivo). El estrés, el HRV, la temperatura y el sueño
+todavía no tienen comando conocido.
+
+## Diagnóstico Bluetooth y los toques (16-nov-2026)
+
+El robot (`anillo`, campo `ble`) todavía **no tiene ningún diagnóstico**: Juan no ha corrido «Diagnóstico del anillo (Bluetooth)». Falta
+saber qué llega por el canal de datos al tocar el anillo en modo Music y Short Video. El cambio de modo (Touch Control) no se implementa:
+su comando no se conoce.
+
+## Los lentes (iTOUCH AURA, sin cámara)
+
+Bluetooth 6.0, dos baterías de 110 mAh (una por patilla), carga magnética, música 4–6 h, llamadas 3–4 h. Son audífonos Bluetooth
+clásicos (A2DP/HFP): **iOS no da su batería a las apps** (solo al widget de Baterías). Lo que sí se sabe (`Lentes.swift`): si están
+conectados (salida de audio o micrófono Bluetooth con «AURA»/«iTOUCH» en el nombre) y si son la salida de ahora. Si algún día se
+anuncian por Bluetooth de baja energía con el servicio 180F, la pantalla Dispositivos lee su batería; si no, dice «no disponible».
+La salida de audio la elige Juan con el botón de iOS (las apps no pueden cambiarla solas).

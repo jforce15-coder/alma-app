@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var salud = false
     /// Diagnóstico del anillo (Bluetooth): Ajustes → Alma con el anillo (DiagnosticoAnillo.swift).
     @State private var diagAnillo = false
+    @State private var dispositivos = false
     @ObservedObject private var voz = VozNativa.shared
     @ObservedObject private var mejora = MejoraCampo.shared
     /// La roca de Alma del navegador: la misma de las web apps, en una capa encima de la página.
@@ -47,6 +48,9 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in Portal.shared.pasar { salud = true } }
             .background { Color.clear.sheet(isPresented: $diagAnillo) { DiagnosticoAnilloVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirDiagnosticoAnillo)) { _ in diagAnillo = true }
+            // Dispositivos (el anillo y los lentes): desde Ajustes o cuando Alma la abre (anillo_estado con mostrar); la llamada se baja.
+            .background { Color.clear.sheet(isPresented: $dispositivos) { DispositivosVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirDispositivos)) { _ in llamadaOculta = true; dispositivos = true }
             // Manos de Alma (navegador): Alma lee o actúa en la página; la pantalla de la llamada se baja para que la veas.
             .onReceive(NotificationCenter.default.publisher(for: .manosAlma)) { _ in llamadaOculta = true }
             // Tarjeta de la llamada: «Abrir conversación» baja la pantalla de la llamada (sigue en la roca) y abre el Hub.

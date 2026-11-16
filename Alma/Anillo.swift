@@ -39,6 +39,13 @@ final class Anillo: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
     // MARK: - Lo que pide la página
 
+    /// Conectado y con su canal listo para mandar comandos (AnilloAlma.swift lo mira antes de pedir algo).
+    var listo: Bool { anillo?.state == .connected && canal != nil }
+    /// El firmware que el anillo dice en su información (servicio 180A), si ya se leyó.
+    var firmware: String { UserDefaults.standard.string(forKey: "anillo_firmware") ?? "" }
+    static let informacion = CBUUID(string: "180A")
+    static let versionFirmware = CBUUID(string: "2A26")
+
     var estado: [String: Any] {
         ["bluetooth": central.state == .poweredOn, "conectado": anillo?.state == .connected,
          "nombre": anillo?.name ?? UserDefaults.standard.string(forKey: "anillo_nombre") ?? "",
@@ -141,7 +148,7 @@ final class Anillo: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) {
         UserDefaults.standard.set(p.identifier.uuidString, forKey: claveGuardado)
         UserDefaults.standard.set(p.name ?? "", forKey: "anillo_nombre")
-        p.discoverServices([Anillo.servicio, Anillo.servicio2])
+        p.discoverServices([Anillo.servicio, Anillo.servicio2, Anillo.informacion])
         emitir(["tipo": "conectado", "nombre": p.name ?? ""])
     }
 
@@ -163,6 +170,7 @@ final class Anillo: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {
         for ch in s.characteristics ?? [] {
             if ch.uuid == Anillo.escribir { canal = ch }
+            if ch.uuid == Anillo.versionFirmware { p.readValue(for: ch) }   // el firmware (Dispositivos, anillo_estado)
             if ch.properties.contains(.notify) || ch.properties.contains(.indicate) { p.setNotifyValue(true, for: ch) }
         }
         if s.uuid == Anillo.servicio, canal != nil {
@@ -176,6 +184,11 @@ final class Anillo: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
     func peripheral(_ p: CBPeripheral, didUpdateValueFor ch: CBCharacteristic, error: Error?) {
         guard let v = ch.value, !v.isEmpty else { return }
+        if ch.uuid == Anillo.versionFirmware {
+            let fw = String(decoding: v, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines.union(.controlCharacters))
+            if !fw.isEmpty { UserDefaults.standard.set(String(fw.prefix(30)), forKey: "anillo_firmware"); emitir(["tipo": "firmware", "firmware": fw]) }
+            return
+        }
         let b = [UInt8](v), hex = b.map { String(format: "%02x", $0) }.joined()
         // ¿Lo mandó el anillo por su cuenta (sin que le pidiéramos nada)? Es lo que interesa para los toques.
         let solo = Date().timeIntervalSince(ultimoComando) > 1.5

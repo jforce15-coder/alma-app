@@ -404,7 +404,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
                                 "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
                                 "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar",
-                                "agente": agente.rawValue, "diagBle": true]   // la app sabe abrir el Diagnóstico del anillo (Bluetooth)
+                                "agente": agente.rawValue, "diagBle": true, "dispositivos": true]   // la app sabe abrir el Diagnóstico del anillo (Bluetooth)
         // la página que se abre a media llamada (o se recarga) pinta los chips con esto
         if estado == .hablando || estado == .conectando, let p = personalidad { r["personalidad"] = p }
         if estado == .hablando || estado == .conectando, let t = tarjeta, tarjetaVista != .nada { r["tarjeta"] = t.crudo; r["tarjetaVista"] = tarjetaVista.rawValue }
@@ -750,6 +750,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Manos de Alma (navegador): qué tiene abierto el navegador de la app (las reglas están en el Hub, voz.js).
         let manos = ManosAlma.shared.ficha
         if esAlma && !manos.isEmpty { dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\n" + manos }
+        // El anillo (AnilloAlma.swift): «ANILLO DE JUAN …» solo si hay uno guardado; así Alma sabe que puede usar sus herramientas.
+        if esAlma, let fa = AnilloAlma.shared.ficha { dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\n" + fa }
         // Alma abre (Hub #509 T4): qué pedido es y qué falta, para seguir la conversación si Juan contesta.
         if esAlma, let pa = porAviso { dv["quien_llama"] = AlmaAbre.ficha((dv["quien_llama"] as? String) ?? "", pa.datos) }
         // Reapertura (LlamadaContinua.swift): tras un corte, o con Alma porque Claudio no conectó. Lo último que se dijo va en
@@ -1010,6 +1012,17 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Hablar con Claudio (Hub #550): no se contestan (expects_response false), así no hacen hablar al agente.
         if AgenteVoz.esCambio(nombre) {
             if let nuevo = AgenteVoz.cambio(herramienta: nombre, actual: agente) { cambiarAgente(nuevo, motivo: p["motivo"] as? String ?? "") }
+            return
+        }
+        // El anillo QRing (AnilloAlma.swift): estado, medidas, medir ahora, ajustes y buscar. Siempre contesta (también sin anillo).
+        if AnilloAlma.herramientas.contains(nombre) {
+            herramienta = true; paso("Alma usa " + nombre)
+            let llamada = inicioLlamada
+            AnilloAlma.shared.correr(nombre, p) { [weak self] res, error in
+                guard let self, self.inicioLlamada == llamada else { return }
+                self.herramienta = false; self.ultimaActividad = Date()
+                self.mandar(["type": "client_tool_result", "tool_call_id": id, "result": res, "is_error": error])
+            }
             return
         }
         if ManosAlma.herramientas.contains(nombre) || nombre == "correr_atajo" {

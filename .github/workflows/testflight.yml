@@ -153,6 +153,14 @@ jobs:
 
       # El anillo que vuelve (Juan, 16-nov-2026): tras una interrupción o un cambio de audífonos vuelve a quedar lista; si no
       # puede, una sola notificación; los pasos van al Hub sin datos personales. Lógica pura.
+      # Alma y el anillo (Juan, 16-nov-2026): lo que manda el anillo (batería, pasos, ritmo) con paquetes de ejemplo, lo que
+      # dice Alma con su hora, lo que sube al Hub (sin nombre ni dirección del anillo) y los lentes sin batería inventada.
+      - name: Probar lo que lee el anillo
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/AnilloDatos.swift Pruebas/AnilloDatos/main.swift -o /tmp/anillo-datos
+          /tmp/anillo-datos
+
       - name: Probar el anillo que vuelve
         if: env.SUBIR != 'true'
         run: |
