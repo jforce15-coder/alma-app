@@ -111,5 +111,14 @@ do {
     revisa(r.recibir(s!, pantalla: true) == .mostrar && r.actual?.clave == "socio:1x2y3z", "el socio se muestra y reemplaza a lo que había, como el tablero")
 }
 
+// MARK: - Tablero de datos (Hub #607): números, barras y línea de tiempo
+
+do {
+    let d = TarjetaVoz(["id": "tvD", "clave": "datos:ruta:abc", "tipo": "datos", "titulo": "Rutas · Hoy", "etiqueta": "Ruta del día", "datos": ["5 trabajos · 3 personas"],
+                        "detalle": ["8:30 · Limpieza · Brunelo 1203"], "cuadros": [["id": "n", "tipo": "numero", "tam": "s", "k": "Trabajos", "v": "5"]]])
+    revisa(d != nil && d?.tipo == "datos" && d?.datos.count == 1 && (d?.crudo["cuadros"] as? [Any])?.count == 1, "el tablero de datos es tarjeta y sus cuadros van tal cual a la página")
+    revisa(TarjetaVoz.nombre("datos") == "Datos" && TarjetaVoz.tipos.contains("datos"), "su nombre: Datos, y va en los tipos que la app avisa al Hub")
+}
+
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallaron.")
 exit(fallos == 0 ? 0 : 1)

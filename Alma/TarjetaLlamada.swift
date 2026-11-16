@@ -54,7 +54,9 @@ struct TarjetaVoz: Equatable {
     /// su ficha, las próximas llegadas y su proyecto en Grow; la página del inicio lo pinta como el tablero y LlamadaVista
     /// con la tarjeta de siempre (su foto o iniciales, sus apartamentos, datos y detalle). El Hub lo manda a la pantalla solo
     /// si la app lo nombra en «tipos» al vincular (VozNativa.vincular): la app de antes lo recibe solo en el chat.
-    static let tipos = ["reserva", "conversacion", "apartamento", "consulta", "edificio", "claudio", "socio"]
+    /// «datos» (Hub #607, tablero de datos): lo que Alma responde con números y listas (reservas, la ruta, el mes, tareas…):
+    /// la página del inicio pinta sus cuadros (número, barras, línea de tiempo) y LlamadaVista su título, datos y detalle.
+    static let tipos = ["reserva", "conversacion", "apartamento", "consulta", "edificio", "claudio", "socio", "datos"]
     /// El nombre del tipo (la etiqueta de la tarjeta y la pestañita).
     static func nombre(_ tipo: String) -> String {
         switch tipo {
@@ -64,6 +66,7 @@ struct TarjetaVoz: Equatable {
         case "edificio": return "Edificio"
         case "claudio": return "Claudio"
         case "socio": return "Socio"
+        case "datos": return "Datos"
         default: return "Apartamento"
         }
     }

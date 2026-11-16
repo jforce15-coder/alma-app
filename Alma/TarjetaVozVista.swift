@@ -69,7 +69,7 @@ struct TarjetaVozVista: View {
 
     private var cabecera: some View {
         HStack(spacing: 12) {
-            if !(t.tipo == "apartamento" && !t.foto.isEmpty) {
+            if !(t.tipo == "apartamento" && !t.foto.isEmpty) && t.tipo != "datos" {   // el tablero de datos (Hub #607) no tiene cara
                 ZStack {
                     Circle().fill(LinearGradient(colors: [Color(red: 0.79, green: 0.72, blue: 0.66), Color(red: 0.56, green: 0.50, blue: 0.45)], startPoint: .topLeading, endPoint: .bottomTrailing))
                     Text(t.iniciales).font(.custom("Montserrat", size: 15).weight(.semibold)).foregroundStyle(.white)
