@@ -16,6 +16,7 @@ import WebKit
 ///   { accion: "navegador", pos }             → Alma se llevó a una de las 8 posiciones: barra de búsqueda lista ("" = volvió al centro)
 ///   { accion: "atajos", que, nombre, on }   → Atajos permitidos (AtajosIOS.swift) → AlmaAtajos.evento({ lista, todos })
 ///   { accion: "notif", que: "probarSiri" }  → «Probar con Siri» (NotifArmar.swift) → AlmaNotif.evento({ tipo: "prueba", ok, en, error })
+///   { accion: "anilloBle" }                  → abre el Diagnóstico del anillo (Bluetooth) (DiagnosticoAnillo.swift)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
     static let nombre = "alma"
@@ -41,6 +42,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             Llavero.borrar()
         case "anillo":
             anillo(d)
+        case "anilloBle":   // Ajustes → Alma con el anillo → «Diagnóstico del anillo (Bluetooth)» (DiagnosticoAnillo.swift): pantalla nativa
+            NotificationCenter.default.post(name: .abrirDiagnosticoAnillo, object: nil)
         case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" } · { que: "mudo", on }
             let c = Conferencia.shared
             c.alEvento = { [weak self] e in self?.responder("AlmaConf.evento", [e]) }
