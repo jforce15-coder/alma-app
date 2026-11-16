@@ -1321,6 +1321,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private func novedades(_ j: [String: Any]) {
         trabajando = (j["trabajando"] as? NSNumber)?.intValue ?? 0
         porRetomar = (j["pendientes"] as? NSNumber)?.intValue ?? 0
+        AjustesNotif.guardar(j["notif_ajustes"])   // ajustes por tipo (Hub #551): con ellos se arma cada notificación
         let l = j["avisos"] as? [[String: Any]] ?? []
         if !l.isEmpty {
             ultimaNovedad = Date(); fichaLista = nil   // la próxima llamada ya empieza por lo nuevo
@@ -1335,7 +1336,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 let hablarlo = n <= NivelAvisos.nivel("hablado") || (enConf && NivelAvisos.nivel("hablado") > 0)
                 // Si Alma lo va a decir, la notificación va callada: Siri no la lee con la voz del iPhone encima (14-nov-2026).
                 let seDice = hablarlo && ModoCalle.shared.puedeHablarAvisos
-                if n <= NivelAvisos.nivel("telefono") { Notificaciones.shared.mostrar(id: id, texto: texto, titulo: titulo, lineas: lineas, seDice: seDice) }
+                if n <= NivelAvisos.nivel("telefono") { Notificaciones.shared.mostrar(id: id, texto: texto, titulo: titulo, lineas: lineas, seDice: seDice, tipo: a["notif_tipo"] as? String) }
                 if hablarlo {
                     ModoCalle.shared.avisoHablado(id: id, texto: texto, resultado: resultado, hablar: a["hablar"] as? String ?? "",
                                                   audio: a["audio"] as? String, vozMotivo: a["vozMotivo"] as? String, abre: AlmaAbre.desde(a))
@@ -1345,7 +1346,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // Por qué Alma abrió (o no) la conversación por cada aviso (el Hub lo dice en abre_por), para el diagnóstico.
             for a in l { if let por = a["abre_por"] as? String, por != "no_es_resultado" { paso(AlmaAbre.desde(a) != nil ? "Alma abre: resultado de un pedido reciente" : "Alma no abre (" + por + "): aviso de siempre") } }
         }
-        Notificaciones.shared.globo(porRetomar)
+        Notificaciones.shared.globo((j["numero"] as? NSNumber)?.intValue ?? porRetomar)   // el número solo de los tipos que lo tienen (#551)
         // Sin el modo anillo: mientras Alma trabaja por detrás (o te avisó hace poco), la app queda lista para que dos toques
         // del anillo te reconecten. Después de 15 min sin nada que esperar, se apaga sola.
         guard !modoAnillo, estado == .lista || estado == .apagada else { return }

@@ -45,11 +45,15 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         OTHER_LDFLAGS: $(inherited) -lc++
     # Apple Salud (solo lectura). El robot de TestFlight le pone estos permisos a la app antes de firmarla.
+    # Notificaciones por tipo (Hub #551): de comunicación (Siri las anuncia con su voz) y urgentes (time-sensitive).
+    # La exportación las activa en el App ID con -allowProvisioningUpdates, como Apple Salud.
     entitlements:
       path: Alma/Alma.entitlements
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
+        com.apple.developer.usernotifications.communication: true
+        com.apple.developer.usernotifications.time-sensitive: true
     info:
       path: Alma/Info.plist
       properties:
@@ -80,6 +84,9 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        # Siri anuncia las notificaciones de comunicación (Hub #551, NotifArmar.swift): el intent de mensaje que dona la app.
+        NSUserActivityTypes:
+          - INSendMessageIntent
         # «Abrir en Alma»: alma://abrir?u=<enlace> (atajo de Compartir de iOS)
         CFBundleURLTypes:
           - CFBundleURLName: com.spacioam.alma
