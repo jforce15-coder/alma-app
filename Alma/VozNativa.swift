@@ -333,9 +333,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         mandar(["type": "user_message", "text": t])
     }
     private var enChat = false
-    func silenciar(_ on: Bool) { mudo = on; player.volume = (on || enChat) ? 0 : 1 }
-    /// Modo chat de la roca: Alma sigue oyendo (el micrófono sigue) pero no suena; responde por escrito en la página.
-    func sinVoz(_ on: Bool) { enChat = on; player.volume = (on || mudo) ? 0 : 1 }
+    func silenciar(_ on: Bool) { mudo = on; player.volume = on ? 0 : 1 }
+    /// Modo chat de la roca: Alma sigue oyendo (el micrófono sigue), su respuesta se ve escrita en la página y también
+    /// suena con su voz (Hub #561: antes se callaba). enChat solo evita que la llamada se cuelgue sola mientras escribes.
+    func sinVoz(_ on: Bool) { enChat = on; player.volume = mudo ? 0 : 1 }
 
     /// Cuánto suena la voz, para que la roca de la página lata con ella (unas 10 veces por segundo).
     private func nivelAPagina() {
