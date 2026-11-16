@@ -46,15 +46,17 @@ enum AnilloVuelve {
 /// Los pasos de la voz que van al Hub (diagnóstico del anillo, ALMA_ANILLO con origen «app»): solo lo nuevo desde el último
 /// envío y sin datos personales (el texto de un aviso, lo que Alma puso en el chat, lo que va entre «», correos).
 enum PasosAnillo {
-    static let maximo = 14
+    static let maximo = 30
     static let largo = 140
     /// Pasos que llevan texto de Juan o de un aviso después de los dos puntos: se queda solo el inicio.
     static let conTexto = ["Aviso: ", "Alma lo puso en el chat: ", "Panel de Claudio: "]
 
-    /// Lo nuevo de `pasos` después del último enviado (si ya no está, la lista se reinició al empezar otra llamada: todo).
+    /// Lo nuevo de `pasos` después del último enviado (si ya no está en la lista, todo). Van por tandas de `maximo`,
+    /// empezando por lo más viejo: lo que no cabe en esta vuelta va en la siguiente (antes se mandaban solo los últimos 14 y
+    /// el principio de una llamada larga, donde está el porqué de un corte, se perdía).
     static func nuevos(_ pasos: [String], ultimoEnviado: String?) -> [String] {
-        guard let u = ultimoEnviado, let i = pasos.lastIndex(of: u) else { return Array(pasos.suffix(maximo)) }
-        return Array(pasos[pasos.index(after: i)...].suffix(maximo))
+        guard let u = ultimoEnviado, let i = pasos.lastIndex(of: u) else { return Array(pasos.prefix(maximo)) }
+        return Array(pasos[pasos.index(after: i)...].prefix(maximo))
     }
 
     static func limpiar(_ pasos: [String]) -> [String] {

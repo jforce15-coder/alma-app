@@ -27,6 +27,9 @@ import UserNotifications
 ///   al terminar vuelve a quedar lista (o pide abrir la app, AnilloVuelve.swift); los pasos van al Hub con los avisos.
 /// · La música (AudioCalle.swift): la llamada que abre el Modo calle (o la conferencia, con su interruptor) baja la música de
 ///   las otras apps en vez de pausarla.
+/// · Conversación continua (Juan, 16-nov-2026; LlamadaContinua.swift): en el Modo calle y en conferencia Alma no se despide
+///   ni cuelga; la app cierra sola tras un silencio y vuelve a escuchar «Alma». Si la conexión de una llamada normal se cae,
+///   se vuelve a abrir sola; si Claudio no conecta, vuelve Alma y lo dice. Cada fin de llamada deja su porqué en los pasos.
 final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static let shared = VozNativa()
 
@@ -161,6 +164,22 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// ficha del Hub (calle_silencio_s, calle_tope_s). Las llamadas fuera del Modo calle no cambian.
     private var vigiaCalle: Timer?, motivoCalle: SuenoCalle.Motivo?
     private var calleSilencio = SuenoCalle.silencioDeFabrica, calleTope = SuenoCalle.topeDeFabrica
+    /// Conversación continua (LlamadaContinua.swift): en una llamada del modo conferencia Alma no cuelga; la app la cierra
+    /// sola tras estos segundos (conferencia_silencio_s y conferencia_tope_s en la ficha del Hub) y vuelve a escuchar «Alma».
+    private var confSilencio = LlamadaContinua.silencioConferencia, confTope = LlamadaContinua.topeConferencia
+    /// ¿La app cierra sola esta llamada, y con qué segundos? (Modo calle, conferencia o la que abrió un aviso.)
+    private var tiemposCierre: LlamadaContinua.Tiempos? {
+        LlamadaContinua.tiempos(calle: desdeCalle, conferencia: conferencia != nil, porAviso: porAviso != nil, juanHablo: vozJuanCalle != .distantPast,
+                                deCalle: .init(silencio: calleSilencio, tope: calleTope), deConferencia: .init(silencio: confSilencio, tope: confTope))
+    }
+    /// Cada intento de conexión lleva su número: el reloj de «no contestó» de un intento anterior no corta el de ahora.
+    private var intentoConexion = 0
+    /// Las veces que esta llamada se reabrió sola (tras un corte, o con Alma si Claudio no conectó).
+    private var reabiertas = 0
+    /// La conversación que conecta es una reapertura: la frase con la que Alma abre y lo último que se dijo.
+    private var reabierta: (frase: String, charla: [String], porClaudio: Bool)?
+    /// Por qué termina la llamada (queda en el paso «Llamada terminada»).
+    private var motivoFin: String?
     private var vozJuanCalle = Date.distantPast, sonidoCalle = Date.distantPast
     /// Cómo terminó la última llamada (el Modo calle lo suma a su uso): segundos conectada a ElevenLabs y si colgó el sueño.
     var ultimaLlamada: (seg: Double, motivo: SuenoCalle.Motivo?) = (0, nil)
@@ -230,7 +249,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let d = UserDefaults.standard; d.set(t, forKey: "voz_paso")
         var lista = d.stringArray(forKey: "voz_pasos") ?? []
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
-        lista.append(f.string(from: Date()) + " " + t); d.set(Array(lista.suffix(14)), forKey: "voz_pasos")
+        let linea = f.string(from: Date()) + " " + t
+        lista.append(linea); d.set(Array(lista.suffix(14)), forKey: "voz_pasos")
+        // El registro que va al Hub no se borra al empezar otra llamada (así se perdían los pasos de la que se cortó).
+        d.set(LlamadaContinua.guardar(d.stringArray(forKey: "voz_pasos_hub") ?? [], linea), forKey: "voz_pasos_hub")
         emitir(["tipo": "paso", "texto": t])
     }
 
@@ -282,8 +304,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             paso("Toque repetido ignorado: la llamada acaba de empezar"); return
         }
         switch estado {
-        case .hablando: if cerrarTrasRespuesta { terminar() } else if pausada { reanudar() } else { pausar() }
-        case .conectando: terminar()
+        case .hablando: if cerrarTrasRespuesta { motivoFin = "un toque después de la pausa larga"; terminar() } else if pausada { reanudar() } else { pausar() }
+        case .conectando: motivoFin = "un toque mientras conectaba"; terminar()
         case .lista, .apagada: desdePantalla = false; hablar()
         }
     }
@@ -369,7 +391,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     /// «Terminar» en la pantalla: cierra la conversación (el doble toque, en cambio, pausa).
-    func colgar() { if estado == .hablando || estado == .conectando { terminar() } }
+    func colgar() { if estado == .hablando || estado == .conectando { motivoFin = "tocaste Terminar"; terminar() } }
 
     var resumen: [String: Any] {
         var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
@@ -563,7 +585,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             guard self.estado == .hablando || self.estado == .conectando else { self.anilloCortado(); return }
             // Modo calle: otra llamada o Siri cortan sin error ni reintento; el Modo calle vuelve a esperar cuando regrese el micrófono.
-            if self.desdeCalle { self.colgarCalle(.corte) } else { self.fallo("Otra app o una llamada tomó el audio.") }
+            // Conferencia (conversación continua): igual, sin error; al terminar la interrupción vuelve a escuchar «Alma».
+            if self.tiemposCierre != nil { self.paso("Otra app o una llamada tomó el audio"); self.colgarCalle(.corte) } else { self.fallo("Otra app o una llamada tomó el audio.") }
         }
         // Al abrir la app (o al volver a ella) el micrófono queda listo otra vez.
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -629,7 +652,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Un solo micrófono: el Modo Inicio se calla ya (con la ficha pedida de antemano, la llamada abre el suyo enseguida).
         EscuchaInicio.shared.detener()
         estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0; inicioEnviado = false; antesDeFicha = []
-        ultimaLlamada = (0, nil); motivoCalle = nil
+        ultimaLlamada = (0, nil); motivoCalle = nil; reabiertas = 0; reabierta = nil; motivoFin = nil
         weebo = nil; weeboCambio = 0; adaptacion = nil; flechaT?.cancel()
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()
         sonido("alma-inicio", llamada: true)   // el segundo beep: el de la llamada a Alma, suena siempre (también en conferencia): lo que digas se guarda mientras conecta
@@ -677,12 +700,20 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let sesion = URLSession(configuration: .default, delegate: self, delegateQueue: .main)
         sesionURL = sesion
         let t = sesion.webSocketTask(with: pedido); ws = t; t.resume()
-        // Si en 12 s Alma no contestó, se avisa (y no queda «Conectando…» para siempre).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in if self?.estado == .conectando { self?.fallo("Alma no contestó. Revisa tu internet.") } }
+        // Si en 12 s no contestó, se avisa (y no queda «Conectando…» para siempre). El reloj es de ESTE intento: el de una
+        // llamada anterior (o del agente de antes de cambiar) ya no puede cortar la conexión de ahora.
+        intentoConexion += 1
+        let intento = intentoConexion, quien = self.agente.nombre
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            guard let self, LlamadaContinua.vencio(intentoDelReloj: intento, intentoActual: self.intentoConexion, conectando: self.estado == .conectando) else { return }
+            self.corte(quien + " no contestó. Revisa tu internet.")
+        }
         var dv = ficha["dynamic_variables"] as? [String: Any] ?? [:]
         segundosLargo = (ficha["conferencia_tras"] as? NSNumber).map { max(30, $0.doubleValue) } ?? 240
         calleSilencio = (ficha["calle_silencio_s"] as? NSNumber).map { min(30, max(3, $0.doubleValue)) } ?? SuenoCalle.silencioDeFabrica
         calleTope = (ficha["calle_tope_s"] as? NSNumber).map { min(180, max(15, $0.doubleValue)) } ?? SuenoCalle.topeDeFabrica
+        confSilencio = LlamadaContinua.segundos((ficha["conferencia_silencio_s"] as? NSNumber)?.doubleValue, fabrica: LlamadaContinua.silencioConferencia, desde: 10, hasta: 120)
+        confTope = LlamadaContinua.segundos((ficha["conferencia_tope_s"] as? NSNumber)?.doubleValue, fabrica: LlamadaContinua.topeConferencia, desde: 20, hasta: 300)
         // Medidores de la llamada (solo vienen con el administrador principal): el nivel de partida y la adaptación.
         weebo = (ficha["weebo_nivel"] as? NSNumber)?.intValue; weeboCambio = 0
         adaptacion = (ficha["adapt_nivel"] as? NSNumber)?.intValue
@@ -702,18 +733,22 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // Alma abre (Hub #509 T4): esta vez nadie la nombró; abrió ella para contar un resultado (ALMA ABRE, al final).
             let quien = porAviso != nil ? " Esta vez abriste tú la conversación para contarle un resultado (ALMA ABRE, al final): no saludes ni te presentes." :
                 " Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste con un saludo corto; escucha lo que te piden." : "")
-            let reglas = " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. " + VozNativa.sinDespedida
-            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio." + quien + reglas + " Al colgar vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. LO ÚLTIMO QUE SE DIJO:\n" + cf
+            let reglas = " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. " + LlamadaContinua.regla
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio." + quien + reglas + " En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. LO ÚLTIMO QUE SE DIJO:\n" + cf
         }
         if esAlma && desdeCalle {
-            let calle = "\n\nMODO CALLE: Juan va caminando, con el teléfono bloqueado y audífonos; hay ruido y gente alrededor. Responde en una o dos frases cortas. Si lo que oyes no va dirigido a ti, usa skip_turn y no contestes. " + VozNativa.sinDespedida
-            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + calle + " Nunca preguntes si sigue ahí: si se queda callado, la app cuelga sola y él te vuelve a llamar con «Alma»."
+            let calle = "\n\nMODO CALLE: Juan va caminando, con el teléfono bloqueado y audífonos; hay ruido y gente alrededor. Responde en una o dos frases cortas. Si lo que oyes no va dirigido a ti, usa skip_turn y no contestes. " + LlamadaContinua.regla
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + calle + " Nunca preguntes si sigue ahí: si se queda callado, la app cierra sola y él te vuelve a llamar con «Alma»."
         }
         // Manos de Alma (navegador): qué tiene abierto el navegador de la app (las reglas están en el Hub, voz.js).
         let manos = ManosAlma.shared.ficha
         if esAlma && !manos.isEmpty { dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\n" + manos }
         // Alma abre (Hub #509 T4): qué pedido es y qué falta, para seguir la conversación si Juan contesta.
         if esAlma, let pa = porAviso { dv["quien_llama"] = AlmaAbre.ficha((dv["quien_llama"] as? String) ?? "", pa.datos) }
+        // Reapertura (LlamadaContinua.swift): tras un corte, o con Alma porque Claudio no conectó. Lo último que se dijo va en
+        // la ficha y Alma abre con una frase que dice qué pasó.
+        let reab = reabierta; reabierta = nil
+        if esAlma, let r = reab { dv["quien_llama"] = LlamadaContinua.ficha((dv["quien_llama"] as? String) ?? "", frase: r.frase, charla: r.charla, porClaudio: r.porClaudio) }
         if esAlma, let pt = pantalla {
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO PANTALLA: Juan está en el navegador de la app de Alma viendo " + pt + " y tocó tres veces la roca para hablar contigo de lo que ve. Ya le dijiste «\(VozNativa.saludoPantalla)»: no saludes otra vez; escucha. En unos segundos te llega LO QUE SE VE EN LA PANTALLA (lo que muestra su captura): úsalo como contexto. Si pregunta antes de que llegue, dile que lo estás mirando."
         }
@@ -731,7 +766,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + espera) { [weak self] in
             guard let self, self.inicioLlamada == llamada, self.estado == .conectando || self.estado == .hablando, !self.inicioEnviado, self.ws != nil else { return }
             let primero: String
-            if let cambio { primero = AgenteVoz.primerMensaje(cambio, ficha: fm); self.volviendo = false }
+            if let r = reab, self.agente == .alma { primero = r.frase; self.volviendo = false }
+            else if let cambio { primero = AgenteVoz.primerMensaje(cambio, ficha: fm); self.volviendo = false }
             else if let abre {   // Alma abre (Hub #509 T4): habla primero con la frase del aviso; Juan no la llamó, el ruido no la calla
                 primero = AlmaAbre.primerMensaje(abre, deSiempre: "")
             }
@@ -857,7 +893,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             case .failure(let e):
                 DispatchQueue.main.async {
                     guard AgenteVoz.esSocketActual(tarea, self.ws) else { return }   // el socket viejo: no es la llamada de ahora
-                    if self.estado == .conectando || self.estado == .hablando { self.fallo("La voz se cortó: \(e.localizedDescription)") }
+                    self.corte("La voz se cortó: \(e.localizedDescription)")
                 }
             }
         }
@@ -874,7 +910,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             estado = .hablando; conectadaDesde = Date(); vozEnPausa = 0
             vigilar()
             aConferencia = false; relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; ultimaActividad = Date(); herramienta = false
-            if AlmaAbre.sueno(calle: desdeCalle, porAviso: porAviso != nil) { vigilarCalle() }   // también la que abrió un aviso
+            if tiemposCierre != nil { vigilarCalle() }   // Modo calle, conferencia (conversación continua) o la que abrió un aviso
             if conferencia == nil && !desdeCalle && agente == .alma {   // en el Modo calle manda el sueño (más corto); pasar a conferencia apagaría el Modo calle
                 relojLargo = Timer.scheduledTimer(withTimeInterval: segundosLargo, repeats: false) { [weak self] _ in
                     guard let self, self.estado == .hablando else { return }
@@ -885,7 +921,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                     // Respaldo: si tras la pausa nadie dijo nada en 16 s (7 s de espera + la despedida), la app cuelga y pasa a conferencia.
                     self.vigiaLargo = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
                         guard let self, self.estado == .hablando, !self.pausada, !self.herramienta else { return }
-                        if Date().timeIntervalSince(max(self.ultimaActividad, self.finVozAlma)) > 16 { self.paso("Pausa larga sin respuesta: pasa al modo conferencia"); self.terminar() }
+                        if Date().timeIntervalSince(max(self.ultimaActividad, self.finVozAlma)) > 16 { self.paso("Pausa larga sin respuesta: pasa al modo conferencia"); self.motivoFin = "llamada larga con una pausa de 16 s: queda escuchando en modo conferencia"; self.terminar() }
                     }
                 }
             }
@@ -931,7 +967,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let ev = j["user_transcription_event"] as? [String: Any] ?? [:]
             if let t = ev["user_transcript"] as? String {
                 ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t)
-                if AlmaAbre.sueno(calle: desdeCalle, porAviso: porAviso != nil), !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if tiemposCierre != nil, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     vozJuanCalle = Date()
                     if SuenoCalle.esCierre(t) { colgarCalle(.cierre) }
                 }
@@ -1143,7 +1179,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             tramo += 1
             if self.cerrarTrasRespuesta {   // pausa sin retomar: cuando Alma terminó de responder (o a los 45 s), se cierra
                 let callada = Date().timeIntervalSince(self.ultimoAudioAlma) > 5 && self.ultimoAudioAlma > self.desdeCierre
-                if (callada && !self.almaHabla) || Date().timeIntervalSince(self.desdeCierre) > 45 { self.terminar() }
+                if (callada && !self.almaHabla) || Date().timeIntervalSince(self.desdeCierre) > 45 { self.motivoFin = "pausa de 25 s sin retomar"; self.terminar() }
                 return
             }
             if self.pausada { self.ultimaVoz = Date(); return }
@@ -1157,18 +1193,24 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
     }
 
-    private func revivirMicrofono() {
+    /// Si no se deja abrir a la primera (iOS a veces tarda un momento en soltar el audio), se intenta una vez más antes de
+    /// dar la llamada por perdida.
+    private func revivirMicrofono(segundoIntento: Bool = false) {
         do { try prepararMotor(); paso("Micrófono abierto otra vez") }
         catch {
-            paso("No pude volver a abrir el micrófono (\((error as NSError).code))")
-            if estado == .hablando { fallo("iOS apagó el micrófono y no dejó volver a abrirlo. Abre Alma y vuelve a intentar.") }
+            paso("No pude volver a abrir el micrófono (\((error as NSError).code))" + (segundoIntento ? "" : ": lo intento otra vez"))
+            guard estado == .hablando else { return }
+            if segundoIntento { fallo("iOS apagó el micrófono y no dejó volver a abrirlo. Abre Alma y vuelve a intentar."); return }
+            let llamada = inicioLlamada
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard let self, self.inicioLlamada == llamada, self.estado == .hablando else { return }
+                self.ultimaVoz = Date(); self.revivirMicrofono(segundoIntento: true)
+            }
         }
     }
 
-    /// Sin despedidas en el Modo calle y en conferencia (Juan, 16-nov-2026): Alma termina con su respuesta corta y cuelga; lo
-    /// que queda trabajando se lo cuenta después Alma abre (AlmaAbre.swift, Hub #514). El Hub tiene la misma excepción en
-    /// voz.js (SILENCIO LARGO, «Nunca cuelgues tú primero» y la descripción de end_call); en las demás llamadas, igual que siempre.
-    static let sinDespedida = "SIN DESPEDIDAS: nunca te despidas ni digas «aquí sigo». Cuando ya respondiste y no le hiciste una pregunta, cuelga con end_call en ese mismo turno, sin decir nada más. Si lo dejas trabajando en segundo plano, di solo «Entendido, lo hago y te aviso cuando esté listo» y cuelga: cuando esté, tú le avisas."
+    /// Cierra la llamada. Lo que le dice a Alma la ficha del Modo calle y de la conferencia (sin despedidas y SIN colgar:
+    /// conversación continua) está en LlamadaContinua.regla; lo que queda trabajando se lo cuenta después Alma abre.
     private func terminar() {
         vigia?.invalidate(); vigia = nil
         vigiaCalle?.invalidate(); vigiaCalle = nil
@@ -1183,13 +1225,17 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let habia = estado == .hablando || estado == .conectando
         relojEspera?.invalidate(); relojEspera = nil; espera = nil
         conferencia = nil; textoInicial = nil; alOir = false; pantalla = nil; vistaPendiente = nil; porAviso = nil
-        cambiando = false; volviendo = false
+        cambiando = false; volviendo = false; reabierta = nil
         reglasTarjeta.terminar(); publicarTarjeta(); idLlamada = nil; idClaudio = nil   // lo que hubo queda en el Chat con Alma (lo guarda el Hub)
         avisoPantalla.forEach { NotificationCenter.default.removeObserver($0) }; avisoPantalla = []
-        if habia { paso("Pausa") }
+        // El porqué queda en el registro (antes decía solo «Pausa» y no se sabía quién había colgado).
+        if habia { paso("Llamada terminada" + (motivoFin.map { " · " + $0 } ?? "")) }
+        motivoFin = nil
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
+        // Cierre normal de verdad: se deja salir el aviso de cierre antes de soltar la sesión (invalidateAndCancel lo
+        // cortaba a veces y ElevenLabs lo anotaba como corte anormal, 1006, aunque hubiera colgado la app).
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
-        sesionURL?.invalidateAndCancel(); sesionURL = nil
+        sesionURL?.finishTasksAndInvalidate(); sesionURL = nil
         player.stop()
         if modoAnillo || unRato { player.play() }   // el micrófono sigue listo para el próximo doble toque
         else { engine.inputNode.removeTap(onBus: 0); if engine.isRunning { engine.stop() } }
@@ -1247,7 +1293,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         relojEspera?.invalidate(); relojEspera = nil; herramienta = false
         let viejo = ws, viejaSesion = sesionURL
         ws = nil; sesionURL = nil
-        viejo?.cancel(with: .normalClosure, reason: nil); viejaSesion?.invalidateAndCancel()
+        viejo?.cancel(with: .normalClosure, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         inicioEnviado = false; antesDeFicha = []; colaVoz = []; sono = false
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()   // vuelve Alma: el Panel de Claudio se quita
@@ -1387,18 +1433,18 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         vozJuanCalle = .distantPast; sonidoCalle = .distantPast
         vigiaCalle = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] t in
             guard let self else { t.invalidate(); return }
-            guard self.estado == .hablando, AlmaAbre.sueno(calle: self.desdeCalle, porAviso: self.porAviso != nil) else { t.invalidate(); if self.vigiaCalle === t { self.vigiaCalle = nil }; return }
+            guard self.estado == .hablando, let tc = self.tiemposCierre else { t.invalidate(); if self.vigiaCalle === t { self.vigiaCalle = nil }; return }
             guard !self.enChat, !self.mudo else { return }   // modo chat o mudo con la pantalla a la vista: no se cuelga sola
             let m = SuenoCalle.Momentos(conectada: self.conectadaDesde, finVozAlma: self.finVozAlma, vozJuan: self.vozJuanCalle,
                                         sonido: self.sonidoCalle, herramientaDesde: self.herramientaDesde, finHerramienta: self.finHerramienta)
-            if let motivo = SuenoCalle.decidir(m, ahora: Date(), silencio: self.calleSilencio, tope: self.calleTope) { self.colgarCalle(motivo) }
+            if let motivo = SuenoCalle.decidir(m, ahora: Date(), silencio: tc.silencio, tope: tc.tope) { self.colgarCalle(motivo) }
         }
     }
 
     /// Cuelga la llamada del Modo calle sin despedida (solo el sonido de fin): el Modo calle vuelve a esperar «Alma».
     private func colgarCalle(_ m: SuenoCalle.Motivo) {
         guard estado == .hablando || estado == .conectando else { return }
-        paso((desdeCalle ? "Modo calle: cuelga (" : "Alma abre: cuelga (") + m.rawValue + (desdeCalle ? ") y vuelve a esperar «Alma»" : ") y vuelve a escuchar"))
+        paso(LlamadaContinua.pasoCierre(m.rawValue, calle: desdeCalle, conferencia: conferencia != nil))
         motivoCalle = m
         terminar()
     }
@@ -1481,7 +1527,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Diagnóstico del anillo (Juan, 16-nov-2026): los pasos nuevos de la voz van al Hub (ALMA_ANILLO, origen «app»), sin
         // datos personales (PasosAnillo). Se marcan enviados solo si el Hub contestó.
         let ud = UserDefaults.standard
-        let nuevos = PasosAnillo.nuevos(ud.stringArray(forKey: "voz_pasos") ?? [], ultimoEnviado: ud.string(forKey: "voz_pasos_enviado"))
+        let nuevos = PasosAnillo.nuevos(ud.stringArray(forKey: "voz_pasos_hub") ?? ud.stringArray(forKey: "voz_pasos") ?? [], ultimoEnviado: ud.string(forKey: "voz_pasos_enviado"))
         if !nuevos.isEmpty { cuerpo["pasos"] = PasosAnillo.limpiar(nuevos); cuerpo["anillo"] = modoAnillo }
         // Notificaciones push (Ticket #28): si su push está listo y si se va a dormir (el Hub manda por push solo así).
         // En segundo plano sin nada que la mantenga despierta, cada pregunta dice «duerme»: iOS la suspende enseguida.
@@ -1564,13 +1610,77 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let por = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
         guard webSocketTask === ws else { return }   // el socket de antes de cambiar de agente (Hablar con Claudio) no corta la llamada
         guard estado == .conectando || estado == .hablando else { return }
-        // Cierre normal con la llamada en curso: Alma colgó (end_call), por ejemplo porque sigue el pedido en segundo plano.
-        if code == .normalClosure && estado == .hablando { paso("Alma colgó"); terminar(); return }
         // Sin créditos de voz: decirlo claro, no solo colgar.
         if por.range(of: "quota_exceeded|credits|quota", options: [.regularExpression, .caseInsensitive]) != nil {
-            fallo("Se acabaron los créditos de voz de Alma en ElevenLabs. Recárgalos y vuelve a llamarla; mientras, escríbele por el chat."); return
+            corte("Se acabaron los créditos de voz de Alma en ElevenLabs. Recárgalos y vuelve a llamarla; mientras, escríbele por el chat.", sinCreditos: true); return
         }
-        fallo("ElevenLabs cerró la voz (\(code.rawValue)) \(por)")
+        if code == .normalClosure && estado == .hablando {
+            let conectada = Date().timeIntervalSince(conectadaDesde)
+            // ElevenLabs cierra a los 15 min con un cierre normal: en una llamada normal con Alma no es que ella colgó; se
+            // vuelve a abrir sola. (El Modo calle y la conferencia vuelven a escuchar «Alma», como al cerrar por silencio.)
+            if LlamadaContinua.cerroPorDuracion(conectada: conectada), agente == .alma, tiemposCierre == nil {
+                corte("ElevenLabs cerró la conversación a los 15 minutos"); return
+            }
+            // Claudio «colgó» recién entrado y sin que Juan le hablara: algo cerró su conversación al empezar. Vuelve Alma.
+            if LlamadaContinua.cierreAlEmpezar(claudio: agente == .claudio, conectada: conectada, juanHablo: lineas.contains { !$0.alma }) {
+                corte("La conversación de Claudio se cerró al empezar" + (por.isEmpty ? "" : " (" + String(por.prefix(60)) + ")")); return
+            }
+            // Cierre normal con la llamada en curso: colgó (end_call), por ejemplo porque sigue el pedido en segundo plano.
+            paso(agente.nombre + " colgó" + (por.isEmpty ? "" : " (" + String(por.prefix(60)) + ")")); motivoFin = "colgó " + agente.nombre; terminar(); return
+        }
+        corte("ElevenLabs cerró la voz (\(code.rawValue)) \(por)")
+    }
+
+    // MARK: - Si la conexión se cae (LlamadaContinua.swift)
+
+    /// La conexión de la llamada se cayó o no llegó a abrir (falló el socket, ElevenLabs cerró sin colgar, no contestó en
+    /// 12 s). Una llamada normal se vuelve a abrir sola; si era Claudio, vuelve Alma y lo dice; en el Modo calle y en
+    /// conferencia se cierra sin error y se vuelve a escuchar «Alma». Solo si no hay cómo seguir se dice el error y termina.
+    private func corte(_ m: String, sinCreditos: Bool = false) {
+        guard estado == .conectando || estado == .hablando else { return }
+        let conectada: TimeInterval? = estado == .hablando ? Date().timeIntervalSince(conectadaDesde) : nil
+        switch LlamadaContinua.trasCorte(claudio: agente == .claudio, calle: desdeCalle, conferencia: conferencia != nil, conectada: conectada,
+                                         reabiertas: reabiertas, sinCreditos: sinCreditos) {
+        case .fallar: fallo(m)
+        case .colgar: paso("Se cortó la conexión (" + m + ")"); colgarCalle(.corte)
+        case .volverConAlma: reabrir(por: m, frase: LlamadaContinua.fraseSinClaudio(conectado: conectada != nil), porClaudio: true)
+        case .reabrir: reabrir(por: m, frase: LlamadaContinua.fraseTrasCorte, porClaudio: false)
+        }
+    }
+
+    /// Vuelve a abrir la conversación con Alma sin colgar la llamada: el micrófono y el audio siguen, lo último que se dijo
+    /// va en la ficha y Alma abre con una frase que dice qué pasó. Si el Hub no da la conversación nueva, entonces sí es un
+    /// error y se dice el de antes.
+    private func reabrir(por m: String, frase: String, porClaudio: Bool) {
+        guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { fallo(m); return }
+        reabiertas += 1
+        let llamada = inicioLlamada, charla = charlaReciente
+        paso((porClaudio ? "Claudio no siguió (" : "Se cortó la conexión (") + m + (porClaudio ? "): vuelvo con Alma" : "): la vuelvo a abrir"))
+        relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; aConferencia = false
+        relojEspera?.invalidate(); relojEspera = nil; herramienta = false
+        let viejo = ws, viejaSesion = sesionURL
+        ws = nil; sesionURL = nil
+        viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        inicioEnviado = false; antesDeFicha = []; colaVoz = []
+        cambiando = true   // mientras llega la conversación nueva no se cambia de agente
+        estado = .conectando
+        intentoConexion += 1   // el reloj de 12 s del intento que se cayó ya no cuenta
+        let intento = intentoConexion
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 12
+        r.httpBody = try? JSONSerialization.data(withJSONObject: AgenteVoz.pedido(.alma, token: token, sesion: sesion))
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+            let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            DispatchQueue.main.async {
+                guard let self, self.inicioLlamada == llamada, self.estado == .conectando, self.intentoConexion == intento else { return }   // colgó o empezó otra llamada
+                self.cambiando = false
+                guard let j, (j["ok"] as? Bool) == true, j["agent_id"] is String else {
+                    self.paso("El Hub no dio la conversación nueva"); self.fallo(m); return
+                }
+                self.reabierta = (frase, charla, porClaudio)
+                self.reconectar(.alma, ficha: j)
+            }
+        }.resume()
     }
 
     private func avisar() { emitir(resumen) }
