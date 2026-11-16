@@ -31,36 +31,36 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
 
     /// `titulo` y `lineas` (del Hub, vozAvisos): lo que terminó en segundo plano llega con la respuesta, no solo el aviso
     /// («Alma · Operación de hoy», el aviso de subtítulo y hasta 3 líneas del resultado). Sin ellos, como antes.
-    /// Sin Notification Service Extension: no hay imagen ni botones por aviso; lo completo está en la tarjeta de Pendientes.
+    /// Lo completo está en la tarjeta de Pendientes. Con la app dormida el aviso llega por push (Ticket #28, NotifAlma).
     /// `seDice`: Alma lo va a decir en voz alta (Modo calle, conferencia o la app abierta). Entonces la notificación va callada
     /// (EstadoCalle.notificacionCallada): sin sonido y pasiva, para que Siri no la lea con la voz del iPhone encima de Alma.
     /// `tipo` (Hub #551, `notif_tipo` del aviso): se arma con los ajustes de su tipo (AjustesNotif.swift, NotifArmar.swift).
     /// Sin tipo (los avisos propios de la app, como la pausa del Modo calle), como antes.
-    func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = [], seDice: Bool = false, tipo: String? = nil) {
+    /// `siNoEsta` (avisos del Hub, Ticket #28): si una con el mismo id ya está en el centro (la trajo el push), no se arma otra.
+    func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = [], seDice: Bool = false, tipo: String? = nil, siNoEsta: Bool = false) {
         guard !texto.isEmpty else { return }
         let clase = AjustesNotif.tipo(tipo)
         let plan = clase.map { AjustesNotif.plan(tipo: $0, ajuste: AjustesNotif.leer()[$0] ?? .deFabrica($0), momento: momentoAhora(seDice: seDice), id: id) }
         if plan?.mostrar == false { return }   // los tres lugares apagados: este tipo no llega
-        conPermiso {
+        let armar: () -> Void = {
             let n = UNMutableNotificationContent()
-            n.title = "Alma"; n.sound = .default; n.threadIdentifier = "alma.retomar"
-            let t = texto.trimmingCharacters(in: .whitespacesAndNewlines)
-            let ls = lineas.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.prefix(3)
-            let tit = titulo.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !ls.isEmpty {
-                if !tit.isEmpty { n.title = "Alma · " + String(tit.prefix(60)) }
-                n.subtitle = String(t.prefix(120))
-                n.body = ls.map { "· " + $0 }.joined(separator: "\n")
-            } else {
-                // Notificación expandible: en el banner se ve el resumen (subtítulo) y al mantenerla presionada se abre el texto completo.
-                let primera = t.components(separatedBy: CharacterSet(charactersIn: ".!?\n")).first ?? t
-                if t.count > 90, !primera.isEmpty, primera.count <= 90 { n.subtitle = primera }
-                n.body = String(t.prefix(1000))
-            }
+            // Notificación expandible: en el banner se ve el resumen (subtítulo) y al mantenerla presionada se abre el texto completo.
+            // Lo mismo que arma la extensión con las push (NotifPush.contenido).
+            let c = NotifPush.contenido(texto: texto, titulo: titulo, lineas: lineas)
+            n.title = c.titulo; n.subtitle = c.subtitulo; n.body = c.cuerpo
+            n.sound = .default; n.threadIdentifier = "alma.retomar"
             if EstadoCalle.notificacionCallada(seDice: seDice) { n.sound = nil; n.interruptionLevel = .passive }
             n.categoryIdentifier = "alma.aviso"; n.userInfo = ["id": id, "seDice": seDice]
             if let clase, let plan { self.publicar(n, id: id, plan: plan, tipo: clase); return }
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: n, trigger: nil))
+        }
+        conPermiso {
+            guard siNoEsta else { armar(); return }
+            UNUserNotificationCenter.current().getDeliveredNotifications { l in
+                let enCentro = Set(l.map { $0.request.identifier })
+                guard NotifPush.mostrarLocal(["id": id], enCentro: enCentro) else { return }
+                DispatchQueue.main.async { armar() }
+            }
         }
     }
 

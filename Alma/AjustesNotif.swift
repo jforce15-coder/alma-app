@@ -130,6 +130,33 @@ enum AjustesNotif {
         return p
     }
 
+    /// Notificación push (Hub, Ticket #28): la arma la extensión (NotifAlma) con la app dormida, porque el Hub solo la manda
+    /// así. La extensión no sabe si el teléfono está bloqueado ni puede esperar al desbloqueo: se toma como bloqueado (lo de
+    /// «solo desbloqueado» sale genérico, como en la web) y lo que no va en la pantalla bloqueada llega pasivo (sin banner ni
+    /// sonido, directo al centro). Tampoco se quita del centro después: la extensión termina al entregarla.
+    static func planPush(tipo: TipoNotif, ajuste a: AjusteNotif, id: String) -> PlanNotif {
+        var p = plan(tipo: tipo, ajuste: a, momento: MomentoNotif(bloqueado: true), id: id)
+        if p.esperarDesbloqueo { p.esperarDesbloqueo = false; p.nivel = .pasiva; p.sonido = false }
+        if p.contenido == .tapado { p.contenido = .generico }
+        p.quitarDelCentro = false
+        return p
+    }
+
+    /// «Probar con Siri» (Ajustes → Notificaciones, Juan 16-nov-2026): una notificación local a los 15 s, armada como mensaje
+    /// de Alma (comunicación), con Siri aunque el tipo no lo tenga encendido y sin depender de dónde esté la app: así Juan
+    /// bloquea el teléfono, se pone los AirPods y oye si los anuncios funcionan. Desde el Hub web (acción notifPrueba) llega
+    /// con el próximo vozAvisos y sale en 1 s.
+    static let textoPrueba = "Prueba: si Siri te lee esto, los anuncios funcionan."
+    static let pruebaEn: TimeInterval = 15
+    static let pruebaDesdeHub: TimeInterval = 1
+    static let idPrueba = "alma.prueba.siri"
+    static func planPrueba() -> PlanNotif {
+        var p = PlanNotif()
+        p.siri = true; p.nivel = .urgente; p.sonido = true; p.contenido = .completo
+        p.hilo = "alma.prueba"; p.esperarDesbloqueo = false; p.quitarDelCentro = false
+        return p
+    }
+
     /// Lo que se guarda para la próxima vez (JSON de lo que mandó el Hub; nil si no vino nada).
     static func paraGuardar(_ hub: Any?) -> Data? {
         guard let d = hub as? [String: Any], !d.isEmpty, JSONSerialization.isValidJSONObject(d) else { return nil }

@@ -100,7 +100,9 @@ final class Conferencia {
         }
     }
 
-    var resumen: [String: Any] { ["tipo": "conferencia", "activa": activa, "voces": reunion, "minutos": activa ? Int(Date().timeIntervalSince(inicio) / 60) : 0, "mudo": mudo] }
+    /// `musica`: «Bajar la música cuando Alma hable» (AudioCalle; apagado de fábrica en conferencia), para pintar Ajustes.
+    var resumen: [String: Any] { ["tipo": "conferencia", "activa": activa, "voces": reunion, "minutos": activa ? Int(Date().timeIntervalSince(inicio) / 60) : 0, "mudo": mudo,
+                                  "musica": AudioCalle.bajaConferenciaAhora] }
 
     func poner(_ on: Bool) { if on { encender() } else { apagar() } }
 

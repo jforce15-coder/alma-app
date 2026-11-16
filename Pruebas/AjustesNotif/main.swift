@@ -88,5 +88,14 @@ p = plan(.huespedes, a, bloq)
 revisa(p.siri && !p.esperarDesbloqueo, "con Siri encendido, sale ya aunque no vaya en la pantalla bloqueada (Siri la anuncia al llegar)")
 revisa(!plan(.equipo, aj[.equipo]!, bloq).siri, "lo apagado no lo anuncia nadie")
 
+// MARK: - «Probar con Siri» (Juan, 16-nov-2026)
+
+let pp = AjustesNotif.planPrueba()
+revisa(pp.siri && pp.mostrar && pp.contenido == .completo, "la prueba siempre va por el camino de Siri, completa (aunque el tipo no tenga Siri)")
+revisa(!pp.esperarDesbloqueo && !pp.quitarDelCentro && pp.sonido, "la prueba sale aunque el teléfono esté bloqueado, suena y se queda en el centro")
+revisa(pp.hilo != AjustesNotif.hiloDeSiempre, "la prueba va en su propio hilo, no se mezcla con los avisos")
+revisa(AjustesNotif.pruebaEn == 15 && AjustesNotif.textoPrueba == "Prueba: si Siri te lee esto, los anuncios funcionan.", "a los 15 s, con el texto que pidió Juan")
+revisa(AjustesNotif.pruebaDesdeHub > 0 && AjustesNotif.pruebaDesdeHub < AjustesNotif.pruebaEn, "la que pide el Hub web sale al llegar (iOS pide más de 0 s)")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")

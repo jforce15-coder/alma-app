@@ -15,6 +15,9 @@ import WebKit
 ///   { accion: "avisos", que, tipo, nivel, por } → niveles de las notificaciones → AlmaAvisos.evento({ hablado, telefono })
 ///   { accion: "navegador", pos }             → Alma se llevó a una de las 8 posiciones: barra de búsqueda lista ("" = volvió al centro)
 ///   { accion: "atajos", que, nombre, on }   → Atajos permitidos (AtajosIOS.swift) → AlmaAtajos.evento({ lista, todos })
+///   { accion: "notif", que: "probarSiri" }  → «Probar con Siri» (NotifArmar.swift) → AlmaNotif.evento({ tipo: "prueba", ok, en, error })
+///   { accion: "fotosContactos", numeros }   → la foto de los Contactos del iPhone solo de esos números (FotosContactosIOS.swift, Hub #567 T4) → AlmaFotosCt.evento({ permiso, fotos })
+///   { accion: "anilloBle" }                  → abre el Diagnóstico del anillo (Bluetooth) (DiagnosticoAnillo.swift)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
     static let nombre = "alma"
@@ -40,6 +43,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             Llavero.borrar()
         case "anillo":
             anillo(d)
+        case "anilloBle":   // Ajustes → Alma con el anillo → «Diagnóstico del anillo (Bluetooth)» (DiagnosticoAnillo.swift): pantalla nativa
+            NotificationCenter.default.post(name: .abrirDiagnosticoAnillo, object: nil)
         case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" } · { que: "mudo", on }
             let c = Conferencia.shared
             c.alEvento = { [weak self] e in self?.responder("AlmaConf.evento", [e]) }
@@ -47,6 +52,7 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             case "on": c.poner(true)
             case "off": c.poner(false)
             case "mudo": c.silenciar((d["on"] as? Bool) ?? false)   // el botón del micrófono: deja de oír sin apagar el modo
+            case "musica": UserDefaults.standard.set((d["on"] as? Bool) ?? false, forKey: AudioCalle.claveConferencia)   // «Bajar la música cuando Alma hable»
             default: break
             }
             responder("AlmaConf.evento", [c.resumen])
@@ -64,6 +70,7 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             case "off": m.poner(false)  // apaga de verdad: detector, micrófono, audio de fondo y el aviso que se está diciendo
             case "ahora": m.escucharAhora()
             case "probar": m.probar((d["on"] as? Bool) ?? false)   // «Probar el Modo calle»: el estado y la fuerza del detector cada segundo
+            case "musica": UserDefaults.standard.set((d["on"] as? Bool) ?? true, forKey: AudioCalle.claveCalle)   // «Bajar la música cuando Alma hable» (AudioCalle)
             case "calibrar": m.calibrar(linea: d["linea"] as? String, umbral: (d["umbral"] as? NSNumber)?.doubleValue, puntaje: (d["puntaje"] as? NSNumber)?.doubleValue)
             default: m.retomarAlAbrir()   // «estado» al cargar la página: si Juan lo dejó encendido, vuelve; si no, queda apagado
             }
@@ -86,6 +93,13 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             default: break
             }
             responder("AlmaAtajos.evento", [AtajosPermitidos.resumen])
+        case "notif":   // Ajustes → Notificaciones → «Probar con Siri»: a los 15 s, como mensaje de Alma, para oír si Siri la anuncia
+            guard (d["que"] as? String) == "probarSiri" else { return }
+            Notificaciones.shared.probarSiri { [weak self] ok, error in
+                self?.responder("AlmaNotif.evento", [["tipo": "prueba", "ok": ok, "en": Int(AjustesNotif.pruebaEn), "error": error ?? ""]])
+            }
+        case "fotosContactos":   // la bandeja del Hub: los números sin foto → la foto del contacto que coincide (FotosContactosIOS.swift, Hub #567 T4)
+            FotosContactosLector.shared.buscar(d["numeros"] as? [Any] ?? []) { [weak self] r in self?.responder("AlmaFotosCt.evento", [r]) }
         case "health":   // Health es nativo (Health/SaludVista.swift): se abre encima de la página
             NotificationCenter.default.post(name: .abrirSalud, object: nil)
             responder("AlmaHealth.abierto", [true])
