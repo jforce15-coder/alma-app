@@ -77,6 +77,30 @@ enum EstadoCalle {
     /// quedan intentos. Sin internet, de una vez lo de respaldo (en un aviso, la señal de Alma; nunca la voz del iPhone).
     static func reintentarVoz(sinRed: Bool, quedan: Int) -> Bool { !sinRed && quedan > 0 }
 
+    /// La voz de Alma que se sabe que falla (Juan, 16-nov-2026: la llave sin el permiso «Text to Speech»): el Hub lo dice con
+    /// `vozPausa` (en «calle») o `pausa` (en «calleVoz»). Entonces, por `pausaVoz` s, la app no la vuelve a pedir con calleVoz
+    /// (otra vuelta al Hub de 2 a 4 s antes de hablar): habla de una vez con la voz de respaldo y el motivo queda anotado.
+    static let pausaVoz = 300.0
+    static func pausarVoz(_ j: [String: Any]?) -> Bool { (j?["vozPausa"] as? Bool) == true || (j?["pausa"] as? Bool) == true }
+    static func vozEnPausa(hasta: Date, ahora: Date) -> Bool { ahora < hasta }
+
+    /// El cronómetro que trae la respuesta del Hub (`ms`, calle.js), en una línea para el diagnóstico:
+    /// «Hub: 6,2 s (IA 4,1 s en 1 vuelta · voz 0,8 s · rapido)». nil si no vino.
+    static func cronometro(_ ms: [String: Any]?) -> String? {
+        guard let ms, let total = (ms["total"] as? NSNumber)?.doubleValue else { return nil }
+        let s = { (v: Double) in String(format: "%.1f s", v / 1000).replacingOccurrences(of: ".", with: ",") }
+        var partes: [String] = []
+        if let ia = (ms["ia"] as? NSNumber)?.doubleValue, ia > 0 {
+            let n = (ms["vueltas"] as? NSNumber)?.intValue ?? 0
+            partes.append("IA " + s(ia) + (n > 0 ? " en \(n) " + (n == 1 ? "vuelta" : "vueltas") : ""))
+        }
+        if let h = (ms["herr"] as? NSNumber)?.doubleValue, h > 0 { partes.append("herramientas " + s(h)) }
+        if let r = (ms["resto"] as? NSNumber)?.doubleValue, r > 0 { partes.append("hojas y lo demás " + s(r)) }
+        if let v = (ms["voz"] as? NSNumber)?.doubleValue, v > 0 { partes.append("voz " + s(v)) }
+        if let via = ms["via"] as? String, !via.isEmpty { partes.append(via) }
+        return "Hub: " + s(total) + (partes.isEmpty ? "" : " (" + partes.joined(separator: " · ") + ")")
+    }
+
     /// Los errores de URLSession que son «no hay internet» (no «tardó»): sin red, sin datos, avión, el host no se encuentra.
     static func esSinRed(_ codigo: Int) -> Bool {
         [NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorDataNotAllowed, NSURLErrorInternationalRoamingOff,

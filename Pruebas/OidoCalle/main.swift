@@ -223,6 +223,15 @@ do {
     revisa(E.motivo(red: nil, segundos: 25) == "el Hub no contestó en 25 s", "el motivo sin error de red: cuánto se esperó")
     revisa(E.motivo(red: "NSURLErrorDomain -1009", segundos: 3) == "el Hub no contestó (NSURLErrorDomain -1009)", "el motivo con error de red")
     revisa(E.motivo(red: "  ", segundos: 25.4) == "el Hub no contestó en 25 s", "un error vacío no cuenta")
+    // Lo que llega tarde (16-nov-2026: llegó 3 s después de «No me llegó…» y no sonó)
+    revisa(E.tarde(esElUltimo: true, segundos: 3, diciendoNoLlego: true, fase: "hablando", oyoAlgo: false) == .alTerminar, "llega mientras suena «No me llegó…»: se dice al terminarla")
+    revisa(E.tarde(esElUltimo: true, segundos: 3, diciendoNoLlego: false, fase: "oyendo", oyoAlgo: false) == .decir, "llega mientras escucha y Juan no ha dicho nada: se dice")
+    revisa(E.tarde(esElUltimo: true, segundos: 12, diciendoNoLlego: false, fase: "esperando", oyoAlgo: false) == .decir, "llega cuando ya volvió a esperar «Alma»: se dice")
+    revisa(E.tarde(esElUltimo: true, segundos: 3, diciendoNoLlego: false, fase: "oyendo", oyoAlgo: true) == .no, "Juan ya está repitiendo: no se le pisa")
+    revisa(E.tarde(esElUltimo: false, segundos: 3, diciendoNoLlego: false, fase: "esperando", oyoAlgo: false) == .no, "ya pidió otra cosa: no suena")
+    revisa(E.tarde(esElUltimo: true, segundos: E.tardeMax + 1, diciendoNoLlego: false, fase: "esperando", oyoAlgo: false) == .no, "demasiado tarde: queda en el Chat con Alma")
+    revisa(E.tarde(esElUltimo: true, segundos: 3, diciendoNoLlego: false, fase: "llamada", oyoAlgo: false) == .no && E.tarde(esElUltimo: true, segundos: 3, diciendoNoLlego: false, fase: "hablando", oyoAlgo: false) == .no, "en una llamada o diciendo otra cosa: no")
+    revisa(E.plazo + E.tardeMax >= 40, "la petición espera lo bastante para que lo tardío llegue")
 }
 
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallaron.")

@@ -337,6 +337,20 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if estado != .conectando { porAviso = nil; conferencia = nil; return false }
         return true
     }
+    /// Modo calle (Hub #550; Juan, 16-nov-2026): dijo «quiero hablar con Claudio». ModoCalle ya pidió su conversación al Hub
+    /// (vozClaudio, solo el administrador principal); aquí se abre directo con Claudio, sin pasar por Alma: su voz, su saludo
+    /// y el halo naranja. Al colgar vuelve Alma (terminar). false si no pudo empezar (ya hay una llamada o falta la sesión).
+    @discardableResult
+    func hablarConClaudio(ficha: [String: Any]) -> Bool {
+        guard estado == .lista || estado == .apagada, ficha["signed_url"] is String else { return false }
+        desdePantalla = true; textoInicial = nil; conferencia = nil; porAviso = nil
+        agente = .claudio
+        fichaLista = (ficha, Date())   // hablar() la usa en vez de pedir la de Alma
+        paso("Modo calle: abro la llamada con Claudio")
+        hablar()
+        if estado != .conectando { fichaLista = nil; agente = .alma; return false }
+        return true
+    }
     /// Lo que escribes en el chat de la roca, durante la conversación.
     func escribir(_ t: String) {
         guard estado == .hablando, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }

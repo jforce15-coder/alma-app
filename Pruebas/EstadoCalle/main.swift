@@ -59,5 +59,17 @@ revisa(!EstadoCalle.vozIphone(donde: "aviso"), "un aviso nunca habla con la voz 
 revisa(EstadoCalle.notificacionCallada(seDice: true), "si Alma dice el aviso, la notificación va sin sonido y pasiva (Siri no la lee encima)")
 revisa(!EstadoCalle.notificacionCallada(seDice: false), "si Alma no lo dice (app cerrada, sin Modo calle), la notificación suena como siempre")
 
+
+// MARK: - Más rápido (16-nov-2026): la voz que se sabe que falla y el cronómetro del Hub
+
+revisa(EstadoCalle.pausarVoz(["vozPausa": true]) && EstadoCalle.pausarVoz(["ok": false, "pausa": true]), "el Hub dice que la voz falla por un rato (calle o calleVoz)")
+revisa(!EstadoCalle.pausarVoz(["vozMotivo": "ElevenLabs respondió 500"]) && !EstadoCalle.pausarVoz(nil), "un error suelto no pausa")
+let ya = Date(timeIntervalSince1970: 1_000)
+revisa(EstadoCalle.vozEnPausa(hasta: ya.addingTimeInterval(EstadoCalle.pausaVoz), ahora: ya.addingTimeInterval(60)), "en pausa: no se vuelve a pedir la voz al Hub")
+revisa(!EstadoCalle.vozEnPausa(hasta: ya.addingTimeInterval(EstadoCalle.pausaVoz), ahora: ya.addingTimeInterval(EstadoCalle.pausaVoz + 1)), "a los 5 min se vuelve a probar")
+revisa(EstadoCalle.cronometro(["total": 6200, "ia": 4100, "vueltas": 1, "voz": 800, "resto": 900, "herr": 0, "via": "rapido"]) == "Hub: 6,2 s (IA 4,1 s en 1 vuelta · hojas y lo demás 0,9 s · voz 0,8 s · rapido)", "el cronómetro en una línea para el diagnóstico")
+revisa(EstadoCalle.cronometro(["total": 900, "via": "sin IA"]) == "Hub: 0,9 s (sin IA)", "una frase de prueba: sin IA")
+revisa(EstadoCalle.cronometro(nil) == nil && EstadoCalle.cronometro(["via": "x"]) == nil, "un Hub viejo sin cronómetro: nada")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")
