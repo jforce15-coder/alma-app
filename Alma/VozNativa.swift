@@ -1081,6 +1081,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if let pa = porAviso { b["aviso_id"] = pa.id }   // Alma abre (Hub #509 T4): ese aviso cuenta como dicho, no el saludo de retomar
         idLlamada = id; b["pantalla"] = pantallaVisible   // tarjeta de la llamada: con el teléfono bloqueado no se muestra
         b["tablero"] = "estado"   // Hub #508: esta app deja el tablero por estado (se queda y se reemplaza; puede volver a lo ya visto)
+        b["tipos"] = TarjetaVoz.tipos   // Hub #508 Fase 2: los tipos que esta app pinta (un tipo nuevo, como «socio», sale en pantalla solo si va aquí)
         vigilarPantalla()
         r.httpBody = try? JSONSerialization.data(withJSONObject: b)
         let llamada = inicioLlamada
