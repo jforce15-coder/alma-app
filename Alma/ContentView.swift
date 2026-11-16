@@ -77,7 +77,9 @@ struct ContentView: View {
                 roca.web.isHidden = nav.esSpacio
                 roca.alToques = { n in tocaron(n) }
                 nav.puntoRoca = { puntoRoca() }
+                abrirChatOrbita()   // la app se abrió tocando una notificación
             }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirChatOrbita)) { _ in abrirChatOrbita() }
     }
 
     private var textoActivo: Bool { nav.campo != nil || nav.escribiendo }
@@ -118,6 +120,15 @@ struct ContentView: View {
         let tapada = llamada.wrappedValue
         llamadaOculta = true; captura = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + (tapada ? 0.5 : 0.05)) { almaAbierta = true }
+    }
+
+    /// Tocaron una notificación de un anillo o un tema (Hub #583 T1.3): el inicio y el chat de la roca con ese id, el mismo
+    /// camino que tocar el anillo (SANav.chat con orbita). La pantalla de la llamada se baja para que se vea el chat.
+    private func abrirChatOrbita() {
+        guard let p = Notificaciones.porAbrir else { return }
+        Notificaciones.porAbrir = nil
+        llamadaOculta = true
+        nav.alInicio(NotifPush.abrirChatJS(orbita: p.orbita, texto: p.texto))
     }
 
     /// Se cerró el chat. Si lo abrió la voz, la llamada cuelga y la app queda en el inicio (escuchando como siempre).

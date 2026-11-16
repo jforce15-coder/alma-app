@@ -9,6 +9,8 @@ import Foundation
 ///   · Sin duplicados: el aviso que salió por push llega a la app con `push: true` y la app no arma otra; además push y local
 ///     usan el mismo identificador (el id del aviso, `collapse_id` en OneSignal) y la app no arma una que ya esté en el centro.
 ///   · Sin datos del Hub (sin `alma`): la extensión deja el push tal cual.
+///   · Al tocarla (Hub #583 T1.3): si habla de un anillo o un tema, trae su id (`orbita`: «mp…», «es…», «ob…», «tm…») y la app
+///     abre el chat de la roca con ese id, el mismo camino que tocar el anillo en el inicio (SANav.chat con orbita).
 struct DatosPush: Equatable {
     var id: String
     var tipo: TipoNotif
@@ -16,6 +18,7 @@ struct DatosPush: Equatable {
     var prueba = false
     var titulo = ""
     var lineas: [String] = []
+    var orbita = ""
 }
 
 /// Cómo se ve una notificación de Alma: título, subtítulo y cuerpo (lo mismo con push y local).
@@ -35,7 +38,42 @@ enum NotifPush {
         x.prueba = (d["prueba"] as? Bool) == true
         x.titulo = (d["titulo"] as? String) ?? ""
         x.lineas = ((d["lineas"] as? [Any]) ?? []).compactMap { $0 as? String }
+        x.orbita = idOrbita(d["orbita"] as? String) ?? ""
         return x
+    }
+
+    /// Un id de anillo o de tema como los manda el Hub (orbita.js, ORBITA_ID_RE_): «mp», «es», «ob» o «tm» y letras o
+    /// números. Cualquier otra cosa, nil (nunca va al chat ni a la página).
+    static func idOrbita(_ s: String?) -> String? {
+        guard let s = s?.trimmingCharacters(in: .whitespaces), (4...82).contains(s.count),
+              ["mp", "es", "ob", "tm"].contains(String(s.prefix(2))),
+              s.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) && $0.isASCII }) else { return nil }
+        return s
+    }
+
+    /// Al tocar una notificación: el id del anillo o del tema del que habla. Local: `orbita` en userInfo (Notificaciones.mostrar);
+    /// push: `data.alma.orbita` (en `custom.a` o arriba). nil si no habla de uno.
+    static func orbita(_ userInfo: [AnyHashable: Any]) -> String? {
+        if let o = idOrbita(userInfo["orbita"] as? String) { return o }
+        let a = (userInfo["custom"] as? [String: Any])?["a"] as? [String: Any]
+        let d = (a?["alma"] ?? userInfo["alma"]) as? [String: Any]
+        return idOrbita(d?["orbita"] as? String)
+    }
+
+    /// Lo que se le pregunta a Alma al abrir el chat desde la notificación (como al tocar el anillo: «¿Qué pasó con «X»?»).
+    static func pregunta(titulo: String) -> String {
+        let t = titulo.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return "¿Qué pasó con esto? Cuéntame qué se hizo y en qué estado quedó." }
+        return "¿Qué pasó con «" + String(t.prefix(60)) + "»? Cuéntame qué se hizo y en qué estado quedó."
+    }
+
+    /// El JavaScript que abre el chat de la roca con ese id (SANav.chat({ texto, orbita }), js/sa-nav.js). Si la página aún
+    /// no está lista, reintenta cada medio segundo hasta 15 s. "" si no se puede armar.
+    static func abrirChatJS(orbita: String, texto: String) -> String {
+        guard let o = idOrbita(orbita), let data = try? JSONSerialization.data(withJSONObject: ["texto": texto, "orbita": o], options: [.sortedKeys]),
+              let j = String(data: data, encoding: .utf8) else { return "" }
+        let seguro = j.replacingOccurrences(of: "\u{2028}", with: "\\u2028").replacingOccurrences(of: "\u{2029}", with: "\\u2029")
+        return "(function(o,n){function f(){try{if(window.SANav&&SANav.chat&&SANav.chat(o))return}catch(e){}if(--n>0)setTimeout(f,500)}f()})(" + seguro + ",30)"
     }
 
     /// El plan del push: la prueba siempre con Siri; lo demás con el ajuste de su tipo y la app dormida (AjustesNotif.planPush).

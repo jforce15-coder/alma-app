@@ -85,5 +85,23 @@ revisa(NotifPush.avisaQueDuerme(calle: false, conferencia: false, anillo: false)
 revisa(!NotifPush.avisaQueDuerme(calle: true, conferencia: false, anillo: false) && !NotifPush.avisaQueDuerme(calle: false, conferencia: true, anillo: false)
        && !NotifPush.avisaQueDuerme(calle: false, conferencia: false, anillo: true), "con Modo calle, conferencia o el anillo sigue despierta: no avisa")
 
+// MARK: - Al tocarla: el chat con el id del anillo o del tema (Hub #583 T1.3)
+
+let conId: [String: Any] = ["id": "av9", "tipo": "socios", "aj": aj, "titulo": "Cupos Google", "orbita": "mpmpcupos1"]
+let pushViejo: [AnyHashable: Any] = ["custom": ["a": ["alma": conId]]], pushNuevo: [AnyHashable: Any] = ["alma": conId]
+revisa(NotifPush.datos(pushViejo)?.orbita == "mpmpcupos1" && NotifPush.orbita(pushViejo) == "mpmpcupos1" && NotifPush.orbita(pushNuevo) == "mpmpcupos1",
+       "el push trae el id del anillo en data.alma (en los dos formatos de OneSignal)")
+revisa(NotifPush.orbita(["id": "av1", "orbita": "tm123abc"]) == "tm123abc", "la local lo lleva en userInfo")
+revisa(NotifPush.orbita(viejo) == nil && NotifPush.datos(viejo)?.orbita == "" && NotifPush.orbita(["orbita": ""]) == nil, "sin id (un aviso suelto), nada: se abre la app como siempre")
+revisa(NotifPush.idOrbita("xx123") == nil && NotifPush.idOrbita("mp\"><script>") == nil && NotifPush.idOrbita("mp") == nil && NotifPush.idOrbita("es-1") == nil
+       && NotifPush.idOrbita("ob" + String(repeating: "a", count: 90)) == nil && NotifPush.idOrbita("esesc1") == "esesc1" && NotifPush.idOrbita("obk2x91") == "obk2x91",
+       "solo ids del Hub («mp», «es», «ob», «tm» y letras o números): lo demás nunca llega a la página")
+revisa(NotifPush.pregunta(titulo: "Cupos Google") == "¿Qué pasó con «Cupos Google»? Cuéntame qué se hizo y en qué estado quedó."
+       && NotifPush.pregunta(titulo: " ").hasPrefix("¿Qué pasó con esto?"), "la pregunta, como la del anillo (con su nombre si lo trae)")
+let js = NotifPush.abrirChatJS(orbita: "mpmpcupos1", texto: "¿Qué pasó con «Cupos \"Google\"»?")
+revisa(js.contains("SANav.chat(o)") && js.contains("\"orbita\":\"mpmpcupos1\"") && js.contains("\\\"Google\\\"") && js.hasSuffix(",30)"),
+       "el JavaScript llama a SANav.chat con texto y orbita (en JSON, las comillas escapadas) y reintenta mientras carga")
+revisa(NotifPush.abrirChatJS(orbita: "malo", texto: "x") == "", "con un id raro no arma nada")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")
