@@ -969,6 +969,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// el dictado y la voz de las páginas (que la piden por el puente: suena igual aunque la página esté tomando el micrófono).
     func sonar(_ n: String) { if n == "alma-inicio" || n == "alma-fin" { sonido(n) } }
     func senal() { sonido("alma-inicio") }
+    /// ¿Está sonando una señal (inicio o despedida)? El modo conferencia espera a que termine antes de volver a escuchar.
+    var senalSonando: Bool { campanas.values.contains { $0.isPlaying } }
 
     /// Los sonidos de Alma (Recursos/Sonidos): calma primero, tecnología después.
     private func sonido(_ n: String, llamada: Bool = false) {
@@ -1070,7 +1072,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let pasarAConferencia = aConferencia && (estado == .hablando || estado == .conectando); aConferencia = false
         let charla = pasarAConferencia ? charlaReciente : []   // de qué se hablaba: el modo conferencia lo lleva de contexto
         pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; inicioEnviado = false; antesDeFicha = []; mudo = false; enChat = false; player.volume = 1
-        let habia = estado == .hablando || estado == .conectando, enConferencia = conferencia != nil
+        let habia = estado == .hablando || estado == .conectando
         relojEspera?.invalidate(); relojEspera = nil; espera = nil
         conferencia = nil; textoInicial = nil; alOir = false; pantalla = nil; vistaPendiente = nil; porAviso = nil
         cambiando = false; volviendo = false
@@ -1083,7 +1085,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         player.stop()
         if modoAnillo || unRato { player.play() }   // el micrófono sigue listo para el próximo doble toque
         else { engine.inputNode.removeTap(onBus: 0); if engine.isRunning { engine.stop() } }
-        if habia { if !enConferencia { sonido("alma-fin") }; fichaLista = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.buscarAvisos() } }
+        // La señal de salida suena siempre, igual que la de entrada (también en conferencia): así se sabe que Alma colgó
+        // o se desconectó (Juan, 16-nov-2026, Hub #575).
+        if habia { sonido("alma-fin"); fichaLista = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.buscarAvisos() } }
         estado = .apagada
         if agente != .alma { agente = .alma }   // colgó con Claudio: vuelve el halo de Alma (después de «apagada»: la página ya cerró la llamada)
         if modoAnillo || unRato { quedarLista(); DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in self?.fichaLista = nil; self?.precargarSiToca() } }
