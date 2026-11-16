@@ -9,7 +9,9 @@ import UIKit
 ///   · El Hub decide con los primeros minutos: una persona → dictado (el audio se borra sin subirse); varias → reunión:
 ///     se suben las partes (también las de antes) y ElevenLabs las transcribe distinguiendo las voces.
 ///   · Si alguien dice «Alma, …», se enciende la llamada real con la señal, con lo último que se dijo como contexto; si solo
-///     dijeron «Alma», ella contesta con un saludo corto y natural. Alma responde y, al colgar, vuelve a escuchar sola.
+///     dijeron «Alma», ella contesta con un saludo corto y natural. Alma responde y se queda en la llamada (conversación
+///     continua, LlamadaContinua.swift): se le puede seguir hablando sin decir «Alma». Tras un silencio la app cierra sola
+///     esa llamada, sin despedida, y vuelve a escuchar aquí; lo hablado con Alma queda de contexto para la próxima vez.
 ///   · Escuchar no le quita el sonido a las otras apps (la sesión se mezcla); solo la llamada real lo toma. El micrófono queda
 ///     encendido entre tramos: solo se cambia el reconocimiento.
 ///   · Encendida por «Alma» en el Modo Inicio: se apaga sola a los 7 min sin «Alma» y al salir de la app. Encendida con el
@@ -380,6 +382,9 @@ final class Conferencia {
                 self.enLlamada = false; self.reloj?.invalidate()
                 // Encendida por «Alma» y la app quedó en segundo plano durante la llamada: no sigue escuchando.
                 if self.porVoz && UIApplication.shared.applicationState == .background { self.apagar(); return }
+                // Conversación continua (LlamadaContinua.swift): lo que se habló con Alma queda en lo último que se dijo; si la
+                // vuelven a nombrar, sabe de qué iban.
+                self.reciente = LlamadaContinua.contexto(self.reciente, charla: VozNativa.shared.charlaReciente)
                 self.escuchar(); self.armarApagado(); self.emitir()
             }
         }

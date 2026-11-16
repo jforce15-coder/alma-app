@@ -132,6 +132,15 @@ jobs:
           xcrun swiftc Alma/AnilloVuelve.swift Pruebas/AnilloVuelve/main.swift -o /tmp/anillo-vuelve
           /tmp/anillo-vuelve
 
+      # Conversación continua (Juan, 16-nov-2026: «se corta en automático»): en el Modo calle y en conferencia Alma no cuelga;
+      # la app cierra sola tras un silencio, la llamada normal se reabre si su conexión se cae y, si Claudio no conecta,
+      # vuelve Alma. Lógica pura.
+      - name: Probar la conversación continua
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/LlamadaContinua.swift Alma/SuenoCalle.swift Pruebas/LlamadaContinua/main.swift -o /tmp/llamada-continua
+          /tmp/llamada-continua
+
       # La foto del contacto (Hub #567 T4): solo los números que pide el Hub (máximo 40, sin repetir), coincide por los últimos
       # 8 dígitos y gana el que comparte más (empate: ninguno), recorte cuadrado de 256 px o menos y el permiso. Lógica pura.
       - name: Probar la foto del contacto

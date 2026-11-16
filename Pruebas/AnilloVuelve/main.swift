@@ -46,7 +46,10 @@ revisa(l[3] == "10:02:00 Alma lo puso en el chat: …", "lo que Alma puso en el 
 revisa(l[4].hasPrefix("10:03:00 Ya hablabas al conectar (0.4 s)"), "lo técnico queda igual")
 revisa(!l[5].contains("@") && l[5].contains("(correo)") && l[5].contains("«…»"), "sin correos ni lo que va entre «»")
 revisa(!l[6].contains("http") && l[6].contains("(1006)"), "sin enlaces; el código del error se queda")
-revisa(PasosAnillo.limpiar([String](repeating: "x", count: 40)).count == PasosAnillo.maximo, "como mucho 14 por vez")
+revisa(PasosAnillo.limpiar([String](repeating: "x", count: 40)).count == PasosAnillo.maximo, "como mucho 30 por vez")
+let muchos = (0..<70).map { "10:00:\($0) paso \($0)" }
+revisa(PasosAnillo.nuevos(muchos, ultimoEnviado: nil) == Array(muchos.prefix(30)), "una llamada larga va por tandas, empezando por lo más viejo (ahí está el porqué de un corte)")
+revisa(PasosAnillo.nuevos(muchos, ultimoEnviado: muchos[29]) == Array(muchos[30..<60]) && PasosAnillo.nuevos(muchos, ultimoEnviado: muchos[59]) == Array(muchos[60...]), "la siguiente vuelta sigue donde quedó, sin perder ninguno")
 revisa(PasosAnillo.limpiar([String(repeating: "a", count: 400)])[0].count == PasosAnillo.largo, "cada paso, corto")
 
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
