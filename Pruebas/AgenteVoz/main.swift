@@ -25,15 +25,28 @@ revisa(pa["action"] as? String == "vozWeb" && pa["app"] as? String == "alma" && 
 
 // Cuándo se corta la conversación de antes: después de su frase
 let t0 = Date(timeIntervalSince1970: 1_000)
-revisa(!AgenteVoz.listo(finVoz: t0.addingTimeInterval(2), pedido: t0, ahora: t0.addingTimeInterval(1)), "mientras Alma todavía dice «te paso con Claudio», no se corta")
-revisa(!AgenteVoz.listo(finVoz: t0.addingTimeInterval(1), pedido: t0, ahora: t0.addingTimeInterval(1.2)), "un respiro después de la frase")
-revisa(AgenteVoz.listo(finVoz: t0.addingTimeInterval(1), pedido: t0, ahora: t0.addingTimeInterval(1.4)), "terminó la frase: se cambia")
-revisa(AgenteVoz.listo(finVoz: t0.addingTimeInterval(60), pedido: t0, ahora: t0.addingTimeInterval(6)), "si el audio no avisa, a los 6 s se cambia igual")
+revisa(!AgenteVoz.listo(finVoz: t0.addingTimeInterval(1), pedido: t0, ahora: t0.addingTimeInterval(0.8)), "mientras Alma todavía dice «Te lo paso.», no se corta")
+revisa(!AgenteVoz.listo(finVoz: t0.addingTimeInterval(1), pedido: t0, ahora: t0.addingTimeInterval(1.05)), "un respiro cortito después de la frase")
+revisa(AgenteVoz.listo(finVoz: t0.addingTimeInterval(1), pedido: t0, ahora: t0.addingTimeInterval(1.15)), "terminó la frase: se cambia casi de inmediato (Juan: «que sea más rápido»)")
+revisa(AgenteVoz.listo(finVoz: t0.addingTimeInterval(60), pedido: t0, ahora: t0.addingTimeInterval(3)), "si el audio no avisa, a los 3 s se cambia igual")
+revisa(AgenteVoz.respiro <= 0.15 && AgenteVoz.tope <= 3, "sin respiro largo: el pase no espera")
 
 // Lo que se dice y se ve
 revisa(AgenteVoz.primerMensaje(.claudio, ficha: "Hola, Juan, aquí Claudio. ¿Qué hacemos?") == "Hola, Juan, aquí Claudio. ¿Qué hacemos?", "Claudio saluda con lo que trae su ficha")
-revisa(AgenteVoz.primerMensaje(.claudio, ficha: "").contains("Claudio"), "sin ficha, Claudio igual se presenta")
-revisa(AgenteVoz.primerMensaje(.alma, ficha: "¡Hola, Juan!") == AgenteVoz.vuelta, "al volver, Alma no saluda de nuevo: «Aquí estoy de nuevo»")
+revisa(AgenteVoz.primerMensaje(.claudio, ficha: "") == AgenteVoz.saludoClaudio && AgenteVoz.saludoClaudio.contains("Alma me dijo que me necesitabas"), "sin ficha, Claudio saluda como alguien a quien fueron a llamar")
+revisa(AgenteVoz.primerMensaje(.alma, ficha: "¡Hola, Juan!") == AgenteVoz.vuelta, "al volver con un Hub de antes, Alma no saluda de nuevo: «Aquí estoy de nuevo»")
+revisa(AgenteVoz.primerMensaje(.alma, ficha: "¡Hola, Juan!", cierre: "Listo, quedó pedido lo de cambiar el botón. Si necesitas algo más, aquí estoy.") == "Listo, quedó pedido lo de cambiar el botón. Si necesitas algo más, aquí estoy.", "al volver, Alma cierra con la frase del Hub (lo que hizo Claudio)")
+
+// Alma cierra y cuelga (Juan, 16-nov-2026: «Claudio aparece y se va; cuando se va vuelve Alma y cierra esa interacción»)
+let v0 = Date(timeIntervalSince1970: 5_000)
+let pv = AgenteVoz.pedido(.alma, token: "t", sesion: "s", deClaudio: "conv_c1")
+revisa(pv["vuelta_claudio"] as? String == "conv_c1" && AgenteVoz.pedido(.alma, token: "t", sesion: "s")["vuelta_claudio"] == nil, "al volver, se manda la conversación de Claudio para que el Hub sepa qué hizo")
+revisa(!AgenteVoz.cuelgaTrasVuelta(desde: v0, finVoz: v0.addingTimeInterval(3), juanHablo: nil, ahora: v0.addingTimeInterval(2)), "mientras Alma dice el cierre, no cuelga")
+revisa(!AgenteVoz.cuelgaTrasVuelta(desde: v0, finVoz: v0.addingTimeInterval(3), juanHablo: nil, ahora: v0.addingTimeInterval(5)), "un momento después del cierre, todavía no (Juan puede pedir algo más)")
+revisa(AgenteVoz.cuelgaTrasVuelta(desde: v0, finVoz: v0.addingTimeInterval(3), juanHablo: nil, ahora: v0.addingTimeInterval(7.1)), "cerró y Juan no dijo nada: cuelga")
+revisa(!AgenteVoz.cuelgaTrasVuelta(desde: v0, finVoz: v0.addingTimeInterval(3), juanHablo: v0.addingTimeInterval(5), ahora: v0.addingTimeInterval(30)), "Juan siguió hablando: no cuelga")
+revisa(AgenteVoz.cuelgaTrasVuelta(desde: v0, finVoz: v0.addingTimeInterval(3), juanHablo: v0.addingTimeInterval(-10), ahora: v0.addingTimeInterval(7.1)), "lo que Juan dijo antes de volver (con Claudio) no cuenta")
+revisa(!AgenteVoz.cuelgaTrasVuelta(desde: v0, finVoz: v0.addingTimeInterval(-1), juanHablo: nil, ahora: v0.addingTimeInterval(10)) && AgenteVoz.cuelgaTrasVuelta(desde: v0, finVoz: v0.addingTimeInterval(-1), juanHablo: nil, ahora: v0.addingTimeInterval(20)), "si el audio del cierre nunca llega, cuelga a los 20 s")
 revisa(AgenteVoz.claudio.estadoTexto(habla: true) == "Claudio te responde" && AgenteVoz.alma.estadoTexto(habla: true) == "Alma te responde", "la pantalla dice quién responde")
 if let h = AgenteVoz.claudio.halo { revisa(h.r > 0.9 && h.g > 0.4 && h.g < 0.6 && h.b < 0.2, "el halo de Claudio es naranja") } else { revisa(false, "el halo de Claudio es naranja") }
 revisa(AgenteVoz.alma.halo == nil, "Alma conserva su halo de siempre")

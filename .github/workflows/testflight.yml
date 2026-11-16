@@ -69,6 +69,18 @@ jobs:
           xcrun swiftc Alma/TarjetaLlamada.swift Pruebas/TarjetaLlamada/main.swift -o /tmp/tarjeta-llamada
           /tmp/tarjeta-llamada
 
+      # UNA ROCA (Juan, 16-nov-2026): una sola piedra en toda la app, siempre la misma con distintos tamaños. Solo
+      # Alma/RocaAlma.swift la dibuja (ninguna pantalla pinta su propia esfera con degradado) y su pulso respira siempre,
+      # crece con la voz (Alma, Claudio o tú) y no se congela con un nivel inválido. Lógica pura.
+      - name: Probar una sola roca y su pulso
+        if: env.SUBIR != 'true'
+        run: |
+          if grep -rln "RadialGradient" Alma | grep -v '^Alma/RocaAlma.swift$'; then
+            echo "::error::Solo Alma/RocaAlma.swift dibuja la roca. Usa RocaAlma(diametro:) en vez de pintar otra esfera."; exit 1
+          fi
+          xcrun swiftc Alma/RocaPulso.swift Pruebas/RocaPulso/main.swift -o /tmp/roca-pulso
+          /tmp/roca-pulso
+
       # Modo compañero (Hub #607 T-C1): cuándo se manda al Hub el estado y los subtítulos de la llamada. Lógica pura.
       - name: Probar el modo compañero
         if: env.SUBIR != 'true'

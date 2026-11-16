@@ -43,7 +43,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// todo naranja (la página lo pinta con el evento «agente»; LlamadaVista, con este valor).
     @Published private(set) var agente: AgenteVoz = .alma { didSet { if agente != oldValue { emitir(["tipo": "agente", "agente": agente.rawValue]) } } }
     private var cambiando = false   // pidiendo la conversación del otro agente
-    private var volviendo = false   // la conversación que conecta es Alma que vuelve de Claudio: dice que está de nuevo
+    private var volviendo = false   // la conversación que conecta es Alma que vuelve de Claudio: cierra en una frase
+    private var juanDijo: Date?      // la última vez que Juan dijo algo (para no colgar sobre él tras la vuelta de Claudio)
     struct Linea: Identifiable { let id: Int; let alma: Bool; let texto: String }
     @Published private(set) var lineas: [Linea] = []
     private var campanas: [String: AVAudioPlayer] = [:]
@@ -764,13 +765,17 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let fm = ficha["first_message"] as? String ?? "", idioma = ficha["language"] as? String ?? ""
         let deRoca = desdePantalla, llamada = inicioLlamada, dvListas = dv, abre = porAviso?.datos
         let cambio: AgenteVoz? = self.agente == .claudio || volviendo ? self.agente : nil   // Hablar con Claudio: el saludo de quien entra
+        let cierreVuelta = ficha["vuelta"] as? String ?? "", cuelgaVuelta = (ficha["cerrar_tras_vuelta"] as? Bool) == true   // Alma vuelve de Claudio y cierra
         let espera = max(0, VozNativa.ventanaSaludo - Date().timeIntervalSince(inicioLlamada))
         escuchar()
         DispatchQueue.main.asyncAfter(deadline: .now() + espera) { [weak self] in
             guard let self, self.inicioLlamada == llamada, self.estado == .conectando || self.estado == .hablando, !self.inicioEnviado, self.ws != nil else { return }
             let primero: String
             if let r = reab, self.agente == .alma { primero = r.frase; self.volviendo = false }
-            else if let cambio { primero = AgenteVoz.primerMensaje(cambio, ficha: fm); self.volviendo = false }
+            else if let cambio {
+                primero = AgenteVoz.primerMensaje(cambio, ficha: fm, cierre: cierreVuelta); self.volviendo = false
+                if cambio == .alma, cuelgaVuelta, !cierreVuelta.isEmpty { self.cerrarTrasVuelta() }   // Alma cerró: cuelga si Juan no sigue
+            }
             else if let abre {   // Alma abre (Hub #509 T4): habla primero con la frase del aviso; Juan no la llamó, el ruido no la calla
                 primero = AlmaAbre.primerMensaje(abre, deSiempre: "")
             }
@@ -977,6 +982,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let ev = j["user_transcription_event"] as? [String: Any] ?? [:]
             if let t = ev["user_transcript"] as? String {
                 ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t); Companero.shared.sub(alma: false, t)
+                if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { juanDijo = Date() }
                 if tiemposCierre != nil, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     vozJuanCalle = Date()
                     if SuenoCalle.esCierre(t) { colgarCalle(.cierre) }
@@ -1278,7 +1284,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         paso("Cambiando a " + nuevo.nombre)
         var ficha: [String: Any]?, error: String?
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 15
-        r.httpBody = try? JSONSerialization.data(withJSONObject: AgenteVoz.pedido(nuevo, token: token, sesion: sesion, motivo: motivo))
+        r.httpBody = try? JSONSerialization.data(withJSONObject: AgenteVoz.pedido(nuevo, token: token, sesion: sesion, motivo: motivo, deClaudio: nuevo == .alma ? (idClaudio ?? "") : ""))
         URLSession.shared.dataTask(with: r) { data, _, err in
             let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             DispatchQueue.main.async {
@@ -1296,6 +1302,19 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             guard let f = ficha, AgenteVoz.listo(finVoz: self.finVozAlma, pedido: pedido, ahora: Date()) else { return }
             t.invalidate()
             self.reconectar(nuevo, ficha: f)
+        }
+    }
+
+    /// Alma volvió de Claudio y dijo su frase de cierre: si Juan no dice nada, la app cuelga sola (AgenteVoz.cuelgaTrasVuelta).
+    /// Es un reloj aparte: no toca el cierre por silencio de la conferencia ni del Modo calle.
+    private func cerrarTrasVuelta() {
+        let llamada = inicioLlamada, desde = Date()
+        paso("Alma cerró lo de Claudio: cuelga si no dices nada")
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] t in
+            guard let self, self.inicioLlamada == llamada, self.agente == .alma, self.estado == .hablando || self.estado == .conectando else { t.invalidate(); return }
+            if let j = self.juanDijo, j >= desde { t.invalidate(); self.paso("Seguiste hablando: la llamada sigue"); return }
+            guard AgenteVoz.cuelgaTrasVuelta(desde: desde, finVoz: self.finVozAlma, juanHablo: self.juanDijo, ahora: Date()) else { return }
+            t.invalidate(); self.motivoFin = "volvió de Claudio y Alma cerró la interacción"; self.terminar()
         }
     }
 
