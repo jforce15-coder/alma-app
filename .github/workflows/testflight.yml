@@ -123,6 +123,14 @@ jobs:
           xcrun swiftc Alma/AnilloVuelve.swift Pruebas/AnilloVuelve/main.swift -o /tmp/anillo-vuelve
           /tmp/anillo-vuelve
 
+      # La foto del contacto (Hub #567 T4): solo los números que pide el Hub (máximo 40, sin repetir), coincide por los últimos
+      # 8 dígitos y gana el que comparte más (empate: ninguno), recorte cuadrado de 256 px o menos y el permiso. Lógica pura.
+      - name: Probar la foto del contacto
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/FotosContactos.swift Pruebas/FotosContactos/main.swift -o /tmp/fotos-contactos
+          /tmp/fotos-contactos
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen
