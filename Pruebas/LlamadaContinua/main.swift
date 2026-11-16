@@ -89,6 +89,15 @@ revisa(f.hasPrefix("FICHA\n\nSE CORTÓ LA CONEXIÓN") && f.contains("No saludes"
 revisa(C.ficha("FICHA", frase: C.fraseSinClaudio(conectado: false), charla: [], porClaudio: true).contains("NO SE PUDO SEGUIR CON CLAUDIO") , "si fue por Claudio, lo sabe")
 revisa(!C.ficha("FICHA", frase: "x", charla: [], porClaudio: false).contains("LO ÚLTIMO QUE SE DIJO"), "sin nada dicho, no inventa contexto")
 
+// MARK: - El saludo se oye entero
+
+let s0 = Date(timeIntervalSince1970: 2_000_000)
+revisa(C.protegeSaludo(primero: "Hola, cuéntame.") && !C.protegeSaludo(primero: "  "), "se protege el saludo; si Juan ya hablaba (primer mensaje vacío), no")
+revisa(C.saludoSigue(desde: s0, ahora: s0.addingTimeInterval(1), sono: false, finVoz: .distantPast), "antes de que llegue la voz: protegido (lo del micrófono no la corta)")
+revisa(C.saludoSigue(desde: s0, ahora: s0.addingTimeInterval(2), sono: true, finVoz: s0.addingTimeInterval(3)), "mientras suena el saludo: protegido")
+revisa(!C.saludoSigue(desde: s0, ahora: s0.addingTimeInterval(3.5), sono: true, finVoz: s0.addingTimeInterval(3)), "terminó de sonar: Juan ya puede hablar")
+revisa(!C.saludoSigue(desde: s0, ahora: s0.addingTimeInterval(8), sono: false, finVoz: .distantPast), "si la voz nunca llega, a los 8 s se suelta")
+
 // MARK: - El registro de pasos
 
 var lista: [String] = []

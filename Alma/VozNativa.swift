@@ -75,6 +75,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var pidiendoFicha = false
     private var precarga: Timer?
     private var colaVoz: [String] = []      // lo que dices mientras conecta
+    /// El saludo se oye entero (LlamadaContinua.saludoSigue): desde cuándo se protege (nil: no hay saludo que proteger).
+    private var saludoDesde: Date?
     /// ¿Ya se mandó conversation_initiation_client_data? Antes de eso no va ningún audio al socket (ElevenLabs espera la
     /// ficha primero): tu voz se guarda en colaVoz y se manda justo después (el saludo se decide hasta 1.4 s tarde).
     private var inicioEnviado = false
@@ -651,7 +653,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         inicioLlamada = Date()
         // Un solo micrófono: el Modo Inicio se calla ya (con la ficha pedida de antemano, la llamada abre el suyo enseguida).
         EscuchaInicio.shared.detener()
-        estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0; inicioEnviado = false; antesDeFicha = []
+        estado = .conectando; colaVoz = []; saludoDesde = nil; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0; inicioEnviado = false; antesDeFicha = []
         ultimaLlamada = (0, nil); motivoCalle = nil; reabiertas = 0; reabierta = nil; motivoFin = nil
         weebo = nil; weeboCambio = 0; adaptacion = nil; flechaT?.cancel()
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()
@@ -783,6 +785,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if !idioma.isEmpty { agent["language"] = idioma }
             self.mandar(["type": "conversation_initiation_client_data", "dynamic_variables": dvListas, "conversation_config_override": ["agent": agent]])
             self.inicioEnviado = true
+            // Alma saluda: lo que el micrófono guardó mientras conectaba (el «Alma», la señal, la reunión) no va; si no, ElevenLabs
+            // lo toma como que Juan la interrumpe y el saludo no se oye (solo sale el subtítulo).
+            if LlamadaContinua.protegeSaludo(primero: primero) { self.saludoDesde = Date(); self.colaVoz = []; self.paso("Alma saluda: el micrófono espera a que termine") }
             // Lo que esperaba a la ficha (lo que dijo con «Alma» en la conferencia, la captura): sale ahora, detrás de ella.
             let pendiente = self.antesDeFicha; self.antesDeFicha = []; pendiente.forEach { self.mandar($0) }
             // Si ElevenLabs ya contestó (no debería antes de la ficha), lo dicho mientras tanto se manda ahora, detrás de la ficha.
@@ -846,10 +851,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
            suena más fuerte que su eco (Juan hablándole de verdad); lo demás se manda como silencio. Sin cancelación de
            eco el eco es más fuerte, así que el umbral sube. */
         let suenaAlma = Date() < finVozAlma.addingTimeInterval(0.35)
+        // El saludo se oye entero: mientras suena (o todavía no llega), lo del micrófono va como silencio.
+        let saludando = saludoDesde.map { LlamadaContinua.saludoSigue(desde: $0, ahora: Date(), sono: sono, finVoz: finVozAlma) } ?? false
         /* La señal de la llamada (alma-inicio, ~1 s fuerte) suena por el parlante mientras conecta: si llegaba a ElevenLabs
            como voz, lo tomaba como que Juan interrumpía y cortaba el saludo («Dime, Ju…»). Solo pasa lo que suena más fuerte. */
         let desdeToque = Date().timeIntervalSince(inicioLlamada), suenaSenal = desdeToque >= 0 && desdeToque < VozNativa.finSenal
-        if suenaAlma && rmsTu < (sinEco ? 0.12 : 0.045) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
+        if saludando { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
+        else if suenaAlma && rmsTu < (sinEco ? 0.12 : 0.045) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
         else if suenaSenal && rmsTu < (sinEco ? 0.15 : 0.08) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
         let cap = AVAudioFrameCount(Double(buf.frameLength) * 16000 / buf.format.sampleRate) + 32
         guard let out = AVAudioPCMBuffer(pcmFormat: formatoEntrada, frameCapacity: cap) else { return }
@@ -956,6 +964,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if (rt["tool_name"] as? String ?? "") == "secretaria" { pedirTarjeta(intento: 0) }
             if agente == .claudio, (rt["tool_name"] as? String ?? "").hasPrefix("claudio_") { pedirPanelClaudio(intento: 0) }   // lo que dejó la herramienta de Claudio
         case "interruption":
+            if let d = saludoDesde, Date().timeIntervalSince(d) < LlamadaContinua.topeSaludo { paso("ElevenLabs cortó el saludo (oyó voz)") }
             player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         case "ping":
             let ev = j["ping_event"] as? [String: Any] ?? [:]
@@ -1221,7 +1230,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil
         let pasarAConferencia = aConferencia && (estado == .hablando || estado == .conectando); aConferencia = false
         let charla = pasarAConferencia ? charlaReciente : []   // de qué se hablaba: el modo conferencia lo lleva de contexto
-        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; inicioEnviado = false; antesDeFicha = []; mudo = false; enChat = false; player.volume = 1
+        pausaT?.cancel(); pausaT = nil; pausada = false; cerrarTrasRespuesta = false; colaVoz = []; saludoDesde = nil; inicioEnviado = false; antesDeFicha = []; mudo = false; enChat = false; player.volume = 1
         let habia = estado == .hablando || estado == .conectando
         relojEspera?.invalidate(); relojEspera = nil; espera = nil
         conferencia = nil; textoInicial = nil; alOir = false; pantalla = nil; vistaPendiente = nil; porAviso = nil
