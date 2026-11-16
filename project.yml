@@ -97,7 +97,7 @@ targets:
         NSFaceIDUsageDescription: Para entrar a Alma con Face ID, sin escribir tu contraseña.
         NSHealthShareUsageDescription: Alma lee tus pasos, ritmo cardíaco, sueño y ejercicios de Apple Salud para mostrártelos en Health.
         NSHealthUpdateUsageDescription: Alma no escribe en Apple Salud; solo lee lo que tu reloj, tu anillo o tus apps ya guardaron.
-        NSBluetoothAlwaysUsageDescription: Alma se conecta a tu anillo para leer tu ritmo cardíaco, pasos y sueño, y para que lo uses para llamarla.
+        NSBluetoothAlwaysUsageDescription: Alma se conecta a tu anillo para leer tu ritmo cardíaco, pasos y sueño, para que lo uses para llamarla y, en el diagnóstico, para ver qué manda cuando lo tocas.
         # El anillo sigue conectado con el teléfono bloqueado.
         UIBackgroundModes:
           - bluetooth-central
