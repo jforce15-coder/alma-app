@@ -44,6 +44,8 @@ final class Navegador: NSObject, ObservableObject {
     }
     /// La roca tapa una carga en curso (Portal.swift); se destapa al terminar de cargar.
     var cargaTapada = false
+    /// JavaScript para el inicio en cuanto termine de cargar (Hub #583 T1.3: abrir el chat desde una notificación).
+    private var jsInicio: String?
     /// Dónde está la roca de Alma en la pantalla (lo da ContentView): de ahí sale y ahí vuelve la transición.
     var puntoRoca: (() -> CGPoint?)?
 
@@ -293,7 +295,18 @@ extension Navegador: WKNavigationDelegate {
     }
     private func terminarTirar() { if tirar.isRefreshing { tirar.endRefreshing() } }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { terminarTirar(); destapar() }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        terminarTirar(); destapar()
+        if let js = jsInicio, enInicio { jsInicio = nil; web.evaluateJavaScript(js) }
+    }
+
+    /// Corre `js` en el inicio: ya, si está abierto y cargado; si no, va al inicio y corre al terminar de cargar.
+    func alInicio(_ js: String) {
+        guard !js.isEmpty else { return }
+        if enInicio && !web.isLoading { web.evaluateJavaScript(js); return }
+        jsInicio = js
+        if !enInicio { irAlInicio() }
+    }
     /// iOS cerró el proceso de la página (memoria, o el audio de la voz en la página): se vuelve a cargar sola en vez de
     /// quedar en blanco o parecer que la app se cerró. Queda anotado en Ajustes («voz_ultimo_error»).
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

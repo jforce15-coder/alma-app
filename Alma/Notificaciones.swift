@@ -37,7 +37,8 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
     /// `tipo` (Hub #551, `notif_tipo` del aviso): se arma con los ajustes de su tipo (AjustesNotif.swift, NotifArmar.swift).
     /// Sin tipo (los avisos propios de la app, como la pausa del Modo calle), como antes.
     /// `siNoEsta` (avisos del Hub, Ticket #28): si una con el mismo id ya está en el centro (la trajo el push), no se arma otra.
-    func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = [], seDice: Bool = false, tipo: String? = nil, siNoEsta: Bool = false) {
+    /// `orbita` (Hub #583 T1.3): el id del anillo o del tema del que habla; al tocarla se abre el chat con ese id.
+    func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = [], seDice: Bool = false, tipo: String? = nil, siNoEsta: Bool = false, orbita: String? = nil) {
         guard !texto.isEmpty else { return }
         let clase = AjustesNotif.tipo(tipo)
         let plan = clase.map { AjustesNotif.plan(tipo: $0, ajuste: AjustesNotif.leer()[$0] ?? .deFabrica($0), momento: momentoAhora(seDice: seDice), id: id) }
@@ -51,6 +52,7 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
             n.sound = .default; n.threadIdentifier = "alma.retomar"
             if EstadoCalle.notificacionCallada(seDice: seDice) { n.sound = nil; n.interruptionLevel = .passive }
             n.categoryIdentifier = "alma.aviso"; n.userInfo = ["id": id, "seDice": seDice]
+            if let o = NotifPush.idOrbita(orbita) { n.userInfo["orbita"] = o; n.userInfo["titulo"] = titulo }
             if let clase, let plan { self.publicar(n, id: id, plan: plan, tipo: clase); return }
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: n, trigger: nil))
         }
@@ -62,6 +64,23 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
                 DispatchQueue.main.async { armar() }
             }
         }
+    }
+
+    /// Tocar la notificación (Hub #583 T1.3): si habla de un anillo o un tema, queda pedida la apertura del chat con su id
+    /// (ContentView la toma: al inicio y SANav.chat con orbita, lo mismo que tocar el anillo). Push o local, igual.
+    /// Con la app cerrada iOS la entrega al abrir: por eso queda guardada en `porAbrir` hasta que la pantalla la tome.
+    static var porAbrir: (orbita: String, texto: String)?
+    func userNotificationCenter(_ c: UNUserNotificationCenter, didReceive r: UNNotificationResponse, withCompletionHandler fin: @escaping () -> Void) {
+        let u = r.notification.request.content.userInfo
+        if r.actionIdentifier != UNNotificationDismissActionIdentifier, let o = NotifPush.orbita(u) {
+            let titulo = NotifPush.datos(u)?.titulo ?? (u["titulo"] as? String ?? "")
+            let texto = NotifPush.pregunta(titulo: titulo)
+            DispatchQueue.main.async {
+                Notificaciones.porAbrir = (o, texto)
+                NotificationCenter.default.post(name: .abrirChatOrbita, object: nil)
+            }
+        }
+        fin()
     }
 
     /// El número del ícono: temas por retomar.
@@ -84,4 +103,9 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
         if (u["seDice"] as? Bool) == true { fin([.list]); return }
         fin([.banner, .sound, .list])
     }
+}
+
+extension Notification.Name {
+    /// Tocaron una notificación de un anillo o un tema (Hub #583 T1.3): ContentView abre el chat con ese id.
+    static let abrirChatOrbita = Notification.Name("alma.notif.abrirChat")
 }
