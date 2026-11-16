@@ -18,6 +18,7 @@ import WebKit
 ///   { accion: "notif", que: "probarSiri" }  → «Probar con Siri» (NotifArmar.swift) → AlmaNotif.evento({ tipo: "prueba", ok, en, error })
 ///   { accion: "fotosContactos", numeros }   → la foto de los Contactos del iPhone solo de esos números (FotosContactosIOS.swift, Hub #567 T4) → AlmaFotosCt.evento({ permiso, fotos })
 ///   { accion: "anilloBle" }                  → abre el Diagnóstico del anillo (Bluetooth) (DiagnosticoAnillo.swift)
+///   { accion: "dispositivos" }               → abre Dispositivos: el anillo y los lentes (Dispositivos.swift)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
     static let nombre = "alma"
@@ -43,6 +44,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             Llavero.borrar()
         case "anillo":
             anillo(d)
+        case "dispositivos":   // Ajustes → «Dispositivos» (Dispositivos.swift): el anillo y los lentes, pantalla nativa
+            NotificationCenter.default.post(name: .abrirDispositivos, object: nil)
         case "anilloBle":   // Ajustes → Alma con el anillo → «Diagnóstico del anillo (Bluetooth)» (DiagnosticoAnillo.swift): pantalla nativa
             NotificationCenter.default.post(name: .abrirDiagnosticoAnillo, object: nil)
         case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" } · { que: "mudo", on }
