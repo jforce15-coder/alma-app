@@ -18,7 +18,8 @@ extension Notificaciones {
                      calle: ModoCalle.shared.encendido, bloqueado: !UIApplication.shared.isProtectedDataAvailable, seDice: seDice)
     }
 
-    func publicar(_ n: UNMutableNotificationContent, id: String, plan p: PlanNotif, tipo: TipoNotif) {
+    func publicar(_ n: UNMutableNotificationContent, id: String, plan p: PlanNotif, tipo: TipoNotif, trigger: UNNotificationTrigger? = nil,
+                  listo: ((Error?) -> Void)? = nil) {
         n.threadIdentifier = p.hilo
         n.sound = p.sonido ? .default : nil
         n.interruptionLevel = p.nivel == .pasiva ? .passive : (p.nivel == .urgente ? .timeSensitive : .active)
@@ -30,9 +31,37 @@ extension Notificaciones {
         if p.contenido != .completo { n.title = "Alma"; n.subtitle = ""; n.body = AjustesNotif.generico }
         let salida: UNNotificationContent = p.siri ? (comunicacion(n) ?? n) : n
         if p.esperarDesbloqueo { AlDesbloquear.shared.poner(id: id, contenido: salida, quitar: p.quitarDelCentro); return }
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: salida, trigger: nil)) { _ in
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: salida, trigger: trigger)) { e in
+            listo?(e)
             if p.contenido == .tapado { AlDesbloquear.shared.poner(id: id, contenido: completa, quitar: p.quitarDelCentro, soloSiSigue: true) }
             if p.quitarDelCentro { Notificaciones.quitarDespues(id) }
+        }
+    }
+
+    /// «Probar con Siri» (Ajustes → Notificaciones; Juan, 16-nov-2026): una notificación a los `en` segundos, armada como mensaje
+    /// de Alma (comunicación) y con Siri aunque el tipo no lo tenga (AjustesNotif.planPrueba). Contesta si quedó programada
+    /// o por qué no (sin permiso de notificaciones).
+    func probarSiri(en segundos: TimeInterval = AjustesNotif.pruebaEn, _ listo: @escaping (Bool, String?) -> Void) {
+        let c = UNUserNotificationCenter.current()
+        let armar: () -> Void = {
+            let n = UNMutableNotificationContent()
+            n.title = "Alma"; n.body = AjustesNotif.textoPrueba
+            n.categoryIdentifier = "alma.aviso"; n.userInfo = ["id": AjustesNotif.idPrueba, "prueba": true]
+            c.removePendingNotificationRequests(withIdentifiers: [AjustesNotif.idPrueba])   // tocar dos veces deja una sola
+            self.publicar(n, id: AjustesNotif.idPrueba, plan: AjustesNotif.planPrueba(), tipo: .urgentes,
+                          trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(1, segundos), repeats: false)) { e in
+                DispatchQueue.main.async { listo(e == nil, e.map { "No se pudo programar: " + $0.localizedDescription }) }
+            }
+        }
+        c.getNotificationSettings { s in
+            switch s.authorizationStatus {
+            case .authorized, .provisional, .ephemeral: DispatchQueue.main.async { armar() }
+            case .notDetermined:
+                c.requestAuthorization(options: [.alert, .sound, .badge]) { ok, _ in
+                    DispatchQueue.main.async { if ok { armar() } else { listo(false, "Activa las notificaciones de Alma en Ajustes del iPhone.") } }
+                }
+            default: DispatchQueue.main.async { listo(false, "Activa las notificaciones de Alma en Ajustes del iPhone → Notificaciones → Alma.") }
+            }
         }
     }
 

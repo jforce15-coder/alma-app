@@ -1,5 +1,6 @@
 import AVFoundation
 import AudioToolbox
+import CallKit
 import Foundation
 import MediaPlayer
 import Security
@@ -22,6 +23,10 @@ import UserNotifications
 ///   dice sola: al volver a hablarle empieza por el tema por retomar más importante (lo elige el Hub).
 /// · Alma abre (Hub #509 T4, AlmaAbre.swift): en Modo calle o conferencia, el resultado de uno de tus pedidos recientes
 ///   abre la conversación con la frase del aviso como primer mensaje; el sueño la cuelga si no contestas.
+/// · El anillo (Juan, 16-nov-2026): un pitido al encender o apagar la conferencia; si otra app o una llamada le quita el audio,
+///   al terminar vuelve a quedar lista (o pide abrir la app, AnilloVuelve.swift); los pasos van al Hub con los avisos.
+/// · La música (AudioCalle.swift): la llamada que abre el Modo calle (o la conferencia, con su interruptor) baja la música de
+///   las otras apps en vez de pausarla.
 final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static let shared = VozNativa()
 
@@ -236,9 +241,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Un mismo gesto puede llegar dos veces (o iOS manda «reproducir» al tomar el audio): no se prende y apaga de golpe.
         if Date().timeIntervalSince(ultimoCambioConf) < 3 { paso("Toque repetido ignorado: el modo conferencia acaba de cambiar"); return }
         ultimoCambioConf = Date()
-        let c = Conferencia.shared
-        paso(c.activa ? "El anillo apagó el modo conferencia" : "El anillo encendió el modo conferencia")
-        c.poner(!c.activa)
+        let c = Conferencia.shared, enciende = !c.activa
+        paso(enciende ? "El anillo encendió el modo conferencia" : "El anillo apagó el modo conferencia")
+        // Un pitido corto (Juan, 16-nov-2026): con el teléfono en la bolsa no había cómo saber si se encendió o se apagó.
+        sonido(enciende ? "alma-inicio" : "alma-fin")
+        c.poner(enciende)
     }
     /// ¿El micrófono queda listo para el anillo? Al apagar el modo conferencia no se suelta el audio (con el teléfono
     /// bloqueado iOS no deja volver a tomarlo) y Alma queda lista otra vez.
@@ -409,7 +416,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             try? s.setCategory(.playAndRecord, mode: .default, options: opciones)
             try? s.setActive(true); return
         }
-        if s.category == .playAndRecord && !s.categoryOptions.contains(.mixWithOthers) {
+        // También si quedó bajando la música (AudioCalle): soltar avisando es lo que les devuelve el volumen. Eso, solo con la
+        // app a la vista: con el teléfono bloqueado iOS no deja volver a abrir el micrófono.
+        let o = s.categoryOptions, bajando = o.contains(.duckOthers)
+        if s.category == .playAndRecord && (!o.contains(.mixWithOthers) || bajando) && (!bajando || UIApplication.shared.applicationState == .active) {
             try? s.setActive(false, options: .notifyOthersOnDeactivation)
         }
         try? s.setCategory(.playAndRecord, mode: .default, options: opcionesEscucha)
@@ -433,14 +443,17 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     // MARK: - Estar lista (audio en silencio + mandos de la pantalla de bloqueo)
 
-    private func quedarLista() {
-        guard estado != .hablando, estado != .conectando else { return }
+    /// false si no pudo tomar el audio (otra app o una llamada lo tiene): el anillo no responde hasta que vuelva (AnilloVuelve).
+    @discardableResult
+    private func quedarLista() -> Bool {
+        guard estado != .hablando, estado != .conectando else { return true }
+        var activo = true
         do {
             let s = AVAudioSession.sharedInstance()
             // Desde que queda lista ya es «hablar y escuchar»: con la pantalla bloqueada iOS no deja cambiar a micrófono después.
             try s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
             try s.setActive(true)
-        } catch {}
+        } catch { activo = false; paso("No pude tomar el audio para el anillo (\((error as NSError).code))") }
         if silencio == nil, let wav = VozNativa.wavSilencio() { silencio = try? AVAudioPlayer(data: wav); silencio?.numberOfLoops = -1; silencio?.volume = 0.01 }
         silencio?.play()
         estado = .lista
@@ -448,7 +461,58 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         precargarSiToca()
         if precarga == nil { precarga = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.precargarSiToca() } }
         empezarAvisos()
+        return activo
     }
+
+    // MARK: - El anillo que vuelve (AnilloVuelve.swift)
+
+    /// Desde cuándo otra app o una llamada le quitó el audio al anillo (nil: nada lo interrumpe).
+    private var anilloCortadoDesde: Date?
+    /// Ya se pidió abrir la app: una sola vez hasta que el anillo vuelva a funcionar.
+    private var anilloAvisado = false
+    private var ultimoIntentoAnillo = Date.distantPast
+
+    /// Otra app o una llamada tomó el audio con Alma lista para el anillo: si en 30 s iOS no avisa que terminó, se intenta igual.
+    private func anilloCortado() {
+        guard modoAnillo || unRato, estado == .lista || estado == .apagada else { return }
+        let desde = Date(); anilloCortadoDesde = desde
+        paso("Otra app o una llamada tomó el audio: el anillo espera a que lo suelte")
+        revisarAnilloCortado(desde)
+    }
+    private func revisarAnilloCortado(_ desde: Date) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + AnilloVuelve.esperaSinFin) { [weak self] in
+            guard let self, self.anilloCortadoDesde == desde else { return }
+            self.anilloVuelve(.interrupcionSinFin)
+        }
+    }
+
+    /// Vuelve a quedar lista para el anillo si hace falta; si no puede, pide (una vez) abrir la app.
+    private func anilloVuelve(_ e: AnilloVuelve.Evento) {
+        if case .ruta = e, Date().timeIntervalSince(ultimoIntentoAnillo) < 5 { return }   // el cambio de ruta que provoca quedarLista
+        let telefono = CXCallObserver().calls.contains { !$0.hasEnded }
+        let que = AnilloVuelve.decidir(e, modoAnillo: modoAnillo || unRato, enLlamada: estado == .hablando || estado == .conectando,
+                                       microfono: engine.isRunning, silencio: silencio?.isPlaying == true, telefono: telefono)
+        switch que {
+        case .nada: return
+        case .esperar: if let d = anilloCortadoDesde { revisarAnilloCortado(d) }; return   // llamada de teléfono: se vuelve a mirar
+        case .quedarLista: break
+        }
+        ultimoIntentoAnillo = Date()
+        paso(e == .interrupcionTermino ? "Terminó la interrupción: el anillo vuelve" : e == .interrupcionSinFin ? "La interrupción no avisó que terminó: el anillo intenta volver" : "Cambió la salida de audio: el anillo vuelve")
+        let activo = quedarLista()
+        let suena = silencio?.isPlaying == true, mic = engine.isRunning
+        if activo && suena && mic {
+            anilloCortadoDesde = nil; anilloAvisado = false
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [VozNativa.idAvisoAnillo])
+            return
+        }
+        if AnilloVuelve.avisar(activo: activo, silencio: suena, microfono: mic, appActiva: UIApplication.shared.applicationState == .active, yaAvisado: anilloAvisado) {
+            anilloAvisado = true
+            paso("El anillo no pudo volver solo: aviso para abrir Alma")
+            Notificaciones.shared.mostrar(id: VozNativa.idAvisoAnillo, texto: AnilloVuelve.texto)
+        }
+    }
+    static let idAvisoAnillo = "alma.anillo.vuelve"
 
     /// iOS no deja *empezar* a usar el micrófono con el teléfono bloqueado; sí deja seguir usándolo.
     /// Por eso, con «Alma con el anillo», el micrófono queda abierto desde que la app está a la vista (no se manda nada
@@ -477,8 +541,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private func prepararMandos() {
         guard !mandosListos else { return }; mandosListos = true
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
-            guard let self, let t = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt, t == AVAudioSession.InterruptionType.began.rawValue else { return }
-            guard self.estado == .hablando || self.estado == .conectando else { return }
+            guard let self, let t = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt else { return }
+            guard t == AVAudioSession.InterruptionType.began.rawValue else {
+                // Terminó (Spotify se pausó, colgaste el teléfono): el anillo vuelve a quedar listo (AnilloVuelve).
+                self.anilloVuelve(.interrupcionTermino); return
+            }
+            guard self.estado == .hablando || self.estado == .conectando else { self.anilloCortado(); return }
             // Modo calle: otra llamada o Siri cortan sin error ni reintento; el Modo calle vuelve a esperar cuando regrese el micrófono.
             if self.desdeCalle { self.colgarCalle(.corte) } else { self.fallo("Otra app o una llamada tomó el audio.") }
         }
@@ -488,7 +556,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             self.buscarAvisos()
             self.precargarSiToca()   // al abrir la app ya se pide la ficha: si la llaman, no espera al Hub
             guard self.modoAnillo || self.unRato, self.estado == .lista || self.estado == .apagada else { return }
-            self.quedarLista()
+            if self.quedarLista() {   // con la app a la vista el anillo vuelve: el aviso de «Abre Alma» ya no hace falta
+                self.anilloCortadoDesde = nil; self.anilloAvisado = false
+                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [VozNativa.idAvisoAnillo])
+            }
         }
         // Si iOS reinicia el audio (cambio de audífonos, por ejemplo), se vuelve a encender.
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
@@ -497,8 +568,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             self.revivirMicrofono()
         }
         NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] n in
-            guard let self, self.estado == .hablando, let r = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt else { return }
-            let salida = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? "?"
+            guard let self, let r = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt else { return }
+            if self.estado == .lista {   // lista para el anillo: un momento después se mira si el micrófono o el silencio se cayeron
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.anilloVuelve(.ruta(motivo: r)) }
+                return
+            }
+            guard self.estado == .hablando else { return }
+            // El tipo de salida (no su nombre: «AirPods de …» lleva un nombre y estos pasos van al Hub).
+            let salida = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue ?? "?"
             self.paso("Cambió la salida de audio (motivo \(r)) → \(salida)")
             // Modo calle: se desconectaron los audífonos: cuelga sin reintentar y el Modo calle vuelve a esperar «Alma».
             if self.desdeCalle && r == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self.colgarCalle(.corte) }
@@ -568,8 +645,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 guard UIApplication.shared.applicationState != .background || desdeCalle else {
                     fallo("Abre Alma una vez para dejar el micrófono listo; después funciona bloqueado."); return
                 }
-                paso("Abriendo el micrófono")
-                try s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
+                // Desde el Modo calle (o la conferencia, con su interruptor) la música de las otras apps baja, no se pausa (AudioCalle).
+                let donde: AudioCalle.Donde = desdeCalle ? .calle : conferencia != nil ? .conferencia : .nada
+                let o = AudioCalle.opciones(.llamada, donde: donde, baja: AudioCalle.baja(donde, calle: AudioCalle.bajaCalleAhora, conferencia: AudioCalle.bajaConferenciaAhora),
+                                            anillo: anilloListo).map(AudioCalle.ios) ?? VozNativa.opciones
+                paso("Abriendo el micrófono" + (o.contains(.duckOthers) ? " (la música baja, no se pausa)" : ""))
+                try s.setCategory(.playAndRecord, mode: .default, options: o)
                 try s.setActive(true)
                 try prepararMotor()
             }
@@ -606,10 +687,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // Alma abre (Hub #509 T4): esta vez nadie la nombró; abrió ella para contar un resultado (ALMA ABRE, al final).
             let quien = porAviso != nil ? " Esta vez abriste tú la conversación para contarle un resultado (ALMA ABRE, al final): no saludes ni te presentes." :
                 " Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste con un saludo corto; escucha lo que te piden." : "")
-            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio." + quien + " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. Cuando termines y nadie te pida otra cosa, cuelga con end_call: vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call. LO ÚLTIMO QUE SE DIJO:\n" + cf
+            let reglas = " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. " + VozNativa.sinDespedida
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio." + quien + reglas + " Al colgar vuelves a escuchar sola. En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. LO ÚLTIMO QUE SE DIJO:\n" + cf
         }
         if esAlma && desdeCalle {
-            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CALLE: Juan va caminando, con el teléfono bloqueado y audífonos; hay ruido y gente alrededor. Responde en una o dos frases cortas. Si lo que oyes no va dirigido a ti, usa skip_turn y no contestes. Nunca preguntes si sigue ahí ni te despidas: si se queda callado, la app cuelga sola y él te vuelve a llamar con «Alma»."
+            let calle = "\n\nMODO CALLE: Juan va caminando, con el teléfono bloqueado y audífonos; hay ruido y gente alrededor. Responde en una o dos frases cortas. Si lo que oyes no va dirigido a ti, usa skip_turn y no contestes. " + VozNativa.sinDespedida
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + calle + " Nunca preguntes si sigue ahí: si se queda callado, la app cuelga sola y él te vuelve a llamar con «Alma»."
         }
         // Manos de Alma (navegador): qué tiene abierto el navegador de la app (las reglas están en el Hub, voz.js).
         let manos = ManosAlma.shared.ficha
@@ -1058,7 +1141,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
     }
 
-    static let sinPregunta = "En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. Si nadie te habla después de responder, despídete en una frase amable, sin pregunta (por ejemplo: «Sigo aquí; si me necesitas, solo llámame»), y cuelga con end_call."
+    /// Sin despedidas en el Modo calle y en conferencia (Juan, 16-nov-2026): Alma termina con su respuesta corta y cuelga; lo
+    /// que queda trabajando se lo cuenta después Alma abre (AlmaAbre.swift, Hub #514). El Hub tiene la misma excepción en
+    /// voz.js (SILENCIO LARGO, «Nunca cuelgues tú primero» y la descripción de end_call); en las demás llamadas, igual que siempre.
+    static let sinDespedida = "SIN DESPEDIDAS: nunca te despidas ni digas «aquí sigo». Cuando ya respondiste y no le hiciste una pregunta, cuelga con end_call en ese mismo turno, sin decir nada más. Si lo dejas trabajando en segundo plano, di solo «Entendido, lo hago y te aviso cuando esté listo» y cuelga: cuando esté, tú le avisas."
     private func terminar() {
         vigia?.invalidate(); vigia = nil
         vigiaCalle?.invalidate(); vigiaCalle = nil
@@ -1352,11 +1438,18 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // decir (Modo calle, conferencia o la app abierta). Así suena sin esperar otra vuelta al Hub.
         let hablado = NivelAvisos.nivel("hablado"), ahora = ModoCalle.shared.puedeHablarAvisos
         // Alma abre (Hub #509 T4): solo en Modo calle o conferencia el Hub marca lo que Alma abre ella misma.
-        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozAvisos", "token": token, "session": sesion,
-                                                                  "hablado": hablado, "conf": Conferencia.shared.activa, "ahora": ahora && hablado > 0,
-                                                                  "abre": ModoCalle.shared.puedeAbrir(hablado: hablado)])
+        var cuerpo: [String: Any] = ["hub": 1, "action": "vozAvisos", "token": token, "session": sesion,
+                                     "hablado": hablado, "conf": Conferencia.shared.activa, "ahora": ahora && hablado > 0,
+                                     "abre": ModoCalle.shared.puedeAbrir(hablado: hablado)]
+        // Diagnóstico del anillo (Juan, 16-nov-2026): los pasos nuevos de la voz van al Hub (ALMA_ANILLO, origen «app»), sin
+        // datos personales (PasosAnillo). Se marcan enviados solo si el Hub contestó.
+        let ud = UserDefaults.standard
+        let nuevos = PasosAnillo.nuevos(ud.stringArray(forKey: "voz_pasos") ?? [], ultimoEnviado: ud.string(forKey: "voz_pasos_enviado"))
+        if !nuevos.isEmpty { cuerpo["pasos"] = PasosAnillo.limpiar(nuevos); cuerpo["anillo"] = modoAnillo }
+        r.httpBody = try? JSONSerialization.data(withJSONObject: cuerpo)
         URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
             guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], (j["ok"] as? Bool) == true else { return }
+            if let u = nuevos.last { ud.set(u, forKey: "voz_pasos_enviado") }
             DispatchQueue.main.async { self?.novedades(j) }
         }.resume()
     }
@@ -1371,6 +1464,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // Cada selector de Ajustes filtra por el nivel del aviso (NivelAvisos, ModoCalle.swift): la notificación del
             // teléfono y lo que Alma dice al oído (con el Modo calle, en conferencia o con la app abierta en el inicio).
             for a in l {
+                // «Probar con Siri» pedido desde el Hub web (acción notifPrueba): sale ya por el camino de Siri y no se dice.
+                if (a["prueba"] as? Bool) == true { paso("Prueba de Siri pedida desde el Hub"); Notificaciones.shared.probarSiri(en: AjustesNotif.pruebaDesdeHub) { _, _ in }; continue }
                 let id = a["id"] as? String ?? UUID().uuidString, texto = a["texto"] as? String ?? "", n = NivelAvisos.deAviso(a)
                 // Con su tarjeta de Pendientes, la notificación lleva la respuesta: el título y hasta 3 líneas del resultado.
                 let titulo = a["titulo"] as? String ?? "", lineas = a["lineas"] as? [String] ?? []
@@ -1456,4 +1551,33 @@ enum Llave {
         guard SecItemCopyMatching(q as CFDictionary, &r) == errSecSuccess, let d = r as? Data else { return nil }
         return String(data: d, encoding: .utf8)
     }
+}
+
+/// Las opciones de iOS de cada momento (la lógica, sin iOS, en AudioCalle.swift con sus pruebas).
+extension AudioCalle {
+    static func ios(_ o: Set<OpcionAudio>) -> AVAudioSession.CategoryOptions {
+        var r: AVAudioSession.CategoryOptions = []
+        if o.contains(.mezclar) { r.insert(.mixWithOthers) }
+        if o.contains(.bajarOtras) { r.insert(.duckOthers) }
+        if o.contains(.pausarHablado) { r.insert(.interruptSpokenAudioAndMixWithOthers) }
+        if o.contains(.parlante) { r.insert(.defaultToSpeaker) }
+        if o.contains(.audifonos) { r.insert(.allowBluetoothA2DP) }
+        if o.contains(.manosLibres) { r.insert(.allowBluetooth) }
+        return r
+    }
+    /// Lo que tiene puesto la sesión, en las mismas palabras (bajar las otras ya mezcla: no se cuenta «mezclar» aparte).
+    static func desde(ios o: AVAudioSession.CategoryOptions) -> Set<OpcionAudio> {
+        var r = Set<OpcionAudio>()
+        let baja = o.contains(.duckOthers), pausa = o.contains(.interruptSpokenAudioAndMixWithOthers)
+        if o.contains(.mixWithOthers) && !baja && !pausa { r.insert(.mezclar) }
+        if baja { r.insert(.bajarOtras) }
+        if pausa { r.insert(.pausarHablado) }
+        if o.contains(.defaultToSpeaker) { r.insert(.parlante) }
+        if o.contains(.allowBluetoothA2DP) { r.insert(.audifonos) }
+        if o.contains(.allowBluetooth) { r.insert(.manosLibres) }
+        return r
+    }
+    /// Lo que eligió Juan en Ajustes: «Bajar la música cuando Alma hable» en el Modo calle y en conferencia.
+    static var bajaCalleAhora: Bool { bajaEnCalle(UserDefaults.standard.object(forKey: claveCalle) as? Bool) }
+    static var bajaConferenciaAhora: Bool { bajaEnConferencia(UserDefaults.standard.object(forKey: claveConferencia) as? Bool) }
 }

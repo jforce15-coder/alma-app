@@ -37,7 +37,7 @@ import UIKit
 ///   · Diagnóstico (Juan, 3-nov-2026: «no responde» y nadie sabía por qué): la página muestra bajo el botón en qué va
 ///     (esperando «Alma», te oí, te escucho…) y cualquier error; nada se calla. Cada segundo un vigía revisa que llegue
 ///     audio y que se escuche por el micrófono correcto (si la voz abre o suelta el suyo, se cambia). «Probar el Modo
-///     calle» (Ajustes o toque largo en el botón) muestra el nivel del micrófono, la fuerza con la que el detector oyó
+///     calle» (Ajustes o la línea junto al botón) muestra el nivel del micrófono, la fuerza con la que el detector oyó
 ///     «Alma», lo que oyó el dictado al revisar y por qué se descartó, para calibrar el umbral.
 ///   · Ganancia y respaldo (Juan, 3-nov-2026, TestFlight 135 con audífonos Bluetooth: el micrófono llegaba al 1 % y el
 ///     detector oyó 1 de 5 «Alma»): cada trozo pasa por una ganancia automática (hasta ×20, sin saturar) antes del
@@ -48,10 +48,13 @@ import UIKit
 ///   · El botón del caminante (Juan, 4-nov-2026, TestFlight 144): un toque y Alma escucha ya, sin «Alma» (escucharAhora),
 ///     con la señal al empezar y el sonido de fin al terminar de oír; manda el pedido al Hub y contesta en voz alta, igual
 ///     que después de «Alma». Con el Modo calle apagado escucha una vez y no lo deja encendido. Encender y apagar el Modo
-///     calle queda en Ajustes → Modo calle y en Siri. Antes el toque lo apagaba y, si Alma esperaba al Hub, la respuesta
+///     calle queda en Siri y, desde el 16-nov-2026 (un solo control), en el toque largo del mismo botón (ya no en Ajustes). Antes el toque lo apagaba y, si Alma esperaba al Hub, la respuesta
 ///     se perdía sin decir nada (ALMA_CALLE_USO, 3-nov-2026 22:21 UTC).
 ///   · Nunca en silencio (EsperaCalle): si a los 25 s de oír el pedido no llegó respuesta, Alma dice «No me llegó la
 ///     respuesta, ¿me lo repites?» y vuelve a escuchar; el porqué queda en el diagnóstico.
+///   · La música (Juan, 16-nov-2026; AudioCalle.swift): mientras Alma atiende (te oye, piensa, contesta o escucha tu respuesta)
+///     la música de las otras apps baja y vuelve al esperar «Alma»; la llamada que abre la baja en vez de pausarla. Se apaga en
+///     Ajustes → Modo calle → «Bajar la música cuando Alma hable». Con el teléfono bloqueado no se suelta el audio para subirla.
 final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     static let shared = ModoCalle()
     var alEvento: (([String: Any]) -> Void)?
@@ -61,7 +64,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     /// pausa: iOS quitó el micrófono (otra llamada, por ejemplo) y se espera para volver.
     enum Fase: String { case quieta, esperando, verificando, oyendo, pensando, hablando, llamada, pausa }
     private(set) var encendido = false
-    private(set) var fase: Fase = .quieta { didSet { if fase != oldValue { emitir() } } }
+    private(set) var fase: Fase = .quieta { didSet { if fase != oldValue { ajustarAudio(); emitir() } } }
     /// Un aviso hablado con la app abierta (sin el Modo calle): usa el micrófono solo mientras lo dice y escucha la respuesta.
     private var temporal = false
     /// ¿Ocupa el micrófono? Entonces el Modo Inicio no abre otro y el audio no se suelta.
@@ -214,6 +217,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         // Se conectaron o quitaron los audífonos (o iOS reacomodó el audio): el motor se detiene solo; se vuelve a abrir.
         nc.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: .main) { [weak self] n in
             guard let self, let e = n.object as? AVAudioEngine, e === self.motor, self.micAbierto, !self.compartido else { return }
+            if self.motor.isRunning && Date() < self.ajusteAudioHasta { return }   // lo provocó el cambio de la música y el micrófono sigue
             self.reabrir(tras: 0.3)
         }
         // iOS reinició el audio: el motor viejo ya no sirve; se hace otro.
@@ -237,6 +241,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         // Un aviso hablado sin el Modo calle no se ve como Modo calle (Juan, 6-nov-2026: «arranca encendido y no se apaga»).
         var r: [String: Any] = ["tipo": "calle", "activa": encendido, "fase": EstadoCalle.faseParaPagina(fase.rawValue, encendido: encendido, aviso: avisoEnCurso), "ahora": true]
         if avisoEnCurso { r["aviso"] = true }
+        r["musica"] = AudioCalle.bajaCalleAhora   // Ajustes → Modo calle → «Bajar la música cuando Alma hable»
         if encendido {
             r["minutos"] = Int(Date().timeIntervalSince(uso.inicio) / 60)
             r["despertares"] = uso.despertares; r["falsos"] = uso.falsos; r["pedidos"] = uso.pedidos
@@ -376,7 +381,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// Ajustar el detector sin otra versión de la app (para calibrar en la calle): la línea de «Alma» en sonidos del
     /// modelo, el umbral y el puntaje. Vacío = lo de fábrica (DetectorAlma).
-    /// «Probar el Modo calle» (Ajustes o toque largo en el botón): el estado va a la página cada segundo y, junto al detector
+    /// «Probar el Modo calle» (Ajustes o la línea junto al botón): el estado va a la página cada segundo y, junto al detector
     /// de siempre, corren otros con umbrales de 50 %, 30 %, 15 % y 5 %: la «fuerza» es el más alto que oyó «Alma». Si el Modo
     /// calle estaba apagado, la prueba lo enciende y lo apaga al cerrarse.
     func probar(_ on: Bool) {
@@ -608,7 +613,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         let s = AVAudioSession.sharedInstance()
         if temporal {
             // Aviso con la app abierta: las otras apps bajan el volumen mientras Alma habla y escucha; vuelven al soltar el audio.
-            try? s.setCategory(.playAndRecord, mode: .default, options: [.duckOthers, .defaultToSpeaker, .allowBluetoothA2DP])
+            try? s.setCategory(.playAndRecord, mode: .default, options: AudioCalle.ios(AudioCalle.bajando))
             try? s.setActive(true)
         } else if UIApplication.shared.applicationState == .active {
             VozNativa.sesionEscucha()
@@ -629,6 +634,48 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         formatoMic = "propio (\(Int(f.sampleRate)) Hz, \(f.channelCount) canal\(f.channelCount == 1 ? "" : "es")) · " + ModoCalle.entrada()
         micAbierto = true
         return true
+    }
+
+    // MARK: - La música de las otras apps (AudioCalle.swift)
+
+    /// Hasta cuándo un «iOS reacomodó el audio» viene del propio cambio de la música (si el micrófono sigue, no se reabre).
+    private var ajusteAudioHasta = Date.distantPast
+
+    /// Dónde está Alma para la música: el Modo calle, un aviso con la app abierta o la conferencia.
+    private var dondeAudio: AudioCalle.Donde {
+        if encendido { return .calle }
+        if temporal { return .aviso }
+        return Conferencia.shared.activa ? .conferencia : .nada
+    }
+
+    /// Con cada cambio de fase: mientras Alma atiende, la música baja; al volver a esperar, vuelve. La llamada la pone VozNativa;
+    /// con «Alma con el anillo» no se toca nada.
+    private func ajustarAudio() {
+        let donde = dondeAudio
+        guard donde != .nada, fase != .llamada, fase != .pausa else { return }
+        let baja = AudioCalle.baja(donde, calle: AudioCalle.bajaCalleAhora, conferencia: AudioCalle.bajaConferenciaAhora)
+        guard let o = AudioCalle.opciones(AudioCalle.momento(fase: fase.rawValue), donde: donde, baja: baja, anillo: VozNativa.shared.anilloListo) else { return }
+        let s = AVAudioSession.sharedInstance()
+        let antes = s.category == .playAndRecord ? AudioCalle.desde(ios: s.categoryOptions) : nil
+        // Soltar el audio solo con la app a la vista y con el micrófono propio (el de la conferencia no se detiene desde aquí).
+        let puedeSoltar = UIApplication.shared.applicationState == .active && donde != .conferencia && !compartido
+        let cambio = AudioCalle.cambio(de: antes, a: o, appActiva: puedeSoltar)
+        guard cambio != .nada else { return }
+        ajusteAudioHasta = Date().addingTimeInterval(1.5)
+        let corriendo = cambio == .soltarYCambiar && micAbierto && motor.isRunning
+        if cambio == .soltarYCambiar {
+            // Soltar avisando es lo que hace que iOS les devuelva el volumen a las otras apps; el micrófono se detiene un momento.
+            if corriendo { motor.stop() }
+            try? s.setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        try? s.setCategory(.playAndRecord, mode: .default, options: AudioCalle.ios(o))
+        try? s.setActive(true)
+        if corriendo {
+            motor.prepare()
+            do { try motor.start() } catch { anotar("El micrófono no volvió tras subir la música: " + ModoCalle.textoError(error)); reabrir(tras: 0.3) }
+        }
+        if o.contains(.bajarOtras) { anotar("La música baja mientras Alma atiende") }
+        else if antes?.contains(.bajarOtras) == true { anotar(cambio == .soltarYCambiar ? "La música vuelve" : "La música vuelve (sin soltar el audio: teléfono bloqueado)") }
     }
 
     /// Por dónde entra el audio (micrófono del iPhone, AirPods…), para el diagnóstico.

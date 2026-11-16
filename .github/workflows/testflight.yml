@@ -107,6 +107,22 @@ jobs:
           xcrun swiftc Alma/AjustesNotif.swift Pruebas/AjustesNotif/main.swift -o /tmp/ajustes-notif
           /tmp/ajustes-notif
 
+      # La música mientras Alma habla (Juan, 16-nov-2026): en el Modo calle baja (no se pausa) mientras Alma atiende y en la
+      # llamada que abre, y vuelve al esperar sin dejar sordo al micrófono con el teléfono bloqueado. Lógica pura.
+      - name: Probar la música del Modo calle
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/AudioCalle.swift Pruebas/AudioCalle/main.swift -o /tmp/audio-calle
+          /tmp/audio-calle
+
+      # El anillo que vuelve (Juan, 16-nov-2026): tras una interrupción o un cambio de audífonos vuelve a quedar lista; si no
+      # puede, una sola notificación; los pasos van al Hub sin datos personales. Lógica pura.
+      - name: Probar el anillo que vuelve
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/AnilloVuelve.swift Pruebas/AnilloVuelve/main.swift -o /tmp/anillo-vuelve
+          /tmp/anillo-vuelve
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen
