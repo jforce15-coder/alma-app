@@ -9,6 +9,8 @@ struct AlmaApp: App {
     init() {
         // Con un anillo ya conectado antes, se retoma la conexión desde el arranque (también si iOS despierta la app por él).
         if Anillo.hayGuardado { _ = Anillo.shared }
+        // Notificaciones push (Ticket #28, PushAlma.swift): si el Hub ya dio con qué registrarse, OneSignal arranca desde el inicio.
+        PushAlma.shared.arrancar()
         // «Alma con el anillo»: la app queda lista para que dos toques del anillo enciendan o apaguen el modo conferencia, también con el teléfono bloqueado.
         VozNativa.shared.arrancarSiHaceFalta()
     }

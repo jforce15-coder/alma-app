@@ -107,6 +107,14 @@ jobs:
           xcrun swiftc Alma/AjustesNotif.swift Pruebas/AjustesNotif/main.swift -o /tmp/ajustes-notif
           /tmp/ajustes-notif
 
+      # Notificaciones push reales (Hub, Ticket #28): lo que trae el push, el plan con la app dormida (Siri por tipo, genérica sin
+      # vista previa), cómo se ve (igual que las locales), sin duplicados y cuándo la app está lista o avisa que se duerme.
+      - name: Probar las notificaciones push
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/AjustesNotif.swift Alma/NotifPush.swift Pruebas/NotifPush/main.swift -o /tmp/notif-push
+          /tmp/notif-push
+
       # La música mientras Alma habla (Juan, 16-nov-2026): en el Modo calle baja (no se pausa) mientras Alma atiende y en la
       # llamada que abre, y vuelve al esperar sin dejar sordo al micrófono con el teléfono bloqueado. Lógica pura.
       - name: Probar la música del Modo calle
@@ -151,6 +159,13 @@ jobs:
             test -s "$APP/Calle/$n" || { echo "::error::Alma.app no trae Calle/$n (el modelo del Modo calle)."; exit 1; }
           done
           ls -l "$APP/Calle"
+          # Notificaciones push (Ticket #28): la extensión va dentro de la app y el SDK de OneSignal también.
+          EXT="$APP/PlugIns/NotifAlma.appex"
+          test -x "$EXT/NotifAlma" || { echo "::error::Alma.app no trae PlugIns/NotifAlma.appex (la extensión de las notificaciones push)."; exit 1; }
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :NSExtension:NSExtensionPointIdentifier' "$EXT/Info.plist")" = "com.apple.usernotifications.service" ] \
+            || { echo "::error::NotifAlma.appex no es una extensión de notificaciones."; exit 1; }
+          test -s "$EXT/alma-foto.png" || { echo "::error::NotifAlma.appex no trae la foto de Alma (alma-foto.png)."; exit 1; }
+          test -d "$APP/Frameworks/OneSignalFramework.framework" || { echo "::error::Alma.app no trae OneSignalFramework."; exit 1; }
           # El mismo arreglo de la subida (ver abajo), para probarlo en cada PR.
           bash .github/quitar-frameworks-estaticos.sh build/dd/Build/Products/Release-iphoneos/Alma.app
 
@@ -197,6 +212,12 @@ jobs:
               echo "$(basename "$f"): MinimumOSVersion = $minos"
             fi
             codesign --force --sign - "$f"
+          done
+          # La extensión de las notificaciones push (Ticket #28) se firma antes que la app, con sus permisos (notificación de
+          # comunicación): la exportación la firma para distribución con su propio App ID (com.spacioam.alma.notificaciones).
+          for x in build/Alma.xcarchive/Products/Applications/Alma.app/PlugIns/*.appex; do
+            [ -d "$x" ] || continue
+            codesign --force --sign - --entitlements NotifAlma/NotifAlma.entitlements "$x"
           done
           codesign --force --sign - --entitlements Alma/Alma.entitlements build/Alma.xcarchive/Products/Applications/Alma.app
           xcodebuild -exportArchive -archivePath build/Alma.xcarchive -exportOptionsPlist ExportOptions.plist \
