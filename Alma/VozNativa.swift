@@ -838,19 +838,25 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
     }
 
+    /// Cada socket escucha lo suyo. El socket de antes de cambiar de agente (Hablar con Claudio) se cierra a propósito y su
+    /// escucha termina con «El socket no está conectado»: ese error no es de la conversación nueva y no la corta (16-nov-2026:
+    /// así se caía el paso a Claudio justo al conectar). Lo mismo con los mensajes que lleguen tarde del socket viejo.
     private func escuchar() {
-        ws?.receive { [weak self] r in
+        guard let tarea = ws else { return }
+        tarea.receive { [weak self] r in
             guard let self else { return }
+            guard AgenteVoz.esSocketActual(tarea, self.ws) else { return }
             switch r {
             case .success(let m):
                 var texto: String?
                 if case .string(let s) = m { texto = s } else if case .data(let d) = m { texto = String(data: d, encoding: .utf8) }
                 if let t = texto, let d = t.data(using: .utf8), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
-                    DispatchQueue.main.async { self.mensaje(j) }
+                    DispatchQueue.main.async { if AgenteVoz.esSocketActual(tarea, self.ws) { self.mensaje(j) } }
                 }
                 self.escuchar()
             case .failure(let e):
                 DispatchQueue.main.async {
+                    guard AgenteVoz.esSocketActual(tarea, self.ws) else { return }   // el socket viejo: no es la llamada de ahora
                     if self.estado == .conectando || self.estado == .hablando { self.fallo("La voz se cortó: \(e.localizedDescription)") }
                 }
             }
