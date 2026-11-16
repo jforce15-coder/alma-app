@@ -118,6 +118,23 @@ enum LlamadaContinua {
         return t
     }
 
+    // MARK: - El saludo se oye entero (Juan, 16-nov-2026: «sale el subtítulo pero no la voz»)
+
+    /// Al despertar con «Alma» (Modo Inicio, conferencia), lo que el micrófono guardó mientras conectaba (el «Alma», la
+    /// señal, la reunión) llegaba a ElevenLabs junto con el saludo: lo tomaba como que Juan interrumpía y cortaba la voz al
+    /// instante (el subtítulo sí salía completo). Mientras suena el saludo no se manda lo del micrófono (va silencio) y lo
+    /// guardado se tira; después, todo como siempre. Como mucho `topeSaludo` s, por si el audio no llega.
+    static let topeSaludo: TimeInterval = 8
+    static let colaSaludo: TimeInterval = 0.3
+    /// ¿Se protege este primer mensaje? Solo un saludo de Alma (no vacío: si Juan ya hablaba, Alma lo escucha).
+    static func protegeSaludo(primero: String) -> Bool { !primero.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    /// ¿Sigue protegido? Hasta que el saludo terminó de sonar (y un respiro), o el tope desde que se pidió.
+    static func saludoSigue(desde: Date, ahora: Date, sono: Bool, finVoz: Date) -> Bool {
+        if ahora.timeIntervalSince(desde) >= topeSaludo { return false }
+        if !sono { return true }
+        return ahora < finVoz.addingTimeInterval(colaSaludo)
+    }
+
     // MARK: - El registro de pasos (para saber por qué se cortó)
 
     /// Cuántos pasos se guardan en el teléfono para el Hub. Antes la lista se borraba al empezar cada llamada: si la
