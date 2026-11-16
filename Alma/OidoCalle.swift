@@ -263,7 +263,8 @@ enum BotonCalle {
 
 /// Nunca en silencio (Juan, 4-nov-2026: «me reconoce y no me responde nada»): después de oír un pedido, si no llega
 /// respuesta del Hub en `plazo` segundos, Alma dice `frase` (con su voz si ya la tiene guardada; si no, la del iPhone) y
-/// el porqué queda en el diagnóstico. El Hub corta a los 15 s («Sigo en eso…») y deja de pedir el audio a los 20 s.
+/// el porqué queda en el diagnóstico. El Hub corta a los 15 s («Sigo en eso…») y deja de pedir el audio a los 20 s. La
+/// petición espera hasta `plazo + tardeMax`: lo que llegue tarde todavía se puede decir (`tarde`).
 enum EsperaCalle {
     static let plazo = 25.0
     static let frase = "No me llegó la respuesta, ¿me lo repites?"
@@ -271,5 +272,21 @@ enum EsperaCalle {
     static func motivo(red: String?, segundos: Double) -> String {
         if let r = red?.trimmingCharacters(in: .whitespacesAndNewlines), !r.isEmpty { return "el Hub no contestó (" + r + ")" }
         return "el Hub no contestó en \(Int(segundos.rounded())) s"
+    }
+    /// La respuesta que llega tarde (Juan, 16-nov-2026: «llegó tarde (28 s): ya no la digo»; llegó 3 s después de «No me
+    /// llegó…»). Se dice igual si todavía tiene sentido: es la del último pedido (Juan no pidió otra cosa después), llegó
+    /// hasta `tardeMax` s después de «No me llegó…» y Juan no está diciendo nada: si todavía suena esa frase, al terminarla;
+    /// si ya escucha y no ha dicho nada, o volvió a esperar «Alma», de una vez. Con lo que sea (hablando de otra cosa, en una
+    /// llamada, ya dijo algo), no: queda en el Chat con Alma.
+    enum Tarde: Equatable { case decir, alTerminar, no }
+    static let tardeMax = 20.0
+    static func tarde(esElUltimo: Bool, segundos: Double, diciendoNoLlego: Bool, fase: String, oyoAlgo: Bool) -> Tarde {
+        guard esElUltimo, segundos >= 0, segundos <= tardeMax else { return .no }
+        if diciendoNoLlego { return .alTerminar }
+        switch fase {
+        case "oyendo": return oyoAlgo ? .no : .decir
+        case "esperando": return .decir
+        default: return .no
+        }
     }
 }
