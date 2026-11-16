@@ -14,7 +14,7 @@ struct LlamadaVista: View {
     private var estadoTexto: String {
         switch voz.estado {
         case .conectando: return "Conectando…"
-        case .hablando: return voz.pausada ? "En pausa" : voz.almaHabla ? "Alma te responde" : "Te escucho"
+        case .hablando: return voz.pausada ? "En pausa" : voz.agente.estadoTexto(habla: voz.almaHabla)
         default: return "En pausa"
         }
     }
@@ -34,7 +34,7 @@ struct LlamadaVista: View {
                             .frame(width: 40, height: 40).background(Circle().fill(.white.opacity(0.16)))
                     }
                     Spacer()
-                    Text("ALMA").tracking(3.5).font(.custom("Montserrat", size: 11).weight(.medium))
+                    Text(voz.agente == .claudio ? "CLAUDIO" : "ALMA").tracking(3.5).font(.custom("Montserrat", size: 11).weight(.medium))
                     Spacer()
                     Color.clear.frame(width: 40, height: 40)
                 }
@@ -106,19 +106,24 @@ struct LlamadaVista: View {
         .accessibilityLabel("Abrir la tarjeta de la llamada: " + TarjetaVozVista.nombre(t.tipo) + " " + t.titulo)
     }
 
+    /// El color del halo: el naranja de Claudio o el coral de Alma (AgenteVoz.halo).
+    private var halo: Color { voz.agente.halo.map { Color(red: $0.r, green: $0.g, blue: $0.b) } ?? Color.almaCoral }
+
     /// La roca de Alma: respira sola y crece con la voz (la tuya o la de ella).
     private var roca: some View {
         let s = 1 + voz.nivel * 0.28
         return ZStack {
-            Circle().fill(Color.almaCoral.opacity(0.35)).frame(width: 260, height: 260).blur(radius: 40)
+            // Hablar con Claudio (Hub #550): con Claudio el halo es todo naranja; con Alma, su coral.
+            Circle().fill(halo.opacity(voz.agente == .claudio ? 0.6 : 0.35)).frame(width: 260, height: 260).blur(radius: 40)
                 .scaleEffect(respira ? 1.08 : 0.92)
                 .animation(.easeInOut(duration: 5.5).repeatForever(autoreverses: true), value: respira)
+                .animation(sinMovimiento ? nil : .easeInOut(duration: 0.6), value: voz.agente)
             Circle()
                 .fill(RadialGradient(colors: [Color(red: 1, green: 0.985, blue: 0.97), Color(red: 0.99, green: 0.9, blue: 0.86),
                                               Color(red: 0.96, green: 0.78, blue: 0.71), Color(red: 0.94, green: 0.68, blue: 0.59)],
                                      center: UnitPoint(x: 0.36, y: 0.3), startRadius: 4, endRadius: 120))
                 .frame(width: 180, height: 180)
-                .shadow(color: Color.almaCoral.opacity(0.5), radius: 30, y: 18)
+                .shadow(color: halo.opacity(0.5), radius: 30, y: 18)
                 .scaleEffect(s)
                 .animation(.spring(response: 0.22, dampingFraction: 0.8), value: voz.nivel)
             Image(systemName: "sparkle").font(.system(size: 28)).foregroundStyle(Color(red: 0.71, green: 0.38, blue: 0.31).opacity(0.45))
