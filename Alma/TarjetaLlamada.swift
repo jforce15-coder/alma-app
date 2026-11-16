@@ -26,7 +26,30 @@ struct TarjetaVoz: Equatable {
     let chip: String, tono: String, foto: String, iniciales: String
     let fechas: [Fecha], datos: [String], mensajes: [Mensaje], promesas: [String], semana: [Dia], detalle: [String]
     let conv: String, tel: String, wa: String
+    /// Snapshot estilo Jarvis (Hub, apps-script/snapshot.js; Juan 16-nov-2026): lo importante en una frase y cómo va.
+    let snapshot: Snapshot
     let crudo: [String: Any]
+
+    /// Lo que LlamadaVista muestra del snapshot (la página del inicio pinta todos los cuadros): el destacado, la experiencia
+    /// (con su riesgo de mala reseña y su porqué), lo que le molesta, lo que lo tiene feliz y el problema de ahora.
+    struct Snapshot: Equatable {
+        var destacado = "", destacadoTono = ""
+        var experiencia = "", experienciaTono = "", nivel = 0, riesgo = "", porque = ""
+        var molesta: [String] = [], feliz: [String] = [], problema = ""
+        var vacio: Bool { destacado.isEmpty && experiencia.isEmpty && molesta.isEmpty && feliz.isEmpty && problema.isEmpty }
+        init() {}
+        init(_ j: [String: Any]) {
+            func s(_ o: [String: Any]?, _ k: String) -> String { (o?[k] as? String) ?? "" }
+            func textos(_ o: [String: Any]?, _ k: String) -> [String] { ((o?[k] as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }.prefix(3).map { $0 } }
+            let d = j["destacado"] as? [String: Any]
+            destacado = s(d, "texto"); destacadoTono = s(d, "tono")
+            let cs = ((j["cuadros"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
+            let t = cs.first { ($0["tipo"] as? String) == "termometro" }, a = cs.first { ($0["tipo"] as? String) == "animo" }, f = cs.first { ($0["tipo"] as? String) == "foco" }
+            experiencia = s(t, "v"); experienciaTono = s(t, "tono"); riesgo = s(t, "riesgo"); porque = s(t, "porque")
+            nivel = max(0, min(100, (t?["nivel"] as? NSNumber)?.intValue ?? 0))
+            molesta = textos(a, "molesta"); feliz = textos(a, "feliz"); problema = s(f, "problema")
+        }
+    }
 
     init?(_ j: [String: Any]) {
         func s(_ k: String, _ o: [String: Any] = j) -> String { (o[k] as? String) ?? ((o[k] as? NSNumber)?.stringValue ?? "") }
@@ -42,6 +65,7 @@ struct TarjetaVoz: Equatable {
         semana = lista("semana").map { Dia(letra: s("letra", $0), n: ($0["n"] as? NSNumber)?.intValue ?? 0, estado: s("e", $0), hoy: ($0["hoy"] as? Bool) ?? false) }
         detalle = (j["detalle"] as? [Any] ?? []).compactMap { $0 as? String }
         conv = s("conv"); tel = s("tel"); wa = s("wa")
+        snapshot = Snapshot(j)
         crudo = j
     }
     static func == (a: TarjetaVoz, b: TarjetaVoz) -> Bool { a.id == b.id && a.clave == b.clave }
@@ -56,7 +80,10 @@ struct TarjetaVoz: Equatable {
     /// si la app lo nombra en «tipos» al vincular (VozNativa.vincular): la app de antes lo recibe solo en el chat.
     /// «datos» (Hub #607, tablero de datos): lo que Alma responde con números y listas (reservas, la ruta, el mes, tareas…):
     /// la página del inicio pinta sus cuadros (número, barras, línea de tiempo) y LlamadaVista su título, datos y detalle.
-    static let tipos = ["reserva", "conversacion", "apartamento", "consulta", "edificio", "claudio", "socio", "datos"]
+    /// «recepcion» y «proyecto» (Hub, snapshot estilo Jarvis, 16-nov-2026): la recepción de un edificio (llegadas de hoy y
+    /// si su registro le llegó) y un proyecto de Grow (etapa, lo que sigue y el camino); la página del inicio pinta sus
+    /// cuadros y LlamadaVista su título, el destacado, datos y detalle. Como «socio», solo si la app los nombra aquí.
+    static let tipos = ["reserva", "conversacion", "apartamento", "consulta", "edificio", "claudio", "socio", "datos", "recepcion", "proyecto"]
     /// El nombre del tipo (la etiqueta de la tarjeta y la pestañita).
     static func nombre(_ tipo: String) -> String {
         switch tipo {
@@ -67,6 +94,8 @@ struct TarjetaVoz: Equatable {
         case "claudio": return "Claudio"
         case "socio": return "Socio"
         case "datos": return "Datos"
+        case "recepcion": return "Recepción"
+        case "proyecto": return "Proyecto"
         default: return "Apartamento"
         }
     }

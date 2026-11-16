@@ -48,6 +48,7 @@ struct TarjetaVozVista: View {
                     .accessibilityLabel("Foto de " + t.titulo)
             }
             cabecera
+            if !t.snapshot.vacio { snapshot }
             if !t.fechas.isEmpty { fechas }
             ForEach(Array((detalle ? t.mensajes : Array(t.mensajes.suffix(2))).enumerated()), id: \.offset) { _, m in mensaje(m) }
             if !t.semana.isEmpty { semana }
@@ -64,6 +65,52 @@ struct TarjetaVozVista: View {
             }
             Text(detalle ? "Toca para ver menos · la llamada sigue" : "Toca para ver más")
                 .font(.custom("Montserrat", size: 10.5)).foregroundStyle(gris.opacity(0.85)).frame(maxWidth: .infinity)
+        }
+    }
+
+    /// Snapshot (Hub, snapshot.js): lo importante en una frase, la experiencia con su riesgo y, al ver más, lo que le
+    /// molesta, lo que lo tiene feliz y el problema.
+    @ViewBuilder private var snapshot: some View {
+        let sn = t.snapshot
+        if !sn.destacado.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                Destello().fill(Color.almaCoral).frame(width: 13, height: 13).padding(.top, 2)
+                Text(sn.destacado).font(.custom("Montserrat", size: 12.5).weight(.medium)).foregroundStyle(tinta).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 9).frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14).fill(TarjetaVozVista.fondo(sn.destacadoTono)))
+        }
+        if !sn.experiencia.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Experiencia: " + sn.experiencia).font(.custom("Montserrat", size: 12.5).weight(.semibold)).foregroundStyle(tinta)
+                    Spacer(minLength: 6)
+                    if !sn.riesgo.isEmpty { Text("Riesgo de reseña · " + sn.riesgo).font(.custom("Montserrat", size: 10.5).weight(.semibold)).foregroundStyle(gris) }
+                }
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(LinearGradient(colors: [RocaAlma.rgb(0xE36A55), RocaAlma.rgb(0xE9A15C), RocaAlma.rgb(0xA8C48F), RocaAlma.rgb(0x6FA37F)], startPoint: .leading, endPoint: .trailing))
+                        Circle().fill(.white).frame(width: 12, height: 12).shadow(color: .black.opacity(0.25), radius: 2)
+                            .offset(x: max(0, min(g.size.width - 12, g.size.width * CGFloat(sn.nivel) / 100 - 6)))
+                    }
+                }
+                .frame(height: 12)
+                .accessibilityElement().accessibilityLabel("Experiencia " + sn.experiencia + (sn.riesgo.isEmpty ? "" : ", riesgo de mala reseña " + sn.riesgo))
+                if !sn.porque.isEmpty { Text(sn.porque).font(.custom("Montserrat", size: 11.5)).foregroundStyle(gris) }
+            }
+        }
+        if detalle {
+            if !sn.problema.isEmpty { Text("Problema: " + sn.problema).font(.custom("Montserrat", size: 12).weight(.semibold)).foregroundStyle(tinta) }
+            if !sn.molesta.isEmpty { Text("Le molesta: " + sn.molesta.joined(separator: " · ")).font(.custom("Montserrat", size: 12)).foregroundStyle(tinta) }
+            if !sn.feliz.isEmpty { Text("Lo tiene feliz: " + sn.feliz.joined(separator: " · ")).font(.custom("Montserrat", size: 12)).foregroundStyle(tinta) }
+        }
+    }
+    static func fondo(_ tono: String) -> Color {
+        switch tono {
+        case "alerta": return Color(red: 0.949, green: 0.855, blue: 0.835)
+        case "aviso": return Color(red: 0.961, green: 0.902, blue: 0.749)
+        case "libre": return Color(red: 0.882, green: 0.933, blue: 0.898)
+        default: return Color(red: 0.91, green: 0.929, blue: 0.953)
         }
     }
 
