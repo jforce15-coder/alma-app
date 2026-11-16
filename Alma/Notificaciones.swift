@@ -38,8 +38,8 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
     /// Sin tipo (los avisos propios de la app, como la pausa del Modo calle), como antes.
     func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = [], seDice: Bool = false, tipo: String? = nil) {
         guard !texto.isEmpty else { return }
-        let t = AjustesNotif.tipo(tipo)
-        let plan = t.map { AjustesNotif.plan(tipo: $0, ajuste: AjustesNotif.leer()[$0] ?? .deFabrica($0), momento: momentoAhora(seDice: seDice), id: id) }
+        let clase = AjustesNotif.tipo(tipo)
+        let plan = clase.map { AjustesNotif.plan(tipo: $0, ajuste: AjustesNotif.leer()[$0] ?? .deFabrica($0), momento: momentoAhora(seDice: seDice), id: id) }
         if plan?.mostrar == false { return }   // los tres lugares apagados: este tipo no llega
         conPermiso {
             let n = UNMutableNotificationContent()
@@ -59,7 +59,7 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
             }
             if EstadoCalle.notificacionCallada(seDice: seDice) { n.sound = nil; n.interruptionLevel = .passive }
             n.categoryIdentifier = "alma.aviso"; n.userInfo = ["id": id, "seDice": seDice]
-            if let t, let plan { self.publicar(n, id: id, plan: plan, tipo: t); return }
+            if let clase, let plan { self.publicar(n, id: id, plan: plan, tipo: clase); return }
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: n, trigger: nil))
         }
     }
