@@ -375,7 +375,8 @@ final class Conferencia {
         reloj = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self, self.enLlamada else { return }
             let e = VozNativa.shared.estado
-            if (e == .lista || e == .apagada) && Date().timeIntervalSince(self.ultimoCambio) > 4 {
+            // espera también a que termine la señal de salida: si no, al tomar el micrófono se cortaría a la mitad
+            if (e == .lista || e == .apagada) && !VozNativa.shared.senalSonando && Date().timeIntervalSince(self.ultimoCambio) > 4 {
                 self.enLlamada = false; self.reloj?.invalidate()
                 // Encendida por «Alma» y la app quedó en segundo plano durante la llamada: no sigue escuchando.
                 if self.porVoz && UIApplication.shared.applicationState == .background { self.apagar(); return }
