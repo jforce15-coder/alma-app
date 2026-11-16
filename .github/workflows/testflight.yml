@@ -92,6 +92,14 @@ jobs:
           xcrun swiftc Alma/AlmaAbre.swift Pruebas/AlmaAbre/main.swift -o /tmp/alma-abre
           /tmp/alma-abre
 
+      # Notificaciones por tipo (Hub #551): cómo se arma cada una con los ajustes de su tipo (dónde se ve, sonido, urgente,
+      # agrupar, vista previa) y Siri solo con la app cerrada o en segundo plano, fuera de conferencia y Modo calle. Lógica pura.
+      - name: Probar las notificaciones por tipo
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/AjustesNotif.swift Pruebas/AjustesNotif/main.swift -o /tmp/ajustes-notif
+          /tmp/ajustes-notif
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen
