@@ -174,6 +174,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var reglasTarjeta = ReglasTarjeta()
     /// La conversación de ElevenLabs de esta llamada (para pedir su tarjeta y decir si Juan ve la pantalla).
     private var idLlamada: String?
+    /// Panel de Claudio (Hub #550, apps-script/claudiopanel.js): la conversación de Claudio de esta llamada (para pedir su panel).
+    private var idClaudio: String?
     private var avisoPantalla: [NSObjectProtocol] = []
     /// Medidor de personalidad (#410): en qué nivel de Modo Weebo va Alma en esta llamada (lo cuenta ella con la herramienta
     /// de cliente nivel_weebo) y cuánto se adapta a Juan (viene en la ficha del Hub). Solo con el administrador principal.
@@ -537,7 +539,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         estado = .conectando; colaVoz = []; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0; inicioEnviado = false; antesDeFicha = []
         ultimaLlamada = (0, nil); motivoCalle = nil
         weebo = nil; weeboCambio = 0; adaptacion = nil; flechaT?.cancel()
-        idLlamada = nil; reglasTarjeta.terminar(); publicarTarjeta()
+        idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()
         sonido("alma-inicio", llamada: true)   // el segundo beep: el de la llamada a Alma, suena siempre (también en conferencia): lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
         if let f = fichaLista, Date().timeIntervalSince(f.t) < 540 {
@@ -790,6 +792,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             infoBloqueo("Te escucho · dos toques para pausar")
             emitirPersonalidad()   // los chips de la llamada (si es el principal)
             if agente == .alma, let id = ev["conversation_id"] as? String { vincular(id) }   // Claudio: el Hub lo reconoce por su firma (claudio.js)
+            if agente == .claudio, let id = ev["conversation_id"] as? String { idClaudio = id; pedirPanelClaudio(intento: 0) }   // Panel de Claudio: la lista al entrar
         case "audio":
             let ev = j["audio_event"] as? [String: Any] ?? [:]
             ultimaActividad = Date()
@@ -811,6 +814,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             relojEspera?.invalidate(); relojEspera = nil
             let rt = j["agent_tool_response"] as? [String: Any] ?? [:]
             if (rt["tool_name"] as? String ?? "") == "secretaria" { pedirTarjeta(intento: 0) }
+            if agente == .claudio, (rt["tool_name"] as? String ?? "").hasPrefix("claudio_") { pedirPanelClaudio(intento: 0) }   // lo que dejó la herramienta de Claudio
         case "interruption":
             player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         case "ping":
@@ -1070,7 +1074,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         relojEspera?.invalidate(); relojEspera = nil; espera = nil
         conferencia = nil; textoInicial = nil; alOir = false; pantalla = nil; vistaPendiente = nil; porAviso = nil
         cambiando = false; volviendo = false
-        reglasTarjeta.terminar(); publicarTarjeta(); idLlamada = nil   // lo que hubo queda en el Chat con Alma (lo guarda el Hub)
+        reglasTarjeta.terminar(); publicarTarjeta(); idLlamada = nil; idClaudio = nil   // lo que hubo queda en el Chat con Alma (lo guarda el Hub)
         avisoPantalla.forEach { NotificationCenter.default.removeObserver($0) }; avisoPantalla = []
         if habia { paso("Pausa") }
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
@@ -1134,7 +1138,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         viejo?.cancel(with: .normalClosure, reason: nil); viejaSesion?.invalidateAndCancel()
         player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         inicioEnviado = false; antesDeFicha = []; colaVoz = []; sono = false
-        idLlamada = nil; reglasTarjeta.terminar(); publicarTarjeta()
+        idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()   // vuelve Alma: el Panel de Claudio se quita
         volviendo = nuevo == .alma
         agente = nuevo
         estado = .conectando
@@ -1173,6 +1177,44 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 if d == .mostrar { self.publicarTarjeta() }
             }
         }.resume()
+    }
+
+    // MARK: - Panel de Claudio (Hub #550, apps-script/claudiopanel.js)
+
+    /// Con Claudio, la pantalla muestra lo que hace desarrollo: al entrar, la lista de trabajos; después de cada herramienta de
+    /// Claudio, lo que ella dejó (la lista o el trabajo del que se habla). Se pinta como la tarjeta (tipo «claudio»): se queda
+    /// y lo reemplaza el siguiente; al volver con Alma o al colgar se quita. Solo con la pantalla a la vista; el Hub lo da
+    /// solo al administrador principal (acción vozClaudioPanel con su sesión). Se reintenta una vez a los 2 s.
+    private func pedirPanelClaudio(intento: Int) {
+        guard agente == .claudio, pantallaVisible, let id = idClaudio, let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"),
+              let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 20
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozClaudioPanel", "conv_id": id, "token": token, "session": sesion])
+        let llamada = inicioLlamada
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+            let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let t = (j?["panel"] as? [String: Any]).flatMap { TarjetaVoz($0) }
+            DispatchQueue.main.async {
+                guard let self, self.inicioLlamada == llamada, self.agente == .claudio, self.idClaudio == id, self.estado == .hablando else { return }
+                guard let t, t.tipo == "claudio" else {
+                    if intento == 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.pedirPanelClaudio(intento: 1) } }
+                    return
+                }
+                if self.reglasTarjeta.recibir(t, pantalla: self.pantallaVisible) == .mostrar { self.paso("Panel de Claudio: " + t.titulo); self.publicarTarjeta() }
+            }
+        }.resume()
+    }
+
+    /// La página del inicio avisa que Juan respondió tocando una opción del panel (ya salió por el camino de Pendientes):
+    /// Claudio lo sabe en esta conversación y el panel se pide otra vez. { hacer: "respondio", nombre, texto }
+    func panelClaudio(_ d: [String: Any]) {
+        guard agente == .claudio, estado == .hablando, (d["hacer"] as? String) == "respondio" else { return }
+        let nombre = String((d["nombre"] as? String ?? "").prefix(80)), texto = String((d["texto"] as? String ?? "").prefix(200))
+        if !texto.isEmpty {
+            let quien = nombre.isEmpty ? "un trabajo" : nombre
+            mandar(["type": "contextual_update", "text": "Juan respondió en pantalla a la pregunta de «\(quien)»: «\(texto)». Ya le llegó a desarrollo; no se la vuelvas a preguntar."])
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.pedirPanelClaudio(intento: 1) }
     }
 
     /// Lo que Juan toca en la tarjeta (LlamadaVista o la página del inicio): toque · detalle · abrir · plegar · conv · llamar · whatsapp.
