@@ -2,10 +2,14 @@ import Foundation
 
 /// Hablar con Claudio (Hub #550; Juan, 16-nov-2026): con quién habla la llamada y cuándo se cambia. Lógica pura, con sus
 /// pruebas en Pruebas/AgenteVoz.
-/// · Juan pide hablar con Claudio: Alma dice «Sí, no hay problema, te paso con Claudio» y usa hablar_con_claudio (herramienta
-///   de la app). La app espera a que termine esa frase, pide al Hub la conversación de Claudio (acción vozClaudio, solo el
-///   administrador principal) y cambia el socket sin colgar: otro agente, otra voz y el halo todo naranja.
-/// · Claudio usa volver_con_alma: la app vuelve a Alma (acción vozWeb) y Alma dice que está de nuevo.
+/// · Juan pide hablar con Claudio: Alma lo pasa sin ceremonia (como mucho «Te lo paso.») con hablar_con_claudio (herramienta
+///   de la app). La app pide al Hub la conversación de Claudio (acción vozClaudio, solo el administrador principal) y cambia
+///   el socket sin colgar apenas termina esa frase cortita: otro agente, otra voz y el halo todo naranja. Claudio saluda como
+///   alguien a quien fueron a llamar («Hola, Juan, ¿cómo estás? Alma me dijo que me necesitabas»).
+/// · Claudio usa volver_con_alma (cuando Juan lo pide o cuando terminaron): la app vuelve a Alma (acción vozWeb, con la
+///   conversación de Claudio) y Alma cierra en una frase con lo que el Hub sabe que hizo Claudio («Listo, quedó pedido lo de…
+///   Si necesitas algo más, aquí estoy.»). Si Juan no sigue hablando, la app cuelga (Juan, 16-nov-2026: «Claudio aparece y
+///   se va; cuando se va vuelve Alma y cierra esa interacción»).
 /// · Solo cambia la herramienta del agente que corresponde: Alma no «vuelve con Alma» ni Claudio pasa «con Claudio».
 enum AgenteVoz: String, Equatable {
     case alma, claudio
@@ -31,25 +35,39 @@ enum AgenteVoz: String, Equatable {
 
     /// Lo que se manda al Hub para abrir la conversación de este agente. Con Alma va «claudio»: la app sabe cambiar de
     /// agente, y el Hub le da a Alma el permiso de pasar a Claudio (solo con el principal).
-    static func pedido(_ a: AgenteVoz, token: String, sesion: String, motivo: String = "") -> [String: Any] {
+    /// Al volver de Claudio va su conversación (`vuelta_claudio`): el Hub busca lo que hizo y da la frase de cierre de Alma.
+    static func pedido(_ a: AgenteVoz, token: String, sesion: String, motivo: String = "", deClaudio: String = "") -> [String: Any] {
         var b: [String: Any] = ["hub": 1, "action": a.accion, "token": token, "session": sesion]
         if a == .claudio { b["motivo"] = String(motivo.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)) }
-        else { b["app"] = "alma"; b["claudio"] = true }
+        else { b["app"] = "alma"; b["claudio"] = true; if !deClaudio.isEmpty { b["vuelta_claudio"] = deClaudio } }
         return b
     }
 
-    /// ¿Ya se puede cerrar la conversación de antes? Cuando terminó de sonar su frase («te paso con Claudio») y pasó un
-    /// respiro, o a los `tope` segundos de pedido el cambio (para no quedarse esperando si el audio no avisa).
-    static let respiro = 0.35, tope = 6.0
+    /// ¿Ya se puede cerrar la conversación de antes? Cuando terminó de sonar su frase («Te lo paso.»), casi sin respiro, o a
+    /// los `tope` segundos de pedido el cambio (para no quedarse esperando si el audio no avisa). Juan, 16-nov-2026: «que sea
+    /// más rápido»; antes 0,35 s y 6 s.
+    static let respiro = 0.1, tope = 3.0
     static func listo(finVoz: Date, pedido: Date, ahora: Date) -> Bool {
         ahora.timeIntervalSince(finVoz) >= respiro || ahora.timeIntervalSince(pedido) >= tope
     }
 
-    /// El primer mensaje de la conversación nueva: Claudio, el que trae su ficha; Alma al volver, esta frase (Juan no la
-    /// llamó: ya estaba en la llamada).
+    /// El primer mensaje de la conversación nueva: Claudio, el que trae su ficha (un saludo de persona que llegó); Alma al
+    /// volver, la frase de cierre que da el Hub con lo que hizo Claudio (`vuelta`), o esta si el Hub no la trae.
     static let vuelta = "Aquí estoy de nuevo. ¿Qué más hacemos?"
-    static func primerMensaje(_ a: AgenteVoz, ficha: String) -> String {
-        a == .claudio ? (ficha.isEmpty ? "Hola, aquí Claudio. ¿Qué hacemos?" : ficha) : vuelta
+    static let saludoClaudio = "Hola, ¿cómo estás? Alma me dijo que me necesitabas."
+    static func primerMensaje(_ a: AgenteVoz, ficha: String, cierre: String = "") -> String {
+        let c = cierre.trimmingCharacters(in: .whitespacesAndNewlines)
+        return a == .claudio ? (ficha.isEmpty ? saludoClaudio : ficha) : (c.isEmpty ? vuelta : c)
+    }
+
+    /// Alma volvió de Claudio y ya cerró: ¿cuelga ya la app? Cuando su frase de cierre sonó entera (llegó audio después de
+    /// `desde`) y pasaron `cierreTras` segundos de silencio, si Juan no dijo nada desde que volvió. Si el audio nunca llega,
+    /// a los `cierreTope` segundos. Si Juan habla, no cuelga: la conversación sigue normal.
+    static let cierreTras = 4.0, cierreTope = 20.0
+    static func cuelgaTrasVuelta(desde: Date, finVoz: Date, juanHablo: Date?, ahora: Date) -> Bool {
+        if let j = juanHablo, j >= desde { return false }
+        if finVoz > desde { return ahora.timeIntervalSince(finVoz) >= cierreTras }
+        return ahora.timeIntervalSince(desde) >= cierreTope
     }
 
     /// Lo que dice la pantalla de la llamada mientras habla el agente.

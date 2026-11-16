@@ -5,7 +5,6 @@ import SwiftUI
 struct LlamadaVista: View {
     @ObservedObject var voz: VozNativa
     let ocultar: () -> Void
-    @State private var respira = false
     @Environment(\.accessibilityReduceMotion) private var sinMovimiento
     /// Tarjeta de la llamada abierta (#446 T2): la roca se achica a 96 px y la tarjeta sube desde abajo.
     private var conTarjeta: Bool { voz.tarjeta != nil && (voz.tarjetaVista == .abierta || voz.tarjetaVista == .detalle) }
@@ -87,7 +86,6 @@ struct LlamadaVista: View {
             .padding(.horizontal, conTarjeta ? 12 : 24).padding(.vertical, 18)
             .animation(sinMovimiento ? .easeInOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.86), value: voz.tarjetaVista)
         }
-        .onAppear { respira = true }
     }
 
     /// La pestañita de la tarjeta: arriba, bajo «ALMA». Tocarla la abre otra vez.
@@ -106,32 +104,15 @@ struct LlamadaVista: View {
         .accessibilityLabel("Abrir la tarjeta de la llamada: " + TarjetaVozVista.nombre(t.tipo) + " " + t.titulo)
     }
 
-    /// El color del halo: el naranja de Claudio o el coral de Alma (AgenteVoz.halo).
-    private var halo: Color { voz.agente.halo.map { Color(red: $0.r, green: $0.g, blue: $0.b) } ?? Color.almaCoral }
 
-    /// La roca de Alma: respira sola y crece con la voz (la tuya o la de ella).
+    /// La roca de Alma (UNA ROCA, Alma/RocaAlma.swift): la misma de todas las pantallas. Respira siempre y crece con la voz
+    /// (la tuya, la de Alma o la de Claudio, con su halo naranja). Con la tarjeta se achica a 96 px con un resorte (el morph).
     private var roca: some View {
-        let s = 1 + voz.nivel * 0.28
-        return ZStack {
-            // Hablar con Claudio (Hub #550): con Claudio el halo es todo naranja; con Alma, su coral.
-            Circle().fill(halo.opacity(voz.agente == .claudio ? 0.6 : 0.35)).frame(width: 260, height: 260).blur(radius: 40)
-                .scaleEffect(respira ? 1.08 : 0.92)
-                .animation(.easeInOut(duration: 5.5).repeatForever(autoreverses: true), value: respira)
-                .animation(sinMovimiento ? nil : .easeInOut(duration: 0.6), value: voz.agente)
-            Circle()
-                .fill(RadialGradient(colors: [Color(red: 1, green: 0.985, blue: 0.97), Color(red: 0.99, green: 0.9, blue: 0.86),
-                                              Color(red: 0.96, green: 0.78, blue: 0.71), Color(red: 0.94, green: 0.68, blue: 0.59)],
-                                     center: UnitPoint(x: 0.36, y: 0.3), startRadius: 4, endRadius: 120))
-                .frame(width: 180, height: 180)
-                .shadow(color: halo.opacity(0.5), radius: 30, y: 18)
-                .scaleEffect(s)
-                .animation(.spring(response: 0.22, dampingFraction: 0.8), value: voz.nivel)
-            Image(systemName: "sparkle").font(.system(size: 28)).foregroundStyle(Color(red: 0.71, green: 0.38, blue: 0.31).opacity(0.45))
-        }
-        // Con la tarjeta de la llamada, la roca se achica a 96 px.
-        .scaleEffect(conTarjeta ? 96.0 / 180.0 : 1)
-        .frame(height: conTarjeta ? 120 : 260)
-        .opacity(voz.estado == .conectando ? 0.7 : 1)
+        RocaAlma(diametro: 180, nivel: voz.nivel, enLlamada: true, claudio: voz.agente == .claudio)
+            .scaleEffect(conTarjeta ? 96.0 / 180.0 : 1)
+            .animation(sinMovimiento ? nil : .spring(response: 0.5, dampingFraction: 0.68), value: conTarjeta)
+            .frame(height: conTarjeta ? 120 : 260)
+            .opacity(voz.estado == .conectando ? 0.7 : 1)
     }
 }
 

@@ -87,12 +87,8 @@ struct PortalVista: View {
                 // el halo coral de Alma, que llega primero
                 Circle().fill(Color.almaCoral.opacity(0.35)).frame(width: lado, height: lado).blur(radius: 60)
                     .scaleEffect(portal.cubierto ? 1.1 : 0.001).opacity(portal.cubierto ? 1 : 0)
-                // la roca: blanca y cálida, con su luz arriba a la izquierda
-                Circle()
-                    .fill(RadialGradient(colors: [Color(red: 1, green: 0.99, blue: 0.98), Color(red: 0.99, green: 0.95, blue: 0.93),
-                                                  Color(red: 0.98, green: 0.9, blue: 0.86)],
-                                         center: UnitPoint(x: 0.4, y: 0.35), startRadius: 0, endRadius: lado * 0.6))
-                    .frame(width: lado, height: lado)
+                // la roca: la misma de Alma (RocaAlma), del tamaño de la pantalla; el destello lo pone el portal cuando ya cubrió
+                RocaAlma(diametro: lado, destello: false)
                     .scaleEffect(portal.cubierto ? 1 : 0.001).opacity(portal.cubierto ? 1 : 0)
                 // el destello, que aparece en el centro cuando ya cubrió
                 Image(systemName: "sparkle").font(.system(size: 30)).foregroundStyle(Color(red: 0.79, green: 0.76, blue: 0.72))

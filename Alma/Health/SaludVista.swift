@@ -864,9 +864,8 @@ struct ConexionVista: View {
                 lamina("linea-mano", visible: m.pasoConexion == 0)
                 lamina("linea-anillo", visible: m.pasoConexion == 1 || m.pasoConexion == 2)
                 lamina("linea-toque", visible: m.pasoConexion == 3)
-                Circle()
-                    .fill(RadialGradient(colors: [Color(hex: 0xFFFBF8), Color(hex: 0xFCE6DC), Color(hex: 0xF6C7B5), Color(hex: 0xEFAE97)], center: UnitPoint(x: 0.36, y: 0.3), startRadius: 2, endRadius: 90))
-                    .frame(width: 150, height: 150).shadow(color: Tinta.peach.opacity(0.5), radius: 30, y: 20)
+                // UNA ROCA: la de Alma (RocaAlma), no una esfera propia; aparece cuando el anillo quedó conectado.
+                RocaAlma(diametro: 150)
                     .scaleEffect(m.pasoConexion == 4 ? 1 : 0.5).opacity(m.pasoConexion == 4 ? 1 : 0)
                     .animation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 1.2).delay(0.3), value: m.pasoConexion)
             }
@@ -909,7 +908,7 @@ struct ConexionVista: View {
     }
 }
 
-/// Respira con Alma (4 · 4 · 6), cuatro vueltas sobre la roca encendida.
+/// Respira con Alma (4 · 4 · 6), cuatro vueltas con la roca de Alma (la misma de todas las pantallas).
 struct RespiraVista: View {
     @Environment(\.dismiss) private var cerrar
     @State private var fase = ("Inhala", "4 segundos")
@@ -920,9 +919,8 @@ struct RespiraVista: View {
             if let img = Foto.imagen("cap-respira") { Image(uiImage: img).resizable().scaledToFill().ignoresSafeArea() }
             Color(hex: 0x3C2C22, opacity: 0.28).ignoresSafeArea()
             VStack(spacing: 0) {
-                Circle()
-                    .fill(RadialGradient(colors: [Color(hex: 0xFFFBF8), Color(hex: 0xFCE6DC), Color(hex: 0xF6C7B5), Color(hex: 0xEFAE97)], center: UnitPoint(x: 0.36, y: 0.3), startRadius: 2, endRadius: 90))
-                    .frame(width: 150, height: 150).shadow(color: Color(hex: 0xF2B39E, opacity: 0.9), radius: 40, y: 20)
+                // UNA ROCA: la de Alma (RocaAlma). Inhala/exhala agranda el contenedor; su pulso sigue por dentro.
+                RocaAlma(diametro: 150)
                     .scaleEffect(escala).padding(.bottom, 36)
                 Text(fase.0).font(Tipo.serif(44)).contentTransition(.opacity)
                 Text(fase.1.uppercased()).tracking(2.6).font(Tipo.sans(13)).opacity(0.85).padding(.top, 10)
