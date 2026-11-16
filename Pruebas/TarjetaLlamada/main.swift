@@ -97,5 +97,19 @@ do {
     revisa(e != nil && TarjetaVoz.nombre("edificio") == "Edificio", "el edificio (Hub #508 T2) es tarjeta")
 }
 
+// MARK: - Socio (Hub #508 Fase 2): su tablero mientras se habla de él
+
+do {
+    let s = TarjetaVoz(["id": "tvS", "clave": "socio:1x2y3z", "tipo": "socio", "titulo": "Carlos Prueba", "sub": "Edificio Prueba 633 · Torre Demo 301",
+                        "etiqueta": "Socio", "chip": "Socio", "tono": "info", "iniciales": "CP", "datos": ["Ocupación octubre: 75.8%", "2 pedidos abiertos"],
+                        "detalle": ["Retomar: La boda de su hija (dom 8 nov)"], "conv": "", "tel": "", "wa": "",
+                        "cuadros": [["id": "foto", "tipo": "foto", "tam": "m", "prioridad": 1, "iniciales": "CP", "esfera": "proposito"]]])
+    revisa(s != nil && s?.tipo == "socio" && s?.datos.count == 2 && s?.tel == "" && s?.wa == "" && (s?.crudo["cuadros"] as? [Any])?.count == 1,
+           "el tablero del socio es tarjeta (sin teléfono ni WhatsApp) y sus cuadros van tal cual a la página")
+    revisa(TarjetaVoz.nombre("socio") == "Socio" && TarjetaVoz.tipos.contains("socio"), "su nombre en la pestañita: Socio, y va en los tipos que la app avisa al Hub")
+    var r = ReglasTarjeta()
+    revisa(r.recibir(s!, pantalla: true) == .mostrar && r.actual?.clave == "socio:1x2y3z", "el socio se muestra y reemplaza a lo que había, como el tablero")
+}
+
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallaron.")
 exit(fallos == 0 ? 0 : 1)
