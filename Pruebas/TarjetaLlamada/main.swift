@@ -120,5 +120,27 @@ do {
     revisa(TarjetaVoz.nombre("datos") == "Datos" && TarjetaVoz.tipos.contains("datos"), "su nombre: Datos, y va en los tipos que la app avisa al Hub")
 }
 
+// MARK: - Snapshot estilo Jarvis (Hub, snapshot.js; Juan 16-nov-2026): recepción, proyecto y lo importante arriba
+
+do {
+    let j: [String: Any] = ["id": "tvJ", "clave": "reserva:HMPRUEBA01", "tipo": "reserva", "titulo": "Lucía Prado",
+        "destacado": ["texto": "Le encantó el apartamento, pero el agua caliente sigue fallando.", "tono": "aviso"],
+        "cuadros": [["id": "foto", "tipo": "foto"],
+                    ["id": "experiencia", "tipo": "termometro", "k": "Experiencia", "nivel": 55, "v": "Hay que cuidarla", "tono": "aviso", "riesgo": "Medio", "porque": "La falla sigue abierta."],
+                    ["id": "animo", "tipo": "animo", "molesta": ["La ducha sin agua caliente", ""], "feliz": ["La vista", "La bienvenida", "El café", "Otra más"]],
+                    ["id": "foco", "tipo": "foco", "problema": "La ducha sigue sin agua caliente."]]]
+    let t = TarjetaVoz(j)!
+    revisa(t.snapshot.destacado.hasPrefix("Le encantó") && t.snapshot.destacadoTono == "aviso", "el destacado del snapshot se lee")
+    revisa(t.snapshot.experiencia == "Hay que cuidarla" && t.snapshot.nivel == 55 && t.snapshot.riesgo == "Medio" && t.snapshot.porque == "La falla sigue abierta.", "la experiencia, su nivel, el riesgo de mala reseña y su porqué")
+    revisa(t.snapshot.molesta == ["La ducha sin agua caliente"] && t.snapshot.feliz.count == 3 && t.snapshot.problema.hasPrefix("La ducha"), "lo que le molesta y lo que lo tiene feliz (máximo 3, sin vacíos) y el problema")
+    revisa(!t.snapshot.vacio && TarjetaVoz(["clave": "x", "tipo": "reserva"])!.snapshot.vacio, "sin snapshot (Hub de antes) no se pinta nada nuevo")
+    let n = TarjetaVoz(["clave": "x", "tipo": "reserva", "cuadros": [["tipo": "termometro", "v": "Mala", "nivel": 400]]])!
+    revisa(n.snapshot.nivel == 100, "un nivel fuera de rango se queda entre 0 y 100")
+    let r = TarjetaVoz(["id": "tvR", "clave": "recepcion:brunelo", "tipo": "recepcion", "titulo": "Recepción Brunelo"])
+    let p = TarjetaVoz(["id": "tvP", "clave": "proyecto:p42", "tipo": "proyecto", "titulo": "Torre Prueba 804"])
+    revisa(r != nil && p != nil && TarjetaVoz.nombre("recepcion") == "Recepción" && TarjetaVoz.nombre("proyecto") == "Proyecto", "recepción y proyecto son tarjetas, con su nombre")
+    revisa(TarjetaVoz.tipos.contains("recepcion") && TarjetaVoz.tipos.contains("proyecto"), "y van en los tipos que la app avisa al Hub")
+}
+
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallaron.")
 exit(fallos == 0 ? 0 : 1)
