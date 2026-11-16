@@ -69,6 +69,14 @@ jobs:
           xcrun swiftc Alma/TarjetaLlamada.swift Pruebas/TarjetaLlamada/main.swift -o /tmp/tarjeta-llamada
           /tmp/tarjeta-llamada
 
+      # GIF de la broma (Hub, 16-nov-2026): solo con Juan, con la pantalla a la vista y con Alma; uno cada 60 s y 4 por
+      # llamada; la idea se limpia. Lógica pura.
+      - name: Probar el GIF de la broma
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/GifBroma.swift Pruebas/GifBroma/main.swift -o /tmp/gif-broma
+          /tmp/gif-broma
+
       # UNA ROCA (Juan, 16-nov-2026): una sola piedra en toda la app, siempre la misma con distintos tamaños. Solo
       # Alma/RocaAlma.swift la dibuja (ninguna pantalla pinta su propia esfera con degradado) y su pulso respira siempre,
       # crece con la voz (Alma, Claudio o tú) y no se congela con un nivel inválido. Lógica pura.

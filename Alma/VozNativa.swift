@@ -202,6 +202,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     @Published private(set) var tarjeta: TarjetaVoz?
     @Published private(set) var tarjetaVista: ReglasTarjeta.Vista = .nada
     private var reglasTarjeta = ReglasTarjeta()
+    /// GIF de la broma (Hub, 16-nov-2026): uno cada 60 s y 4 por llamada, solo con Juan y la pantalla a la vista (GifBroma.swift).
+    private var reglasGif = ReglasGif()
     /// La conversación de ElevenLabs de esta llamada (para pedir su tarjeta y decir si Juan ve la pantalla).
     private var idLlamada: String?
     /// Panel de Claudio (Hub #550, apps-script/claudiopanel.js): la conversación de Claudio de esta llamada (para pedir su panel).
@@ -438,7 +440,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         paso(weeboModo == "fijo" ? "Juan fijó el Modo Weebo en \(n)" : "Juan dejó el Modo Weebo en automático")
         guard estado == .hablando else { return }
         mandar(["type": "contextual_update", "text": weeboModo == "fijo"
-            ? "MODO WEEBO FIJO: Juan acaba de fijar tu Modo Weebo en el nivel \(n). Úsalo desde ahora (con un problema o una urgencia, vuelve a tu centro). No lo comentes."
+            ? "MODO WEEBO FIJO: Juan acaba de poner el techo de tu Modo Weebo en el nivel \(n). Es tu techo, no tu punto de partida: subes por grados solo si la charla lo abre (con un problema o una urgencia, vuelve a tu centro). No lo comentes."
             : "MODO WEEBO AUTOMÁTICO: Juan dejó tu Modo Weebo en automático: vuelve a medirlo tú. No lo comentes."])
     }
     /// La sesión de la llamada (y la del anillo): no se mezcla, así que pausa la música o los videos de otras apps.
@@ -658,7 +660,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         EscuchaInicio.shared.detener()
         estado = .conectando; colaVoz = []; saludoDesde = nil; pausada = false; cerrarTrasRespuesta = false; vozAlConectar = 0; inicioEnviado = false; antesDeFicha = []
         ultimaLlamada = (0, nil); motivoCalle = nil; reabiertas = 0; reabierta = nil; motivoFin = nil
-        weebo = nil; weeboCambio = 0; adaptacion = nil; flechaT?.cancel()
+        weebo = nil; weeboCambio = 0; adaptacion = nil; flechaT?.cancel(); reglasGif.reiniciar()
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()
         sonido("alma-inicio", llamada: true)   // el segundo beep: el de la llamada a Alma, suena siempre (también en conferencia): lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
@@ -1027,6 +1029,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if nombre == "nivel_weebo" {
             let n: Int? = (p["nivel"] as? NSNumber)?.intValue ?? Int((p["nivel"] as? String) ?? "")
             if let n, (0...3).contains(n) { if n != weebo { paso("Modo Weebo: nivel \(n)") }; ponerWeebo(n); emitirPersonalidad() }
+            return
+        }
+        // GIF de la broma (Hub, 16-nov-2026): no espera respuesta (expects_response false), así no hace hablar a Alma. Si se
+        // muestra, la página del inicio lo pide al Hub y lo pone unos segundos en un cuadro del tablero o en el chat.
+        if nombre == "mostrar_gif" {
+            if let idea = reglasGif.pedir(p["idea"], principal: personalidad != nil, pantalla: pantallaVisible, conAlma: agente == .alma) {
+                paso("Alma muestra un GIF: " + idea); emitir(["tipo": "gif", "idea": idea])
+            }
             return
         }
         var res = "Esta herramienta no existe en la app.", error = true
