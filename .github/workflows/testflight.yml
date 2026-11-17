@@ -77,6 +77,14 @@ jobs:
           xcrun swiftc Alma/GifBroma.swift Pruebas/GifBroma/main.swift -o /tmp/gif-broma
           /tmp/gif-broma
 
+      # Tarjetas de clubes (Juan, 17-nov-2026): los códigos EAN y Code 39, el formato sugerido, encontrar la que pidió por
+      # voz y qué se le contesta a Alma. Lógica pura.
+      - name: Probar las tarjetas de clubes
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/TarjetasClubReglas.swift Pruebas/TarjetasClub/main.swift -o /tmp/tarjetas-club
+          /tmp/tarjetas-club
+
       # UNA ROCA (Juan, 16-nov-2026): una sola piedra en toda la app, siempre la misma con distintos tamaños. Solo
       # Alma/RocaAlma.swift la dibuja (ninguna pantalla pinta su propia esfera con degradado) y su pulso respira siempre,
       # crece con la voz (Alma, Claudio o tú) y no se congela con un nivel inválido. Lógica pura.
@@ -140,6 +148,12 @@ jobs:
         run: |
           xcrun swiftc Alma/RespaldoReglas.swift Pruebas/Respaldo/main.swift -o /tmp/respaldo
           /tmp/respaldo
+      # Maricarmen, el alter ego de Alma (Hub #666): cuándo entra y sale, qué se manda al Hub y su voz. Lógica pura.
+      - name: Probar Maricarmen
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/MaricarmenReglas.swift Alma/RespaldoReglas.swift Pruebas/Maricarmen/main.swift -o /tmp/maricarmen
+          /tmp/maricarmen
       # Notificaciones por tipo (Hub #551): cómo se arma cada una con los ajustes de su tipo (dónde se ve, sonido, urgente,
       # agrupar, vista previa) y Siri solo con la app cerrada o en segundo plano, fuera de conferencia y Modo calle. Lógica pura.
       - name: Probar las notificaciones por tipo
