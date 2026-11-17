@@ -7,7 +7,7 @@ import SwiftUI
 /// · Si están conectados como audio (AVAudioSession): si son la salida de ahora, o si aparecen como micrófono Bluetooth.
 /// · Su batería NO: son audífonos Bluetooth clásicos (A2DP/HFP) y iOS no da esa batería a las apps (solo al sistema:
 ///   widget de Baterías). Si algún día anuncian un servicio BLE de batería (180F), se lee de ahí; si no, «no disponible».
-/// Nada se inventa: sin dato, la pantalla Dispositivos lo dice así. El nombre de los lentes se reconoce con LentesDatos.
+/// Nada se inventa: sin dato, la pantalla Wearables lo dice así. El nombre de los lentes se reconoce con LentesDatos.
 final class Lentes: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     static let shared = Lentes()
 
@@ -42,7 +42,7 @@ final class Lentes: NSObject, ObservableObject, CBCentralManagerDelegate, CBPeri
         else if nombre.isEmpty { nombre = UserDefaults.standard.string(forKey: "lentes_nombre") ?? "" }
     }
 
-    /// Al abrir Dispositivos: busca los lentes por Bluetooth de baja energía (conectados al iPhone o anunciándose) por si
+    /// Al abrir Wearables: busca los lentes por Bluetooth de baja energía (conectados al iPhone o anunciándose) por si
     /// exponen su batería. Diez segundos y se detiene.
     func buscarBLE() {
         mirarAudio()

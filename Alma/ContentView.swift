@@ -13,7 +13,9 @@ struct ContentView: View {
     @State private var salud = false
     /// Diagnóstico del anillo (Bluetooth): Ajustes → Alma con el anillo (DiagnosticoAnillo.swift).
     @State private var diagAnillo = false
-    @State private var dispositivos = false
+    /// Wearables (Wearables.swift): a pantalla completa; `wearableInicial` abre uno directo («anillo», «lentes», «agregar»).
+    @State private var wearables = false
+    @State private var wearableInicial: String?
     /// Guía de camino (GuiaCamino.swift): el mapa sube cuando la guía empieza con la pantalla a la vista.
     @State private var mapaCamino = false
     /// Ajustes → «Tarjetas de clubes» (TarjetasClub.swift).
@@ -66,15 +68,18 @@ struct ContentView: View {
             }
     }
 
-    /// Las hojas que suben sobre la pantalla (anillo, dispositivos, Guía de camino, tarjetas de clubes), aparte del body
+    /// Las hojas que suben sobre la pantalla (anillo, Wearables, Guía de camino, tarjetas de clubes), aparte del body
     /// para que el compilador no se tarde de más.
     private var conHojas: some View {
         conRoca
             .background { Color.clear.sheet(isPresented: $diagAnillo) { DiagnosticoAnilloVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirDiagnosticoAnillo)) { _ in diagAnillo = true }
-            // Dispositivos (el anillo y los lentes): desde Ajustes o cuando Alma la abre (anillo_estado con mostrar); la llamada se baja.
-            .background { Color.clear.sheet(isPresented: $dispositivos) { DispositivosVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
-            .onReceive(NotificationCenter.default.publisher(for: .abrirDispositivos)) { _ in llamadaOculta = true; dispositivos = true }
+            // Wearables (el anillo, los lentes y los audífonos): desde Ajustes o cuando Alma la abre (anillo_estado con mostrar);
+            // a pantalla completa en iPhone y iPad (nada de hojas chicas); la llamada se baja.
+            .background { Color.clear.fullScreenCover(isPresented: $wearables) { WearablesVista(inicial: wearableInicial) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirWearables)) { n in
+                llamadaOculta = true; wearableInicial = n.object as? String; wearables = true
+            }
             // Guía de camino: el mapa con el camino y el próximo paso; la llamada se baja (sigue en la roca).
             .background { Color.clear.sheet(isPresented: $mapaCamino) { MapaCaminoVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirGuiaCamino)) { _ in llamadaOculta = true; mapaCamino = true }
