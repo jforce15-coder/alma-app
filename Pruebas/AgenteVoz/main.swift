@@ -22,6 +22,7 @@ revisa(pc["action"] as? String == "vozClaudio" && pc["session"] as? String == "s
 revisa((AgenteVoz.pedido(.claudio, token: "t", sesion: "s", motivo: String(repeating: "a", count: 900))["motivo"] as? String)?.count == 300, "el motivo va corto (300 letras)")
 let pa = AgenteVoz.pedido(.alma, token: "t", sesion: "s")
 revisa(pa["action"] as? String == "vozWeb" && pa["app"] as? String == "alma" && pa["claudio"] as? Bool == true && pa["motivo"] == nil, "Alma se pide con vozWeb, como la app de Alma que sabe cambiar a Claudio")
+revisa(pa["maricarmen"] as? Bool == true && pc["maricarmen"] == nil, "Alma se pide con «maricarmen»: la app sabe pasar a Maricarmen en la llamada (Hub #707); Claudio no")
 
 // Cuándo se corta la conversación de antes: después de su frase
 let t0 = Date(timeIntervalSince1970: 1_000)

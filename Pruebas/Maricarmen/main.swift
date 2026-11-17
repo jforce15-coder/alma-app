@@ -11,6 +11,7 @@ typealias M = MaricarmenReglas
 
 // Entrar
 revisa(M.pideIr("Pásame con Maricarmen"), "«Pásame con Maricarmen» pasa con ella")
+revisa(M.herramienta == "pasar_a_maricarmen", "la herramienta con la que Alma la pasa se llama como en el Hub (voz.js, maricarmen.js; #707)")
 revisa(M.pideIr("Alma, ¿me pasas con Mari Carmen, por favor?"), "«Mari Carmen» separado también")
 revisa(M.pideIr("quiero hablar con Maricarmen"), "«quiero hablar con Maricarmen»")
 revisa(M.pideIr("Ponme a Maricarmen"), "«ponme a Maricarmen»")

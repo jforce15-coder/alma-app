@@ -34,12 +34,13 @@ enum AgenteVoz: String, Equatable {
     var accion: String { self == .claudio ? "vozClaudio" : "vozWeb" }
 
     /// Lo que se manda al Hub para abrir la conversación de este agente. Con Alma va «claudio»: la app sabe cambiar de
-    /// agente, y el Hub le da a Alma el permiso de pasar a Claudio (solo con el principal).
+    /// agente, y el Hub le da a Alma el permiso de pasar a Claudio (solo con el principal). Y «maricarmen» (Hub #707): la app
+    /// sabe pasar a Maricarmen dentro de la llamada, y el Hub le da a Alma la herramienta pasar_a_maricarmen (solo el principal).
     /// Al volver de Claudio va su conversación (`vuelta_claudio`): el Hub busca lo que hizo y da la frase de cierre de Alma.
     static func pedido(_ a: AgenteVoz, token: String, sesion: String, motivo: String = "", deClaudio: String = "") -> [String: Any] {
         var b: [String: Any] = ["hub": 1, "action": a.accion, "token": token, "session": sesion]
         if a == .claudio { b["motivo"] = String(motivo.trimmingCharacters(in: .whitespacesAndNewlines).prefix(300)) }
-        else { b["app"] = "alma"; b["claudio"] = true; if !deClaudio.isEmpty { b["vuelta_claudio"] = deClaudio } }
+        else { b["app"] = "alma"; b["claudio"] = true; b["maricarmen"] = true; if !deClaudio.isEmpty { b["vuelta_claudio"] = deClaudio } }
         return b
     }
 
