@@ -62,3 +62,33 @@ enum AtajosPermitidos {
         }
     }
 }
+
+/// abrir_apple_pay (Hub #662): abre la vista de pago de Apple Pay. Primero el atajo permitido de Juan para eso (si tiene uno
+/// con «Apple Pay», «Wallet» o «Cartera» en el nombre); si no, la app Wallet. Reglas puras en ApplePayReglas.swift.
+/// No paga ni lee tarjetas: Juan confirma con Face ID. Siempre contesta (JSON, ¿es error?).
+enum ApplePay {
+    static func abrir(_ fin: @escaping (String, Bool) -> Void) {
+        guard UIApplication.shared.applicationState == .active else {
+            fin(ManosAlma.json(["abierto": false, "motivo": "El teléfono está bloqueado: iOS no deja abrir Wallet así. Dile a Juan que desbloquee y te lo vuelva a pedir, o que dé doble clic al botón lateral."]), false)
+            return
+        }
+        if let nombre = ApplePayReglas.atajo(en: AtajosPermitidos.lista) {
+            AtajosPermitidos.correr(nombre, fin)
+            return
+        }
+        probar(ApplePayReglas.enlaces, fin)
+    }
+
+    private static func probar(_ enlaces: [String], _ fin: @escaping (String, Bool) -> Void) {
+        guard let primero = enlaces.first, let u = URL(string: primero) else {
+            fin(ManosAlma.json(["abierto": false, "motivo": "iOS no abrió Wallet. Dile a Juan que dé doble clic al botón lateral para pagar con Apple Pay."]), true)
+            return
+        }
+        UIApplication.shared.open(u, options: [:]) { ok in
+            if ok {
+                fin(ManosAlma.json(["abierto": true, "como": "wallet",
+                                    "que": "Abrí Wallet con sus tarjetas. Para pagar: elige la tarjeta, Face ID y acerca el teléfono a la terminal. Tú no ves las tarjetas ni pagas nada."]), false)
+            } else { probar(Array(enlaces.dropFirst()), fin) }
+        }
+    }
+}
