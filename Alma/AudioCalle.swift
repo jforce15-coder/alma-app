@@ -13,7 +13,8 @@ import Foundation
 ///   · Interruptor «Bajar la música cuando Alma hable» (Ajustes): encendido de fábrica en el Modo calle, apagado en
 ///     conferencia. Apagado, Alma habla encima de la música (se mezcla) y la llamada la pausa, como antes.
 ///   · Un aviso con la app abierta (sin el Modo calle) baja la música mientras usa el micrófono, como siempre.
-///   · Con «Alma con el anillo» no se toca nada: el anillo necesita el audio que no se mezcla («Reproduciendo»).
+///   · Con «Alma con el anillo» no se toca nada: el anillo necesita el audio que no se mezcla («Reproduciendo»). Pero si hay
+///     música sonando el anillo no lo toma (AnilloVuelve.alQuedarLista) y la llamada baja la música como la llamada normal.
 ///   · Volver a mezclar: primero solo se cambian las opciones (sin soltar el audio). Con la app a la vista, además se suelta el
 ///     audio avisando a las otras apps (notifyOthersOnDeactivation), que es lo que hace que iOS les devuelva el volumen.
 ///     Con el teléfono bloqueado no se suelta: iOS no deja volver a abrir el micrófono y el Modo calle se quedaría sordo.
@@ -75,6 +76,10 @@ enum AudioCalle {
         case .llamada: return baja ? llamadaBajando : llamadaSola
         }
     }
+
+    /// ¿La llamada usa el audio del anillo (que no se mezcla)? Solo si el anillo de verdad lo tiene: con música sonando el
+    /// anillo no lo tomó (AnilloVuelve.alQuedarLista), así que la llamada baja la música en vez de pausarla (Juan, 17-nov-2026).
+    static func llamadaConAnillo(anilloListo: Bool, otraSuena: Bool) -> Bool { anilloListo && !otraSuena }
 
     /// Cómo se pasa de unas opciones a otras.
     enum Cambio: Equatable { case nada, cambiar, soltarYCambiar }

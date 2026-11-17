@@ -44,6 +44,19 @@ enum AnilloVuelve {
     /// Al abrir la app: ¿se vuelve a tomar el audio para el anillo? No si otra app está sonando (la pausaría).
     static func alAbrir(modoAnillo: Bool, otraSuena: Bool) -> Bool { modoAnillo && !otraSuena }
 
+    /// Spotify mientras usas la app (Juan, 17-nov-2026: «la música no suena mientras uso la plataforma»). Cada vez que el
+    /// anillo queda listo (al abrir la app, al encenderlo, al colgar, al salir de conferencia) tomaba el audio que no se
+    /// mezcla y pausaba la música. Ahora, con música sonando:
+    ///   · dejarSonar: Alma suelta su audio (micrófono y silencio) avisando a las otras apps: la música sigue y vuelve a su
+    ///     volumen si estaba baja por la llamada. El anillo vuelve solo cuando la música pare (como al abrir la app).
+    ///   · esperar: si otro modo usa el micrófono (conferencia, Modo calle, el Modo Inicio), no se le toca; solo se espera.
+    /// Sin música, se toma como siempre.
+    enum AlQuedar: Equatable { case tomar, dejarSonar, esperar }
+    static func alQuedarLista(otraSuena: Bool, microfonoOcupado: Bool) -> AlQuedar {
+        guard otraSuena else { return .tomar }
+        return microfonoOcupado ? .esperar : .dejarSonar
+    }
+
     static func avisar(activo: Bool, silencio: Bool, microfono: Bool, appActiva: Bool, yaAvisado: Bool) -> Bool {
         guard !appActiva, !yaAvisado else { return false }
         return !activo || !silencio || !microfono
