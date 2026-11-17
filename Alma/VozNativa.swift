@@ -1460,7 +1460,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // El porqué queda en el registro (antes decía solo «Pausa» y no se sabía quién había colgado).
         if habia { paso("Llamada terminada" + (motivoFin.map { " · " + $0 } ?? "")) }
         motivoFin = nil
-        UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
+        UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false; sinVozPregunta = false
         // Cierre normal de verdad: se deja salir el aviso de cierre antes de soltar la sesión (invalidateAndCancel lo
         // cortaba a veces y ElevenLabs lo anotaba como corte anormal, 1006, aunque hubiera colgado la app).
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
