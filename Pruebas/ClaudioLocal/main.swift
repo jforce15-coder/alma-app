@@ -69,5 +69,17 @@ revisa(R.elegir(voces.filter { $0.id != "juan-normal" && $0.id != "juan-mejorada
 revisa(R.elegir([voces[0]], a0)?.id == "paulina", "sin ninguna de hombre en español, la mejor en español (mejor una voz que ninguna)")
 revisa(R.elegir([voces[5]], a0) == nil, "en inglés, ninguna")
 
+// El tecleo mientras piensa (Hub #651)
+let tq = R.tecleo(semilla: 1)
+revisa(tq.count == Int(R.tecleoTrozo * 16000) * 2, "el tecleo es PCM 16 bits a 16 kHz, en trozos cortos")
+var pico = 0, conSonido = 0
+tq.withUnsafeBytes { (r: UnsafeRawBufferPointer) in for v in r.bindMemory(to: Int16.self) { pico = max(pico, abs(Int(v))); if v != 0 { conSonido += 1 } } }
+revisa(pico > 0 && pico <= 32767 / 10 + 1, "suena, pero bajito (como mucho un décimo del volumen)")
+revisa(conSonido < tq.count / 2 / 3, "son clics con silencio entre tecla y tecla, no un ruido seguido")
+revisa(R.tecleo(semilla: 1) == tq && R.tecleo(semilla: 2) != tq, "la misma semilla da el mismo trozo; otra, otro ritmo")
+revisa(R.tecleoTrozo <= R.tecleoCada && R.tecleoTras > 0, "cada trozo dura menos que el reloj: no se acumula tecleo delante de la respuesta")
+revisa(R.tiempos(total: 4.2, ["ms_ia": 1500, "ms_voz": 900]) == "Claudio local contestó en 4.2 s (IA 1.5 s · voz 0.9 s · lo demás 1.8 s)", "el registro dice dónde se va el tiempo")
+revisa(R.tiempos(total: 3, nil) == "Claudio local contestó en 3.0 s", "sin los tiempos del Hub, solo el total")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien: Claudio local.")

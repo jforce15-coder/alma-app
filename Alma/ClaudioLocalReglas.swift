@@ -71,6 +71,47 @@ enum ClaudioLocalReglas {
     /// Cuánto suena (segundos).
     static func duracion(_ a: Data) -> Double { Double(a.count / 2) / Double(hz) }
 
+    // MARK: - El tecleo mientras piensa (Hub #651)
+
+    /// Juan, 17-nov-2026: «Alma usa el indicador de escribiendo y Claudio no». Con Alma, ElevenLabs suena un tecleo suave
+    /// mientras trabaja una herramienta; Claudio local no pasa por ElevenLabs y se quedaba en silencio mientras el Hub
+    /// pensaba. Aquí se arma un tecleo parecido, en el mismo formato de su voz (PCM 16 bits a 16 kHz).
+    /// Empieza si la respuesta tarda más de `tecleoTras` (una respuesta rápida no lo necesita) y sale en trozos cortos, para
+    /// que al llegar la respuesta casi no quede tecleo en cola delante de su voz.
+    static let tecleoTras = 0.6, tecleoCada = 0.3, tecleoTrozo = 0.28
+    /// Un trozo de tecleo: clics cortos de ruido que se apagan (6–10 ms), separados 70–200 ms y a veces una pausa de palabra.
+    /// Bajito (como mucho un décimo del volumen). La misma semilla da el mismo trozo (para las pruebas); otra, otro ritmo.
+    static func tecleo(segundos: Double = tecleoTrozo, semilla: UInt64) -> Data {
+        let n = max(0, Int(segundos * Double(hz)))
+        guard n > 0 else { return Data() }
+        var m = [Int16](repeating: 0, count: n)
+        var x = semilla &* 6364136223846793005 &+ 1442695040888963407
+        func azar() -> Double {
+            x = x &* 6364136223846793005 &+ 1442695040888963407
+            return Double(x >> 11) / 9007199254740992.0   // 2^53: un número entre 0 y 1
+        }
+        var i = Int(azar() * 0.06 * Double(hz))
+        while i < n {
+            let largo = Int(0.006 * Double(hz)) + Int(azar() * 0.004 * Double(hz))
+            let fuerza = 0.04 + azar() * 0.05
+            for k in 0..<largo where i + k < n {
+                let caida = exp(-Double(k) / (Double(largo) / 4))
+                m[i + k] = Int16(max(-32767, min(32767, (azar() * 2 - 1) * fuerza * caida * 32767)))
+            }
+            i += Int((azar() < 0.15 ? 0.25 + azar() * 0.2 : 0.07 + azar() * 0.13) * Double(hz))
+        }
+        return m.withUnsafeBufferPointer { Data(buffer: $0) }
+    }
+
+    /// Lo que se anota de cada turno: el total y, si el Hub lo manda, cuánto fue de la IA y cuánto de la voz.
+    static func tiempos(total: Double, _ j: [String: Any]?) -> String {
+        var t = String(format: "Claudio local contestó en %.1f s", total)
+        if let ia = (j?["ms_ia"] as? NSNumber)?.doubleValue, let voz = (j?["ms_voz"] as? NSNumber)?.doubleValue {
+            t += String(format: " (IA %.1f s · voz %.1f s · lo demás %.1f s)", ia / 1000, voz / 1000, max(0, total - (ia + voz) / 1000))
+        }
+        return t
+    }
+
     // MARK: - Lo que dice la voz del iPhone
 
     /// Lo que la voz del iPhone leería raro: etiquetas de emoción ([warm]), markdown, enlaces y viñetas.
