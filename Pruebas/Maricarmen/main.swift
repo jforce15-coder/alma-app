@@ -21,6 +21,17 @@ revisa(!M.pideIr("Pásame con Claudio"), "con Claudio no es Maricarmen")
 revisa(!M.pideIr("pasar el recado a Maricarmen"), "un recado para una persona llamada Maricarmen no la llama")
 revisa(!M.pideIr("llama a Maricarmen"), "llamar a una persona llamada Maricarmen no la llama")
 revisa(!M.pideIr(""), "vacío, no")
+// Hub #679: las otras formas en que Juan la pide
+revisa(M.pideIr("¿Me puedes pasar con Maricarmen?"), "«¿me puedes pasar con Maricarmen?»")
+revisa(M.pideIr("Quiero comunicarme con Maricarmen"), "«quiero comunicarme con Maricarmen»")
+revisa(M.pideIr("Comunícate con Maricarmen"), "«comunícate con Maricarmen»")
+revisa(M.pideIr("Alma, quiero que me pases con Maricarmen"), "«quiero que me pases con Maricarmen»")
+revisa(M.pideIr("Conéctame con Marycarmen"), "«Marycarmen» junto también")
+revisa(M.pideIr("Hola, Maricarmen"), "«Hola, Maricarmen» al empezar")
+revisa(M.pideIr("Alma, oye Maricarmen"), "«Alma, oye Maricarmen»")
+revisa(!M.pideIr("dile hola a Maricarmen"), "un saludo para otra persona no la llama")
+revisa(!M.pideIr("hay que pasar a Maricarmen al aeropuerto"), "«pasar a Maricarmen» (recogerla) no la llama")
+revisa(!M.pideIr("no quiero comunicarme con Maricarmen"), "«no quiero comunicarme con Maricarmen» no")
 
 // Volver
 revisa(M.pideVolver("Pásame con Alma"), "«Pásame con Alma» vuelve")
