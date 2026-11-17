@@ -1088,10 +1088,11 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         turnoPedido += 1
         abandonado = nil; tardePendiente = nil; diciendoNoLlego = false   // un pedido nuevo: lo que llegue tarde del anterior ya no suena
         esperarRespuesta(turnoPedido)
+        // «Pásame con Maricarmen» (Hub #679): se abre la llamada y sigue con ella (VozNativa), no como pedido de texto al Hub
+        // (ahí Alma buscaba a una persona llamada Maricarmen).
+        if aviso == nil, MaricarmenReglas.pideIr(pide) { soltarEspera(); anotar("Pide a Maricarmen: abro la llamada con ella"); abrirLlamada(pide); return }
         // «Quiero hablar con Claudio» (Hub #550): directo a la llamada con Claudio, no como pedido de texto.
         if aviso == nil, AgenteVoz.pideClaudio(pide) { pasarAClaudio(pide, turno: turnoPedido); return }
-        // «Pásame con Maricarmen» (Hub #680): antes iba como pedido de texto al Hub y no pasaba nada. Ahora abre su llamada.
-        if aviso == nil, MaricarmenReglas.pideIr(pide) { soltarEspera(); anotar("Pide a Maricarmen: abro su llamada"); abrirLlamada(pide, maricarmen: true); return }
         preguntar(pide, aviso: aviso, turno: turnoPedido)
     }
 
@@ -1456,7 +1457,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     /// Hace falta conversar: se abre la llamada de ElevenLabs (la de siempre, VozNativa) con lo que pidió y, al colgar,
     /// el Modo calle vuelve a esperar «Alma». `aviso`: la abre Alma por un aviso (Hub #509 T4) y habla primero con su frase.
     /// `claudio`: la conversación de Claudio que dio el Hub (vozClaudio): la llamada se abre directo con él (Hub #550).
-    private func abrirLlamada(_ pedido: String, aviso: AlmaAbre.Datos? = nil, avisoId: String = "", claudio: [String: Any]? = nil, maricarmen: Bool = false) {
+    private func abrirLlamada(_ pedido: String, aviso: AlmaAbre.Datos? = nil, avisoId: String = "", claudio: [String: Any]? = nil) {
         cerrarMicrofono()
         fase = .llamada
         if encendido { uso.llamadas += 1 }
@@ -1464,7 +1465,6 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         v.desdeCalle = encendido
         v.ultimaLlamada = (0, nil)   // si la llamada no llega a empezar, no se cuenta la anterior
         if let claudio { if !v.hablarConClaudio(ficha: claudio) { anotar("No pude abrir la llamada con Claudio (ya había otra o falta la sesión)") } }
-        else if maricarmen { v.hablarConMaricarmen() }   // Hub #680: directo con Maricarmen
         else if let aviso { _ = v.hablarPorAviso(aviso, id: avisoId, conferencia: nil) } else { v.hablarAlOir(pedido) }
         llamadaVista = false; llamadaDesde = Date()
         reloj?.invalidate()

@@ -6,10 +6,10 @@ import Foundation
 /// hablar que la voz de respaldo) y VozNativa.swift (cuándo entra y cuándo sale).
 /// · Entra: en una llamada normal con Alma (también con la voz de respaldo), Juan dice «pásame con Maricarmen». La app lo
 ///   oye en lo que Juan dijo, cierra ElevenLabs sin colgar y sigue con la voz de mujer del iPhone (de España si la hay).
+///   También desde el Modo calle o el inicio con escucha («Alma, pásame con Maricarmen»): se abre la llamada y sigue con
+///   ella, sin mandarle el pedido a Alma (Hub #679: antes iba como pedido de texto y Alma buscaba a una persona).
 /// · Piensa: el Chat con Alma por la acción calle, sin audio y con alter «maricarmen»: el Hub le pone el Modo Weebo en 3
 ///   desde la primera respuesta (apps-script/maricarmen.js). Solo el administrador principal; con otro, contesta Alma.
-/// · También desde el Modo calle (Hub #680): «Alma, pásame con Maricarmen» abre la llamada directo con ella (ModoCalle),
-///   y en una llamada que abrió el Modo calle también se puede pasar con ella.
 /// · Sale: «pásame con Alma», «vuelve Alma» o «quiero hablar con Alma»: vuelve la voz de ElevenLabs sin colgar. No sale
 ///   sola cuando hay buena señal (no es la voz de respaldo: Juan la pidió).
 enum MaricarmenReglas {
@@ -18,15 +18,14 @@ enum MaricarmenReglas {
 
     /// «Pásame con Maricarmen», «¿me pasas con Maricarmen?», «quiero hablar con Maricarmen», «Maricarmen, ven». El verbo va pegado
     /// a su nombre: «pásale el recado a Maricarmen» o «llama a Maricarmen» (una persona de verdad) no la llaman. «No me pases…» no.
-    /// Hub #680 (17-nov-2026, «intento comunicarme con ella y no lo logro»): también «comunícame / quiero comunicarme con
-    /// Maricarmen», «pásame ya con la Maricarmen», «conéctame ahora a Maricarmen» y, al empezar, «Hola, Maricarmen». Entre el
-    /// verbo y su nombre solo caben palabras de relleno (ya, ahora, por favor…), así un recado o una llamada a otra persona no cuenta.
-    static let patronIr = #"(?:^|\s)(?:(?:pasame|pasas|pasar|pasarme|ponme|pones|comunicame|comunicas|comunicar|comunicarme|conectame|conectas|conectar|conectarme|cambiame)(?:\s+(?:me|ya|ahora|otra|vez|por|favor|porfa|un|rato|directo|directamente)){0,3}\s+(?:con|a)\s+(?:la\s+)?maricarmen|(?:hablar|habla|hablo|hablemos|platicar|platica|conversar)(?:\s+(?:me|ya|ahora|otra|vez|por|favor|porfa|un|rato|directo|directamente)){0,3}\s+con\s+(?:la\s+)?maricarmen|(?:ven|aparece)\s+maricarmen|maricarmen\s+(?:ven|aparece))(?:\s|$)|^(?:alma\s+)?hola\s+maricarmen(?:\s|$)"#
+    /// Hub #679: también «¿me puedes pasar con Maricarmen?», «quiero comunicarme con Maricarmen», «comunícate con Maricarmen»,
+    /// «Marycarmen» y «Hola, Maricarmen» al empezar la frase. Hub #680: «pásame ya con la Maricarmen» (relleno corto y «la»). Con un infinitivo («pasar», «comunicarme») va solo con «con».
+    static let patronIr = #"(?:^|\s)(?:(?:pasame|pasas|pases|pasarme|pasarias|ponme|pones|ponerme|comunicame|comunicas|comuniques|comunicarme|conectame|conectas|conectarme|cambiame|cambiarme)(?:\s+(?:me|ya|ahora|otra|vez|por|favor|porfa|un|rato|directo|directamente)){0,3}\s+(?:con|a)\s+(?:la\s+)?maricarmen|(?:pasar|comunicar|comunicate|comunicarte|comunicarnos|conectar|conectate|conectarte|hablar|habla|hablo|hablemos|platicar|platica|conversar)(?:\s+(?:me|ya|ahora|otra|vez|por|favor|porfa|un|rato|directo|directamente)){0,3}\s+con\s+(?:la\s+)?maricarmen|(?:ven|aparece)\s+maricarmen|maricarmen\s+(?:ven|aparece))(?:\s|$)|^(?:alma\s+)?(?:hola|oye|hey)\s+maricarmen(?:\s|$)"#
     /// Volver con Alma: «pásame con Alma», «vuelve Alma», «regresa con Alma», «quiero hablar con Alma».
-    static let patronVolver = #"(?:^|\s)(?:(?:pasame|pasas|ponme|pones|comunicame|conectame|cambiame|regresame|devuelveme|vuelveme)\s+(?:con|a)\s+alma|(?:hablar|habla|hablo|volver|vuelvo|regresar|regreso)\s+con\s+alma|(?:vuelve|regresa|ven)\s+alma)(?:\s|$)"#
-    static let patronNo = #"(?:^|\s)no\s+(?:quiero\s+|necesito\s+|me\s+)?(?:hablar|habla|pases|pasar|pasame|comuniques|conectes|cambies|volver|regresar|vuelvas|regreses)(?:\s|$)"#
+    static let patronVolver = #"(?:^|\s)(?:(?:pasame|pasas|pases|pasarme|ponme|pones|ponerme|comunicame|comunicarme|conectame|conectarme|cambiame|cambiarme|regresame|devuelveme|vuelveme)\s+(?:con|a)\s+alma|(?:hablar|habla|hablo|volver|vuelvo|regresar|regreso)\s+con\s+alma|(?:vuelve|regresa|ven)\s+alma)(?:\s|$)"#
+    static let patronNo = #"(?:^|\s)no\s+(?:quiero\s+|necesito\s+|me\s+)?(?:hablar|habla|pases|pasar|pasame|comuniques|comunicar|comunicarme|conectes|cambies|volver|regresar|vuelvas|regreses)(?:\s|$)"#
 
-    /// Cómo puede escribir su nombre el dictado (ElevenLabs o el del iPhone). Hub #680: «Marycarmen» o «María Carmen» no la llamaban.
+    /// Cómo puede escribir su nombre el dictado (ElevenLabs o el del iPhone). Hub #680: «María Carmen» o «Mari Karmen» no la llamaban.
     static let variantes = ["mari carmen", "mary carmen", "marycarmen", "maria carmen", "mari karmen", "marikarmen", "mary karmen"]
     /// Minúsculas, sin acentos y sin signos: «¿Me pasas con Maricarmen?» → «me pasas con maricarmen». «Mari Carmen» cuenta igual.
     static func normal(_ t: String) -> String {
