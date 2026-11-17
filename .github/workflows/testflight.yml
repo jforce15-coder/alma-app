@@ -61,6 +61,14 @@ jobs:
           xcrun swiftc Alma/OidoCalle.swift Pruebas/OidoCalle/main.swift -o /tmp/oido-calle
           /tmp/oido-calle
 
+      # La limpieza de la voz en vivo (Juan, 17-nov-2026): graves fuera, ruido de fondo abajo, volumen parejo sin saturar y el
+      # eco de Alma no se aprende. Lógica pura con señales de prueba.
+      - name: Probar la limpieza de la voz
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/LimpiezaVoz.swift Pruebas/LimpiezaVoz/main.swift -o /tmp/limpieza-voz
+          /tmp/limpieza-voz
+
       # La Guía de camino (Hub #661): cada paso justo a tiempo, «llegaste» una vez y recalcular fuera del camino. Lógica pura.
       - name: Probar la Guía de camino
         if: env.SUBIR != 'true'

@@ -943,13 +943,17 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         formatoMono = mono
         convertidor = AVAudioConverter(from: mono, to: formatoEntrada)
+        // La limpieza de tu voz (LimpiezaVoz.swift): una nueva cada vez que se abre el micrófono, para aprender el ruido de
+        // donde estás ahora. Vive dentro de la escucha (solo la toca el hilo del audio).
+        let limpieza = LimpiezaVoz(frecuencia: fIn.sampleRate)
+        paso("Limpieza de voz encendida: graves fuera, ruido de fondo abajo y volumen automático")
         engine.inputNode.removeTap(onBus: 0)
-        engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: fIn) { [weak self] buf, _ in self?.microfono(buf) }
+        engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: fIn) { [weak self] buf, _ in self?.microfono(buf, limpieza: limpieza) }
         if !engine.isRunning { engine.prepare(); try engine.start() }
         player.play()
     }
 
-    private func microfono(_ buf: AVAudioPCMBuffer) {
+    private func microfono(_ buf: AVAudioPCMBuffer, limpieza: LimpiezaVoz) {
         if estado == .lista { darAOyente(buf); return }   // sin llamada: lo oye el Modo Inicio o el modo conferencia
         /* En pausa no se manda tu voz; pero si le hablas (más fuerte que el eco y por casi un segundo), Alma vuelve a escuchar
            sola: una pausa que no pediste (un toque de más) ya no la deja muda. */
@@ -979,6 +983,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         /* La señal de la llamada (alma-inicio, ~1 s fuerte) suena por el parlante mientras conecta: si llegaba a ElevenLabs
            como voz, lo tomaba como que Juan interrumpía y cortaba el saludo («Dime, Ju…»). Solo pasa lo que suena más fuerte. */
         let desdeToque = Date().timeIntervalSince(inicioLlamada), suenaSenal = desdeToque >= 0 && desdeToque < VozNativa.finSenal
+        /* Tu voz, limpia (Juan, 17-nov-2026): sin graves, con el ruido de fondo abajo y a volumen parejo aunque hables bajito.
+           Las decisiones de arriba y de abajo usan el nivel crudo del micrófono (rmsTu), como antes. Mientras suena Alma o la
+           señal no aprende (su eco no es tu voz ni tu ruido). */
+        limpieza.limpiar(dst[0], cuenta: Int(buf.frameLength), aprender: !suenaAlma && !suenaSenal && !saludando)
         if saludando { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
         else if suenaAlma && rmsTu < (sinEco ? 0.12 : 0.045) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
         else if suenaSenal && rmsTu < (sinEco ? 0.15 : 0.08) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
