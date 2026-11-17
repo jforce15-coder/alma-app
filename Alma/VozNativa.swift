@@ -286,6 +286,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         empezarAvisos()
     }
 
+    /// Para otras piezas de la llamada (AudioLlamada): un paso más en el mismo registro.
+    func anotar(_ t: String) { paso(t) }
+
     /// Lo último que hizo la voz (se ve en Ajustes y ayuda a saber dónde se queda).
     private func paso(_ t: String) {
         let d = UserDefaults.standard; d.set(t, forKey: "voz_paso")
@@ -708,6 +711,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let salida = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue ?? "?"
             self.paso("Cambió la salida de audio (motivo \(r)) → \(salida)")
             if LlamadaContinua.aParlante(salida: salida) { self.asegurarSalida("Cambió la salida") }   // al auricular de oreja: de vuelta al parlante
+            AudioLlamada.shared.rutaCambio()   // se conectaron o quitaron audífonos: vuelve lo que eligió Juan
             // Modo calle: se desconectaron los audífonos: cuelga sin reintentar y el Modo calle vuelve a esperar «Alma».
             if self.desdeCalle && r == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { self.colgarCalle(.corte) }
         }
@@ -795,8 +799,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 paso("Abriendo el micrófono" + (o.contains(.duckOthers) ? " (la música baja, no se pausa)" : ""))
                 try s.setCategory(.playAndRecord, mode: .default, options: o)
                 try s.setActive(true)
+                AudioLlamada.shared.empezo()   // el micrófono y la salida que eligió Juan (con Modo compañero, el del teléfono)
                 try prepararMotor()
-            }
+            } else { AudioLlamada.shared.empezo() }
             paso("Micrófono abierto · conectando la voz")
         } catch { fallo("No pude abrir el micrófono (\((error as NSError).code))."); return }
         // Voz de respaldo (Hub #657): sin señal, Alma va sin ElevenLabs desde el principio.
@@ -1486,6 +1491,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
         local?.parar(); local = nil
         sesionURL?.finishTasksAndInvalidate(); sesionURL = nil
+        AudioLlamada.shared.termino()   // suelta el micrófono o la bocina que pidió la llamada
         player.stop()
         if modoAnillo || unRato { player.play() }   // el micrófono sigue listo para el próximo doble toque
         else { engine.inputNode.removeTap(onBus: 0); if engine.isRunning { engine.stop() } }

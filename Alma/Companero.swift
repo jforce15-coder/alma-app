@@ -30,7 +30,7 @@ final class Companero {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.enviando = false
-                if let m = j?["mirando"] as? Bool { self.cola.mirando = m }
+                if let m = j?["mirando"] as? Bool { self.cola.mirando = m; AudioLlamada.shared.companeroMira(m) }
             }
         }.resume()
     }
