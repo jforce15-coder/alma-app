@@ -73,6 +73,11 @@ final class ClaudioLocal: NSObject {
         super.init()
     }
 
+    /// ¿El dictado del iPhone está listo? (sin él no hay voz de respaldo, ni Claudio local, ni Maricarmen)
+    static var dictadoListo: Bool {
+        SFSpeechRecognizer.authorizationStatus() == .authorized && (SFSpeechRecognizer(locale: Locale(identifier: "es-MX"))?.isAvailable ?? false)
+    }
+
     /// Maricarmen, el alter ego de Alma (Hub #666, MaricarmenReglas.swift): como la voz de respaldo (el Chat con Alma, sin
     /// ElevenLabs), con una voz de mujer de España si el iPhone la tiene y el alter «maricarmen» en cada pedido (Weebo 3).
     init?(maricarmen saludo: String) {

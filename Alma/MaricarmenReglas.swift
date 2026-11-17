@@ -6,6 +6,8 @@ import Foundation
 /// hablar que la voz de respaldo) y VozNativa.swift (cuándo entra y cuándo sale).
 /// · Entra: en una llamada normal con Alma (también con la voz de respaldo), Juan dice «pásame con Maricarmen». La app lo
 ///   oye en lo que Juan dijo, cierra ElevenLabs sin colgar y sigue con la voz de mujer del iPhone (de España si la hay).
+/// · Desde el Modo calle (Alma con el anillo, Hub #682): «Alma, pásame con Maricarmen» abre la llamada directo con ella, y
+///   en una llamada del Modo calle también cambia. Antes el Modo calle la dejaba fuera y el pedido no hacía nada.
 /// · Piensa: el Chat con Alma por la acción calle, sin audio y con alter «maricarmen»: el Hub le pone el Modo Weebo en 3
 ///   desde la primera respuesta (apps-script/maricarmen.js). Solo el administrador principal; con otro, contesta Alma.
 /// · Sale: «pásame con Alma», «vuelve Alma» o «quiero hablar con Alma»: vuelve la voz de ElevenLabs sin colgar. No sale
@@ -14,19 +16,24 @@ enum MaricarmenReglas {
 
     static let alter = "maricarmen"
 
-    /// «Pásame con Maricarmen», «¿me pasas con Maricarmen?», «quiero hablar con Maricarmen», «Maricarmen, ven». El verbo va pegado
+    /// «Pásame con Maricarmen», «¿me pasas con Maricarmen?», «quiero hablar con Maricarmen», «comunícame con Maricarmen»,
+    /// «quiero comunicarme con Maricarmen», «Maricarmen, ven». El verbo va pegado
     /// a su nombre: «pásale el recado a Maricarmen» o «llama a Maricarmen» (una persona de verdad) no la llaman. «No me pases…» no.
-    static let patronIr = #"(?:^|\s)(?:(?:pasame|pasas|ponme|pones|comunicame|conectame|cambiame)\s+(?:con|a)\s+maricarmen|(?:hablar|habla|hablo|hablemos|platicar|platica|conversar)\s+con\s+maricarmen|(?:ven|aparece)\s+maricarmen|maricarmen\s+(?:ven|aparece))(?:\s|$)"#
+    static let patronIr = #"(?:^|\s)(?:(?:pasame|pasas|pasarme|ponme|pones|ponerme|comunicame|comunicas|comunicarme|conectame|conectas|conectarme|cambiame|cambiarme|dame)\s+(?:con|a)\s+maricarmen|(?:hablar|habla|hablo|hablemos|platicar|platica|conversar)\s+con\s+maricarmen|(?:ven|aparece)\s+maricarmen|maricarmen\s+(?:ven|aparece))(?:\s|$)"#
     /// Volver con Alma: «pásame con Alma», «vuelve Alma», «regresa con Alma», «quiero hablar con Alma».
     static let patronVolver = #"(?:^|\s)(?:(?:pasame|pasas|ponme|pones|comunicame|conectame|cambiame|regresame|devuelveme|vuelveme)\s+(?:con|a)\s+alma|(?:hablar|habla|hablo|volver|vuelvo|regresar|regreso)\s+con\s+alma|(?:vuelve|regresa|ven)\s+alma)(?:\s|$)"#
-    static let patronNo = #"(?:^|\s)no\s+(?:quiero\s+|necesito\s+|me\s+)?(?:hablar|habla|pases|pasar|pasame|comuniques|conectes|cambies|volver|regresar|vuelvas|regreses)(?:\s|$)"#
+    static let patronNo = #"(?:^|\s)no\s+(?:quiero\s+|necesito\s+|me\s+)?(?:hablar|habla|pases|pasar|pasame|comuniques|comunicarme|conectes|conectarme|cambies|volver|regresar|vuelvas|regreses)(?:\s|$)"#
 
     /// Minúsculas, sin acentos y sin signos: «¿Me pasas con Maricarmen?» → «me pasas con maricarmen». «Mari Carmen» cuenta igual.
     static func normal(_ t: String) -> String {
         let s = t.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "es")).lowercased()
         let solo = String(s.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : " " })
-        return solo.split(separator: " ").joined(separator: " ").replacingOccurrences(of: "mari carmen", with: "maricarmen")
-            .replacingOccurrences(of: "mary carmen", with: "maricarmen")
+        var n = " " + solo.split(separator: " ").joined(separator: " ") + " "
+        // Cómo puede llegar su nombre del dictado (Hub #682): «Mari Carmen», «Mary Carmen», «Marycarmen», «María Carmen», con K.
+        for v in ["mari carmen", "mary carmen", "marycarmen", "maria carmen", "mari karmen", "mary karmen", "marikarmen", "maricarmem"] {
+            n = n.replacingOccurrences(of: " " + v + " ", with: " maricarmen ")
+        }
+        return n.trimmingCharacters(in: .whitespaces)
     }
     private static func hay(_ patron: String, _ t: String) -> Bool {
         guard let re = try? NSRegularExpression(pattern: patron) else { return false }
