@@ -32,7 +32,9 @@ final class ClaudioLocal: NSObject {
     private let voz: AVSpeechSynthesisVoice?
     private let sintetizador = AVSpeechSynthesizer()
     private let formatoOido = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
-    private let formatoVoz = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
+    /// A cuántos hz sale su voz (Hub #687): 24 kHz con la voz del iPhone; 16 kHz solo con la de ElevenLabs del Hub.
+    private let hz: Int
+    private let formatoVoz: AVAudioFormat
     private var convertidor: AVAudioConverter?
 
     private var pedido: SFSpeechAudioBufferRecognitionRequest?
@@ -56,7 +58,9 @@ final class ClaudioLocal: NSObject {
         saludo = ficha["first_message"] as? String ?? AgenteVoz.saludoClaudio
         ajustes = ClaudioLocalReglas.Ajustes(ficha["voz_local"] as? [String: Any])
         saludoAudio = ClaudioLocalReglas.audio(ficha["voz_local"] as? [String: Any])
+        hz = ClaudioLocalReglas.hzSalida(ficha["voz_local"] as? [String: Any])
         voz = ClaudioLocal.elegirVoz(ajustes)
+        formatoVoz = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(hz), channels: 1, interleaved: true)!
         super.init()
     }
 
@@ -66,10 +70,11 @@ final class ClaudioLocal: NSObject {
               let r = SFSpeechRecognizer(locale: Locale(identifier: "es-MX")), r.isAvailable else { return nil }
         conv = "conv_respaldo_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(20).lowercased()
         reconocedor = r; modo = .respaldo
-        saludo = frase; saludoAudio = nil
+        saludo = frase; saludoAudio = nil; hz = ClaudioLocalReglas.hzIphone
         var a = ClaudioLocalReglas.Ajustes(); a.hombre = false; a.tono = 1
         ajustes = a
         voz = VozIphone.elegida ?? ClaudioLocal.elegirVoz(a)
+        formatoVoz = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(hz), channels: 1, interleaved: true)!
         super.init()
     }
 
@@ -80,12 +85,13 @@ final class ClaudioLocal: NSObject {
               let r = SFSpeechRecognizer(locale: Locale(identifier: "es-MX")), r.isAvailable else { return nil }
         conv = "conv_maricarmen_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(20).lowercased()
         reconocedor = r; modo = .maricarmen
-        self.saludo = saludo; saludoAudio = nil
+        self.saludo = saludo; saludoAudio = nil; hz = ClaudioLocalReglas.hzIphone
         var a = ClaudioLocalReglas.Ajustes(); a.hombre = false; a.idiomas = MaricarmenReglas.idiomas
         a.tono = MaricarmenReglas.tono; a.velocidad = MaricarmenReglas.velocidad
         ajustes = a
         let e = ClaudioLocal.elegirVoz(a)
         voz = e?.gender == .female ? e : (VozIphone.elegida ?? e)   // nunca una voz de hombre: si no hay de mujer en español, la elegida de Alma
+        formatoVoz = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(hz), channels: 1, interleaved: true)!
         super.init()
     }
 
@@ -121,10 +127,10 @@ final class ClaudioLocal: NSObject {
 
     // MARK: - Lo que pide VozNativa
 
-    /// Como si ElevenLabs hubiera conectado: la conversación (para el Panel de Claudio) y la voz en 16 kHz. Después, el saludo.
+    /// Como si ElevenLabs hubiera conectado: la conversación (para el Panel de Claudio) y la voz en `hz`. Después, el saludo.
     func empezar() {
         emitir(["type": "conversation_initiation_metadata",
-                "conversation_initiation_metadata_event": ["conversation_id": conv, "agent_output_audio_format": "pcm_16000"]])
+                "conversation_initiation_metadata_event": ["conversation_id": conv, "agent_output_audio_format": "pcm_\(hz)"]])
         paso?(modo == .respaldo ? "Alma con la voz de respaldo · " + descripcion : modo == .maricarmen ? "Con " + descripcion : "Claudio local · " + descripcion)
         historial = ClaudioLocalReglas.sumar(historial, .init(deClaudio: true, texto: saludo))
         decir(saludo, audio: saludoAudio)
@@ -317,7 +323,7 @@ final class ClaudioLocal: NSObject {
         relojTecleo = Timer.scheduledTimer(withTimeInterval: ClaudioLocalReglas.tecleoCada, repeats: true) { [weak self] _ in
             guard let self, self.vivo, self.pensando, Date().timeIntervalSince(self.desdeTurno) >= ClaudioLocalReglas.tecleoTras else { return }
             self.teclas &+= 1
-            self.emitir(["type": "audio", "audio_event": ["audio_base_64": ClaudioLocalReglas.tecleo(semilla: self.teclas).base64EncodedString()]])
+            self.emitir(["type": "audio", "audio_event": ["audio_base_64": ClaudioLocalReglas.tecleo(semilla: self.teclas, hz: self.hz).base64EncodedString()]])
         }
     }
 
@@ -326,7 +332,7 @@ final class ClaudioLocal: NSObject {
     // MARK: - Hablar (su voz de ElevenLabs; si no llegó, la del iPhone)
 
     /// Dice la frase. Con el audio del Hub (su voz de ElevenLabs, PCM 16 kHz) lo suena tal cual; si no, con la voz del iPhone.
-    /// El audio sale en trozos de 16 kHz, igual que el del socket de ElevenLabs, y VozNativa lo suena en su reproductor (el
+    /// El audio sale en trozos de `hz` (24 kHz con la voz del iPhone), como el del socket de ElevenLabs, y VozNativa lo suena en su reproductor (el
     /// halo late con la voz). Al terminar de sonar, vuelve a escuchar.
     private func decir(_ t: String, audio: Data? = nil, luego: (() -> Void)? = nil) {
         ocupadoHasta = .distantFuture
@@ -354,7 +360,7 @@ final class ClaudioLocal: NSObject {
                 guard let self, self.vivo, !e.listo else { return }
                 if let d = datos, !d.isEmpty {
                     if e.inicio == nil { e.inicio = Date() }
-                    e.total += Double(d.count / 2) / 16000
+                    e.total += Double(d.count / 2) / Double(self.hz)
                     self.emitir(["type": "audio", "audio_event": ["audio_base_64": d.base64EncodedString()]])
                     return
                 }
@@ -372,11 +378,11 @@ final class ClaudioLocal: NSObject {
         }
     }
 
-    /// Un trozo de la voz del iPhone (22 kHz o lo que traiga) a PCM de 16 bits en 16 kHz.
+    /// Un trozo de la voz del iPhone (22 kHz o lo que traiga) a PCM de 16 bits en `hz` (24 kHz; Hub #687).
     private func a16k(_ b: AVAudioPCMBuffer) -> Data? {
         if convertidor == nil || convertidor?.inputFormat != b.format { convertidor = AVAudioConverter(from: b.format, to: formatoVoz) }
         guard let c = convertidor else { return nil }
-        let cap = AVAudioFrameCount(Double(b.frameLength) * 16000 / b.format.sampleRate) + 64
+        let cap = AVAudioFrameCount(Double(b.frameLength) * Double(hz) / b.format.sampleRate) + 64
         guard let out = AVAudioPCMBuffer(pcmFormat: formatoVoz, frameCapacity: cap) else { return nil }
         var dado = false
         c.convert(to: out, error: nil) { _, st in

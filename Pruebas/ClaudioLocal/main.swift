@@ -53,7 +53,7 @@ revisa(d == "Listo, quedó pedido. uno", "sin etiquetas de emoción, markdown, e
 
 // Los ajustes de la voz (del Hub)
 let a0 = R.Ajustes(nil)
-revisa(a0.hombre && a0.idiomas.first == "es-MX" && a0.tono < 1 && a0.velocidad == 0.5, "de fábrica: hombre, México primero, un poco más grave")
+revisa(a0.hombre && a0.idiomas.first == "es-MX" && a0.tono == 1 && a0.velocidad == 0.5, "de fábrica: hombre, México primero, con su tono natural (Hub #687)")
 let a1 = R.Ajustes(["velocidad": 3, "tono": 0.85, "idiomas": ["es-ES", "en-US"], "genero": "mujer"])
 revisa(a1.velocidad == 0.65 && a1.tono == 0.85 && a1.idiomas == ["es-ES"] && !a1.hombre, "los del Hub, con límites y solo español")
 
@@ -68,6 +68,14 @@ revisa(R.elegir(voces, a0)?.id == "juan-mejorada", "de hombre, de México y la m
 revisa(R.elegir(voces.filter { $0.id != "juan-normal" && $0.id != "juan-mejorada" }, a0)?.id == "jorge-premium", "sin una de hombre de México, la de España")
 revisa(R.elegir([voces[0]], a0)?.id == "paulina", "sin ninguna de hombre en español, la mejor en español (mejor una voz que ninguna)")
 revisa(R.elegir([voces[5]], a0) == nil, "en inglés, ninguna")
+revisa(R.elegir([voces[1], R.Voz(id: "jorge-mejorada", idioma: "es-ES", hombre: true, calidad: 1, rara: false)], a0)?.id == "jorge-mejorada",
+       "una mejorada de España antes que una normal (compacta, robótica) de México (Hub #687)")
+revisa(R.elegir([voces[1]], a0)?.id == "juan-normal", "si solo hay una normal, esa (mejor una voz que ninguna)")
+
+// Que suene natural (Hub #687): la voz del iPhone a 24 kHz; la de ElevenLabs del Hub sigue a 16 kHz
+revisa(R.hzSalida(nil) == 24000 && R.hzSalida(["motor": "iphone"]) == 24000, "la voz del iPhone sale a 24 kHz, no aplanada a 16 kHz")
+revisa(R.hzSalida(["motor": "elevenlabs"]) == 16000, "con la voz de ElevenLabs del Hub, 16 kHz (su formato)")
+revisa(R.tecleo(semilla: 1, hz: 24000).count == Int(R.tecleoTrozo * 24000) * 2, "el tecleo sale al mismo ritmo que la voz (24 kHz)")
 
 // El tecleo mientras piensa (Hub #651)
 let tq = R.tecleo(semilla: 1)
