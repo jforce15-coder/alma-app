@@ -1088,6 +1088,9 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         turnoPedido += 1
         abandonado = nil; tardePendiente = nil; diciendoNoLlego = false   // un pedido nuevo: lo que llegue tarde del anterior ya no suena
         esperarRespuesta(turnoPedido)
+        // «Pásame con Maricarmen» (Hub #679): se abre la llamada y sigue con ella (VozNativa), no como pedido de texto al Hub
+        // (ahí Alma buscaba a una persona llamada Maricarmen).
+        if aviso == nil, MaricarmenReglas.pideIr(pide) { soltarEspera(); anotar("Pide a Maricarmen: abro la llamada con ella"); abrirLlamada(pide); return }
         // «Quiero hablar con Claudio» (Hub #550): directo a la llamada con Claudio, no como pedido de texto.
         if aviso == nil, AgenteVoz.pideClaudio(pide) { pasarAClaudio(pide, turno: turnoPedido); return }
         preguntar(pide, aviso: aviso, turno: turnoPedido)
