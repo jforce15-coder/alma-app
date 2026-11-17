@@ -14,7 +14,7 @@ import Foundation
 enum LlamadaContinua {
     /// Lo que la ficha le dice a Alma en el Modo calle y en conferencia. El Hub (voz.js) habla de «CONVERSACIÓN CONTINUA
     /// (lo dice la ficha)»: con estas dos palabras Alma sabe que la app cierra sola y que ella no cuelga.
-    static let regla = "CONVERSACIÓN CONTINUA: no te despidas, no digas «aquí sigo» y NUNCA uses end_call. Cuando ya respondiste, quédate escuchando en silencio: Juan puede seguir hablándote sin volver a decir «Alma». Si lo que oyes no es para ti (hablan entre ellos, ruido) o nadie dice nada, usa skip_turn y no contestes. Si lo dejas trabajando en segundo plano, di solo «Entendido, lo hago y te aviso cuando esté listo» y sigue escuchando: cuando esté, tú le avisas. La app cierra sola tras un silencio, sin que digas nada."
+    static let regla = "CONVERSACIÓN CONTINUA: no te despidas, no digas «aquí sigo» y NUNCA uses end_call. Cuando ya respondiste, quédate escuchando en silencio: Juan puede seguir hablándote sin volver a decir «Alma». Si lo que oyes no es para ti (hablan entre ellos, ruido) o nadie dice nada, usa skip_turn y no contestes. Si lo dejas trabajando en segundo plano, di solo una frase corta y nueva cada vez de que lo haces y le avisas (como «Entendido, te aviso» o «Me encargo y te cuento»; nunca la misma seguida) y sigue escuchando: cuando esté, tú le avisas. La app cierra sola tras un silencio, sin que digas nada."
 
     // MARK: - Cuándo cierra sola la app
 
