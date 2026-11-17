@@ -39,6 +39,7 @@ final class ClaudioLocal: NSObject {
     private var ocupadoHasta = Date.distantFuture   // piensa o habla: el micrófono no cuenta (hasta que termine el saludo)
     private var pensando = false
     private var reloj: Timer?
+    private var relojTecleo: Timer?, desdeTurno = Date(), teclas: UInt64 = 0
     private var vivo = true
     private var llamadas = 0
 
@@ -102,6 +103,7 @@ final class ClaudioLocal: NSObject {
     func parar() {
         vivo = false
         reloj?.invalidate(); reloj = nil
+        pararTecleo()
         soltarPedido()
         sintetizador.stopSpeaking(at: .immediate)
     }
@@ -172,6 +174,7 @@ final class ClaudioLocal: NSObject {
     private func turno(_ t: String) {
         guard vivo, !pensando else { return }
         pensando = true
+        empezarTecleo()
         emitir(["type": "user_transcript", "user_transcription_event": ["user_transcript": t]])
         emitir(["type": "agent_tool_request", "agent_tool_request": ["tool_name": "claudio_local"]])   // trabaja: no se cuelga por silencio
         let conNotas = notas.isEmpty ? t : t + "\n(Nota de la app: " + notas.joined(separator: " · ") + ")"
@@ -188,13 +191,14 @@ final class ClaudioLocal: NSObject {
             let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             DispatchQueue.main.async {
                 guard let self, self.vivo, self.llamadas == mia else { return }
-                self.paso?(String(format: "Claudio local contestó en %.1f s", Date().timeIntervalSince(t0)))
+                self.paso?(ClaudioLocalReglas.tiempos(total: Date().timeIntervalSince(t0), j))
                 self.contestar(j, error: j == nil ? (err?.localizedDescription ?? "sin respuesta del Hub") : (j?["ok"] as? Bool) == false ? (j?["error"] as? String) : nil)
             }
         }.resume()
     }
 
     private func contestar(_ j: [String: Any]?, error: String?) {
+        pararTecleo()
         if let e = error { paso?("Claudio local: " + e) }
         let r = ClaudioLocalReglas.respuesta(j)
         for h in r.herramientas { emitir(["type": "agent_tool_response", "agent_tool_response": ["tool_name": h]]) }   // el Panel de Claudio
@@ -207,6 +211,22 @@ final class ClaudioLocal: NSObject {
             self.emitir(["type": "client_tool_call", "client_tool_call": ["tool_call_id": "local_volver", "tool_name": "volver_con_alma", "parameters": [String: Any]()]])
         }
     }
+
+    // MARK: - El tecleo mientras piensa (Hub #651: como el de ElevenLabs cuando Alma usa una herramienta)
+
+    /// Mientras el Hub piensa suena un tecleo suave, por el mismo camino que su voz (el halo late apenas): Juan sabe que se
+    /// está trabajando. Empieza si tarda más de un respiro y se apaga en cuanto llega la respuesta.
+    private func empezarTecleo() {
+        pararTecleo()
+        desdeTurno = Date()
+        relojTecleo = Timer.scheduledTimer(withTimeInterval: ClaudioLocalReglas.tecleoCada, repeats: true) { [weak self] _ in
+            guard let self, self.vivo, self.pensando, Date().timeIntervalSince(self.desdeTurno) >= ClaudioLocalReglas.tecleoTras else { return }
+            self.teclas &+= 1
+            self.emitir(["type": "audio", "audio_event": ["audio_base_64": ClaudioLocalReglas.tecleo(semilla: self.teclas).base64EncodedString()]])
+        }
+    }
+
+    private func pararTecleo() { relojTecleo?.invalidate(); relojTecleo = nil }
 
     // MARK: - Hablar (su voz de ElevenLabs; si no llegó, la del iPhone)
 
