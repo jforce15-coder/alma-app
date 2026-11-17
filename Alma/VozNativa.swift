@@ -32,6 +32,8 @@ import UserNotifications
 ///   se vuelve a abrir sola; si Claudio no conecta, vuelve Alma y lo dice. Cada fin de llamada deja su porqué en los pasos.
 /// · Claudio local (Hub #629, ClaudioLocal.swift): con el Hub que lo trae, Claudio va sin ElevenLabs (dictado y voz del
 ///   iPhone, el Hub contesta con su mismo prompt): las sesiones largas de trabajo no gastan créditos de voz.
+/// · Voz de respaldo (Hub #657, RespaldoReglas.swift): con problemas de conexión Alma sigue la llamada sin ElevenLabs (dictado
+///   y voz de mujer del iPhone; el Hub contesta por la acción calle). Vuelve sola a su voz cuando la señal está estable.
 final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static let shared = VozNativa()
 
@@ -65,6 +67,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Claudio local (Hub #629, ClaudioLocal.swift): Claudio sin ElevenLabs. Habla como el socket: lo que se le «manda» va a
     /// él y lo que contesta entra por mensaje(_:), así el resto de la llamada no cambia.
     private var local: ClaudioLocal?
+    /// Voz de respaldo (Hub #657): los cortes recientes de la voz, el reloj que mira si volvió la señal y el último intento de volver.
+    private var cortesRed: [Date] = []
+    private var relojRespaldo: Timer?
+    private var intentoVolver: Date?
+    private var enRespaldo: Bool { local?.modo == .respaldo }
+    /// Solo en una llamada normal con Alma: el Modo calle y la conferencia tienen su propio camino sin ElevenLabs.
+    private var puedeRespaldo: Bool { agente == .alma && !desdeCalle && conferencia == nil }
     private var sesionURL: URLSession?
     private var silencio: AVAudioPlayer?
     private var ultimoToque = Date.distantPast
@@ -683,18 +692,29 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()
         sonido("alma-inicio", llamada: true)   // el segundo beep: el de la llamada a Alma, suena siempre (también en conferencia): lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
+        cortesRed = []; intentoVolver = nil
+        if puedeRespaldo && !Senal.shared.hayRed {   // sin internet: ni se pide la ficha
+            paso("Sin internet: Alma va con la voz de respaldo"); conectar(agente: "", ficha: VozNativa.fichaRespaldo); return
+        }
         if let f = fichaLista, Date().timeIntervalSince(f.t) < 540 {
             fichaLista = nil; paso("Ficha lista de antemano"); conectar(agente: f.j["agent_id"] as? String ?? "", ficha: f.j); return
         }
         paso("Pidiendo tu ficha al Hub" + (UIApplication.shared.applicationState == .active ? "" : " (en segundo plano)"))
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
+        r.timeoutInterval = 20   // con poca señal no se espera el minuto de iOS: a los 20 s entra la voz de respaldo
         r.httpBody = try? JSONSerialization.data(withJSONObject: AgenteVoz.pedido(.alma, token: token, sesion: sesion))   // con «claudio»: esta app sabe pasar a Claudio
         URLSession.shared.dataTask(with: r) { [weak self] data, resp, err in
             guard let self else { return }
             guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], (j["ok"] as? Bool) == true,
                   let agente = j["agent_id"] as? String else {
                 let por = err?.localizedDescription ?? (data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] as? String) ?? "sin respuesta del Hub"
-                DispatchQueue.main.async { self.fallo("No pude pedir tu ficha: \(por)") }; return
+                let deRed = data == nil && err.map { RespaldoReglas.esDeRed(($0 as NSError).code) } == true
+                DispatchQueue.main.async {
+                    if deRed, self.puedeRespaldo, self.estado == .conectando {   // la red no alcanzó: Alma sigue con la voz de respaldo
+                        self.paso("La ficha no llegó (\(por)): Alma va con la voz de respaldo"); self.conectar(agente: "", ficha: VozNativa.fichaRespaldo); return
+                    }
+                    self.fallo("No pude pedir tu ficha: \(por)")
+                }; return
             }
             DispatchQueue.main.async { self.paso("Ficha lista" + (j["signed_url"] != nil ? " (URL firmada)" : "")); self.conectar(agente: agente, ficha: j) }
         }.resume()
@@ -720,6 +740,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             paso("Micrófono abierto · conectando la voz")
         } catch { fallo("No pude abrir el micrófono (\((error as NSError).code))."); return }
+        // Voz de respaldo (Hub #657): sin señal, Alma va sin ElevenLabs desde el principio.
+        if self.agente == .alma, (ficha["respaldo"] as? Bool) == true {
+            if !arrancarRespaldo(frase: RespaldoReglas.fraseAlEmpezar) { fallo("No hay internet y la voz de respaldo no está lista: falta el permiso del dictado (Ajustes del iPhone → Alma → Reconocimiento de voz).") }
+            return
+        }
         // Claudio local (Hub #629): si el Hub lo trae y el dictado del iPhone está listo, Claudio va sin ElevenLabs (sin créditos
         // de voz). Si no, sigue con su agente de ElevenLabs como siempre.
         if self.agente == .claudio, (ficha["local"] as? Bool) == true {
@@ -967,7 +992,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             vigilar()
             aConferencia = false; relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; ultimaActividad = Date(); herramienta = false
             if tiemposCierre != nil { vigilarCalle() }   // Modo calle, conferencia (conversación continua) o la que abrió un aviso
-            if conferencia == nil && !desdeCalle && agente == .alma {   // en el Modo calle manda el sueño (más corto); pasar a conferencia apagaría el Modo calle
+            if conferencia == nil && !desdeCalle && agente == .alma && !enRespaldo {   // en el Modo calle manda el sueño (más corto); pasar a conferencia apagaría el Modo calle
                 relojLargo = Timer.scheduledTimer(withTimeInterval: segundosLargo, repeats: false) { [weak self] _ in
                     guard let self, self.estado == .hablando else { return }
                     self.aConferencia = true; self.paso("Llamada larga: en la próxima pausa larga pasa al modo conferencia")
@@ -987,7 +1012,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let v = vistaPendiente { vistaPendiente = nil; mandar(["type": "contextual_update", "text": v]) }   // la captura llegó mientras conectaba
             infoBloqueo("Te escucho · dos toques para pausar")
             emitirPersonalidad()   // los chips de la llamada (si es el principal)
-            if agente == .alma, let id = ev["conversation_id"] as? String { vincular(id) }   // Claudio: el Hub lo reconoce por su firma (claudio.js)
+            if agente == .alma, !enRespaldo, let id = ev["conversation_id"] as? String { vincular(id) }   // la voz de respaldo ya va por el Chat con Alma   // Claudio: el Hub lo reconoce por su firma (claudio.js)
             if agente == .claudio, let id = ev["conversation_id"] as? String { idClaudio = id; pedirPanelClaudio(intento: 0) }   // Panel de Claudio: la lista al entrar
         case "audio":
             let ev = j["audio_event"] as? [String: Any] ?? [:]
@@ -1318,6 +1343,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// conversación continua) está en LlamadaContinua.regla; lo que queda trabajando se lo cuenta después Alma abre.
     private func terminar() {
         vigia?.invalidate(); vigia = nil
+        relojRespaldo?.invalidate(); relojRespaldo = nil
         vigiaCalle?.invalidate(); vigiaCalle = nil
         if estado == .hablando || estado == .conectando {
             ultimaLlamada = (estado == .hablando ? max(0, Date().timeIntervalSince(conectadaDesde)) : 0, motivoCalle)
@@ -1759,6 +1785,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private func corte(_ m: String, sinCreditos: Bool = false) {
         guard estado == .conectando || estado == .hablando else { return }
         let conectada: TimeInterval? = estado == .hablando ? Date().timeIntervalSince(conectadaDesde) : nil
+        // Voz de respaldo (Hub #657): sin internet, si ElevenLabs no conectó o si es el segundo corte en 3 min, Alma sigue
+        // con la voz del teléfono en vez de volver a abrir (o de colgar con el error).
+        if puedeRespaldo, !sinCreditos, local == nil {
+            let ahora = Date(), usar = RespaldoReglas.trasCorte(hayRed: Senal.shared.hayRed, conectada: conectada, cortes: cortesRed, ahora: ahora)
+            cortesRed = RespaldoReglas.sumarCorte(cortesRed, ahora: ahora); Senal.shared.anotarCorte()
+            if usar { pasarARespaldo(por: m, conectada: conectada != nil); return }
+        }
         switch LlamadaContinua.trasCorte(claudio: agente == .claudio, calle: desdeCalle, conferencia: conferencia != nil, conectada: conectada,
                                          reabiertas: reabiertas, sinCreditos: sinCreditos) {
         case .fallar: fallo(m)
@@ -1796,12 +1829,68 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 guard let self, self.inicioLlamada == llamada, self.estado == .conectando, self.intentoConexion == intento else { return }   // colgó o empezó otra llamada
                 self.cambiando = false
                 guard let j, (j["ok"] as? Bool) == true, j["agent_id"] is String else {
-                    self.paso("El Hub no dio la conversación nueva"); self.fallo(m); return
+                    self.paso("El Hub no dio la conversación nueva")
+                    if self.puedeRespaldo, self.arrancarRespaldo(frase: RespaldoReglas.fraseSigue) { return }   // Hub #657: sigue la voz de respaldo
+                    self.fallo(m); return
                 }
                 self.reabierta = (frase, charla, porClaudio)
                 self.reconectar(.alma, ficha: j)
             }
         }.resume()
+    }
+
+    // MARK: - Voz de respaldo (Hub #657, RespaldoReglas.swift)
+
+    /// La «ficha» de la voz de respaldo: no viene del Hub (con poca señal no se pide).
+    private static let fichaRespaldo: [String: Any] = ["respaldo": true]
+
+    /// Alma sigue con la voz del teléfono. Habla como el socket (igual que Claudio local), así el resto de la llamada no cambia.
+    /// false: el dictado no tiene permiso o no está disponible.
+    @discardableResult
+    private func arrancarRespaldo(frase: String) -> Bool {
+        guard let l = ClaudioLocal(respaldo: frase) else { paso("La voz de respaldo no está lista (falta el permiso del dictado o no está disponible)"); return false }
+        local = l
+        l.paso = { [weak self] t in self?.paso(t) }
+        l.alEvento = { [weak self, weak l] ev in
+            guard let self, let l, self.local === l else { return }
+            self.mensaje(ev)
+        }
+        Senal.shared.alMandar = { [weak self, weak l] h in
+            guard let self, let l, self.local === l else { return }
+            l.avisar(RespaldoReglas.fraseMandado + " " + h)
+        }
+        inicioEnviado = true; saludoDesde = nil; colaVoz = []; antesDeFicha = []; cambiando = false
+        l.empezar()
+        vigilarRespaldo()
+        return true
+    }
+
+    /// Se cortó la voz de ElevenLabs con la señal mala: se cierra ese socket y Alma sigue sin colgar.
+    private func pasarARespaldo(por m: String, conectada: Bool) {
+        paso("Se cortó la voz (" + m + "): Alma sigue con la voz de respaldo")
+        relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; aConferencia = false
+        relojEspera?.invalidate(); relojEspera = nil; herramienta = false
+        let viejo = ws, viejaSesion = sesionURL
+        ws = nil; sesionURL = nil
+        viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
+        local?.parar(); local = nil
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
+        if !arrancarRespaldo(frase: conectada ? RespaldoReglas.fraseSeFue : RespaldoReglas.fraseAlEmpezar) { fallo(m) }
+    }
+
+    /// Cada 2 s: con la señal estable 20 s y en un silencio, Alma vuelve a su voz de siempre (se reabre la conversación con
+    /// ElevenLabs, con lo último que se dijo). Si no resulta, la próxima vez espera 2 min.
+    private func vigilarRespaldo() {
+        relojRespaldo?.invalidate()
+        relojRespaldo = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
+            guard let self, let l = self.local, l.modo == .respaldo, self.estado == .hablando else { t.invalidate(); return }
+            let s = Senal.shared
+            guard RespaldoReglas.volver(hayRed: s.hayRed, buenaDesde: s.buenaDesde, quieto: l.quieto && !self.cambiando, ultimoIntento: self.intentoVolver, ahora: Date()) else { return }
+            t.invalidate(); self.relojRespaldo = nil
+            self.intentoVolver = Date()
+            self.reabrir(por: "volvió la señal", frase: RespaldoReglas.fraseVuelve, porClaudio: false)
+        }
     }
 
     private func avisar() { emitir(resumen) }
