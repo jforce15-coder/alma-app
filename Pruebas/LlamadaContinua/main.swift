@@ -16,7 +16,8 @@ revisa(C.regla.contains("NUNCA uses end_call"), "Alma nunca cuelga en el Modo ca
 revisa(!C.regla.contains("cuelga con end_call") && !C.regla.lowercased().contains("y cuelga"), "nada le pide colgar (así se cortaba: «cuelga con end_call en ese mismo turno»)")
 revisa(C.regla.contains("sin volver a decir «Alma»"), "Juan sigue sin volver a decir «Alma»")
 revisa(C.regla.contains("skip_turn"), "lo que no es para ella (o el silencio): skip_turn, sin contestar")
-revisa(C.regla.contains("«Entendido, lo hago y te aviso cuando esté listo» y sigue escuchando"), "segundo plano: la frase corta y sigue en la llamada")
+revisa(C.regla.contains("una frase corta y nueva cada vez") && C.regla.contains("nunca la misma seguida) y sigue escuchando"), "segundo plano: una frase corta que no se repite y sigue en la llamada")
+revisa(!C.regla.contains("«Entendido, lo hago y te aviso cuando esté listo»"), "sin una frase fija que suene igual en cada pedido (Juan, 16-nov-2026: «vale, lo hago»)")
 revisa(!C.regla.contains("te despid") || C.regla.contains("no te despidas"), "sin despedidas")
 
 // MARK: - Cuándo cierra sola la app
