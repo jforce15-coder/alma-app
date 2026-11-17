@@ -133,6 +133,13 @@ jobs:
         run: |
           xcrun swiftc Alma/AgenteVoz.swift Alma/ClaudioLocalReglas.swift Pruebas/ClaudioLocal/main.swift -o /tmp/claudio-local
           /tmp/claudio-local
+      # Voz de respaldo de Alma (Hub #657): cuándo entra (solo con problemas de conexión), cuándo vuelve a su voz, qué va al
+      # Hub y lo que se guarda sin internet. Lógica pura.
+      - name: Probar la voz de respaldo
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/RespaldoReglas.swift Pruebas/Respaldo/main.swift -o /tmp/respaldo
+          /tmp/respaldo
       # Notificaciones por tipo (Hub #551): cómo se arma cada una con los ajustes de su tipo (dónde se ve, sonido, urgente,
       # agrupar, vista previa) y Siri solo con la app cerrada o en segundo plano, fuera de conferencia y Modo calle. Lógica pura.
       - name: Probar las notificaciones por tipo
