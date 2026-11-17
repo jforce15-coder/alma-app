@@ -61,9 +61,12 @@ enum RespaldoReglas {
     // MARK: - Lo que se manda al Hub
 
     /// La acción calle del Hub (el mismo Chat con Alma del Modo calle), sin el audio de ElevenLabs: la dice el iPhone.
-    static func pedido(token: String, sesion: String, texto: String) -> [String: Any] {
-        ["hub": 1, "action": "calle", "app": "alma", "token": token, "session": sesion, "canal": "calle", "sin_audio": true,
-         "texto": String(texto.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1500))]
+    /// `alter`: «maricarmen» cuando contesta Maricarmen, el alter ego de Alma (MaricarmenReglas.swift: el Hub le pone el Weebo en 3).
+    static func pedido(token: String, sesion: String, texto: String, alter: String? = nil) -> [String: Any] {
+        var b: [String: Any] = ["hub": 1, "action": "calle", "app": "alma", "token": token, "session": sesion, "canal": "calle", "sin_audio": true,
+                                "texto": String(texto.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1500))]
+        if let a = alter, !a.isEmpty { b["alter"] = a }
+        return b
     }
 
     struct Respuesta: Equatable { let hablar: String; let claudio: Bool }
