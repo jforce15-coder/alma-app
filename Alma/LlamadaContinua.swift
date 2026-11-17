@@ -5,8 +5,9 @@ import Foundation
 /// app cierra sola la conversación de ElevenLabs (cada minuto abierto gasta créditos) tras un silencio real, sin despedida ni
 /// mensaje de error, y vuelve a escuchar «Alma» en el teléfono; al nombrarla otra vez, lleva de contexto lo que se hablaba.
 /// Antes («Sin despedidas», Hub #576) la ficha le pedía colgar con end_call apenas respondía: eso era el corte.
-///   · Conferencia: `silencio` s sin que nadie hable después de que Alma habló (30 de fábrica; `conferencia_silencio_s` en la
-///     ficha del Hub) o `tope` s sin que Alma hable, aunque sigan hablando entre ellos (60; `conferencia_tope_s`).
+///   · Conferencia: `silencio` s sin que nadie hable después de que Alma habló (45 de fábrica; `conferencia_silencio_s` en la
+///     ficha del Hub) o `tope` s sin que Alma hable, aunque sigan hablando entre ellos (60; `conferencia_tope_s`), en una
+///     pausa de 8 s; y si esa pausa no llega (una reunión), a los `tope` + 30 s en una pausa de 3 s (tope duro).
 ///   · Modo calle: los segundos del sueño de siempre (SuenoCalle; `calle_silencio_s`, `calle_tope_s`).
 ///   · Una llamada normal (la roca, el anillo) no la cierra el silencio; si su conexión se cae, la app la vuelve a abrir
 ///     sola con lo último que se dijo, y si Claudio no conecta vuelve Alma y lo dice en una frase.
@@ -27,6 +28,11 @@ enum LlamadaContinua {
     static let ruidoConferencia: TimeInterval = 180
     static let pausaConferencia: TimeInterval = 8
     static let topeConferencia: TimeInterval = 60
+    /// 17-nov-2026 (Juan: «al finalizar la conversación con Alma debe colgar y regresar al modo conferencia en escucha»): en
+    /// una reunión la gente sigue hablando entre ella y la pausa de 8 s no llegaba nunca: la llamada quedaba abierta sin fin.
+    /// Ahora, `margenDuro` s después del tope (90 s sin que Alma hable ni trabaje, de fábrica), cierra en una pausa de 3 s
+    /// aunque sigan hablando. La conferencia sigue escuchando y, si vuelven a decir «Alma», ella sabe de qué iban.
+    static let margenDuro: TimeInterval = 30
 
     /// Un número de la ficha del Hub, entre sus límites; si no viene (un Hub de antes), el de fábrica.
     static func segundos(_ valor: Double?, fabrica: TimeInterval, desde: TimeInterval, hasta: TimeInterval) -> TimeInterval {
@@ -40,6 +46,8 @@ enum LlamadaContinua {
         /// Voz sin nada escrito en este tiempo: ruido (no alguien hablando). Y la pausa que tiene que haber para el tope.
         var ruido: TimeInterval = SuenoCalle.soloRuido
         var pausa: TimeInterval = SuenoCalle.oyendo
+        /// Tope duro (solo conferencia): sin que Alma hable en tanto tiempo, cierra en la primera pausa corta aunque hablen.
+        var duro: TimeInterval? = nil
     }
 
     /// ¿La app cierra sola esta llamada, y con qué segundos? nil: una llamada normal (no la cierra el silencio).

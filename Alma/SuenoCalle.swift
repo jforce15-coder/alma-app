@@ -40,10 +40,15 @@ enum SuenoCalle {
     /// `ruido`: voz sin nada escrito en ese tiempo ya no cuenta como alguien hablando. `pausa`: el tope (sin que Alma hable)
     /// solo cierra cuando nadie suena desde hace esto. 16-nov-2026 (23:43): el silencio se contaba desde lo último ESCRITO, y
     /// Juan, explicándole 50 s un pedido sin que llegara su texto, quedaba «callado»: ahora el silencio es que nadie suene.
+    /// `duro` (solo conferencia; Juan, 17-nov-2026: «debe colgar y regresar al modo conferencia en escucha»): en una reunión
+    /// siempre hay alguien hablando y llegan sus palabras, así que la pausa de `pausa` s casi nunca llega y la llamada quedaba
+    /// abierta sin fin. Tras `duro` s sin que Alma hable ni trabaje, se cierra en la primera pausa corta (`pausaDura` s).
+    static let pausaDura: TimeInterval = 3
     static func decidir(_ m: Momentos, ahora: Date, silencio: TimeInterval, tope: TimeInterval,
-                        ruido: TimeInterval = soloRuido, pausa: TimeInterval = oyendo) -> Motivo? {
+                        ruido: TimeInterval = soloRuido, pausa: TimeInterval = oyendo, duro: TimeInterval? = nil) -> Motivo? {
         if let h = m.herramientaDesde { return ahora.timeIntervalSince(h) > topeHerramienta ? .tope : nil }
         let alma = max(m.conectada, m.finVozAlma, m.finHerramienta)
+        if let d = duro, ahora.timeIntervalSince(alma) >= d, ahora.timeIntervalSince(m.sonido) >= pausaDura { return .tope }
         let palabras = max(alma, m.vozJuan)
         let esVoz = ahora.timeIntervalSince(palabras) < ruido   // la voz sin nada escrito por mucho rato es ruido de fondo
         if esVoz && ahora.timeIntervalSince(m.sonido) < pausa { return nil }   // alguien habla (o hace una pausa corta): no se corta

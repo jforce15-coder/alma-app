@@ -194,7 +194,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var tiemposCierre: LlamadaContinua.Tiempos? {
         LlamadaContinua.tiempos(calle: desdeCalle, conferencia: conferencia != nil, porAviso: porAviso != nil, juanHablo: vozJuanCalle != .distantPast, claudio: agente == .claudio,
                                 deCalle: .init(silencio: calleSilencio, tope: calleTope),
-                                deConferencia: .init(silencio: confSilencio, tope: confTope, ruido: LlamadaContinua.ruidoConferencia, pausa: LlamadaContinua.pausaConferencia))
+                                deConferencia: .init(silencio: confSilencio, tope: confTope, ruido: LlamadaContinua.ruidoConferencia, pausa: LlamadaContinua.pausaConferencia,
+                                                     duro: confTope + LlamadaContinua.margenDuro))
     }
     /// Cada intento de conexión lleva su número: el reloj de «no contestó» de un intento anterior no corta el de ahora.
     private var intentoConexion = 0
@@ -1660,7 +1661,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             guard !self.enChat, !self.mudo else { return }   // modo chat o mudo con la pantalla a la vista: no se cuelga sola
             let m = SuenoCalle.Momentos(conectada: self.conectadaDesde, finVozAlma: self.finVozAlma, vozJuan: self.vozJuanCalle,
                                         sonido: self.sonidoCalle, herramientaDesde: self.herramientaDesde, finHerramienta: self.finHerramienta)
-            if let motivo = SuenoCalle.decidir(m, ahora: Date(), silencio: tc.silencio, tope: tc.tope, ruido: tc.ruido, pausa: tc.pausa) { self.colgarCalle(motivo) }
+            if let motivo = SuenoCalle.decidir(m, ahora: Date(), silencio: tc.silencio, tope: tc.tope, ruido: tc.ruido, pausa: tc.pausa, duro: tc.duro) { self.colgarCalle(motivo) }
         }
     }
 
