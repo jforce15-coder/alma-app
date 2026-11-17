@@ -5,8 +5,10 @@ import Foundation
 /// · Cuándo terminó de hablar Juan (el dictado no avisa): tras una pausa corta sin cambios en lo que oyó; más larga si la
 ///   frase quedó colgando («… y», «… que»), y con un tope para no esperar para siempre.
 /// · Lo que se manda al Hub (acción claudioLocal): lo último que se dijo, corto.
-/// · La voz del iPhone que imita a Claudio: de hombre, en el primer idioma que haya, la de mejor calidad; los ajustes vienen
-///   del Hub (voz_local) y se cambian sin una versión nueva de la app.
+/// · La voz: LA MISMA de Claudio en ElevenLabs (Hub #636; Juan, 17-nov-2026: «mantener la voz igual a la que usábamos antes
+///   con ElevenLabs, sin bajar el nivel»). El Hub manda cada frase ya dicha con su voz (audio PCM 16 kHz, como la llamada).
+/// · Si no llega audio (ElevenLabs falló o el Hub dice motor «iphone»), la voz del iPhone que más se parece: de hombre, en el
+///   primer idioma que haya, la de mejor calidad; los ajustes vienen del Hub (voz_local) y se cambian sin otra versión.
 enum ClaudioLocalReglas {
 
     // MARK: - Fin de la frase
@@ -44,12 +46,30 @@ enum ClaudioLocalReglas {
 
     /// Lo que se hace con la respuesta del Hub. Sin respuesta (o sin frase), una frase para no quedarse en silencio.
     static let repite = "Perdón, no me llegó la respuesta. ¿Me lo repites?"
-    struct Respuesta: Equatable { let hablar: String; let volver: Bool; let herramientas: [String] }
+    struct Respuesta: Equatable { let hablar: String; let volver: Bool; let herramientas: [String]; var audio: Data? = nil }
     static func respuesta(_ j: [String: Any]?) -> Respuesta {
         let h = (j?["hablar"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return Respuesta(hablar: h.isEmpty ? repite : h, volver: (j?["volver"] as? Bool) == true,
-                         herramientas: (j?["herramientas"] as? [String] ?? []).filter { $0.hasPrefix("claudio_") })
+                         herramientas: (j?["herramientas"] as? [String] ?? []).filter { $0.hasPrefix("claudio_") },
+                         audio: h.isEmpty ? nil : audio(j))   // sin frase, «¿me lo repites?» va con la voz del iPhone
     }
+
+    // MARK: - La voz de ElevenLabs (del Hub)
+
+    static let hz = 16000
+    /// El audio que manda el Hub con la voz de Claudio: PCM 16 bits a 16 kHz en base64 (audio + hz). Otro formato, roto o
+    /// vacío: nada (se dice con la voz del iPhone).
+    static func audio(_ d: [String: Any]?) -> Data? {
+        guard let b = d?["audio"] as? String, !b.isEmpty, (d?["hz"] as? NSNumber)?.intValue == hz,
+              let a = Data(base64Encoded: b), a.count >= 2 else { return nil }
+        return a.count % 2 == 0 ? a : a.dropLast()
+    }
+    /// En trozos de un cuarto de segundo (como llegan del socket de ElevenLabs), para que el halo lata con la voz.
+    static func trozos(_ a: Data, bytes: Int = 8000) -> [Data] {
+        stride(from: 0, to: a.count, by: bytes).map { a.subdata(in: a.index(a.startIndex, offsetBy: $0)..<a.index(a.startIndex, offsetBy: min(a.count, $0 + bytes))) }
+    }
+    /// Cuánto suena (segundos).
+    static func duracion(_ a: Data) -> Double { Double(a.count / 2) / Double(hz) }
 
     // MARK: - Lo que dice la voz del iPhone
 

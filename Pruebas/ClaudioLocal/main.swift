@@ -35,6 +35,18 @@ revisa(r1.hablar == "Listo, te paso con Alma." && r1.volver && r1.herramientas =
 revisa(R.respuesta(nil).hablar == R.repite && !R.respuesta(nil).volver, "sin respuesta del Hub: una frase, nunca en silencio")
 revisa(R.respuesta(["ok": true, "hablar": "  "]).hablar == R.repite, "con la frase vacía, también")
 
+// La misma voz de ElevenLabs (Hub #636)
+let pcm = Data((0..<40001).map { UInt8($0 % 256) })   // 1,25 s a 16 kHz y un byte suelto
+let ra = R.respuesta(["ok": true, "hablar": "Ya quedó.", "audio": pcm.base64EncodedString(), "hz": 16000])
+revisa(ra.audio?.count == 40000, "la frase llega con su voz de ElevenLabs (sin el byte suelto)")
+revisa(R.respuesta(["ok": true, "hablar": "Ya quedó.", "audio": pcm.base64EncodedString(), "hz": 22050]).audio == nil, "otro formato: con la voz del iPhone")
+revisa(R.respuesta(["ok": true, "hablar": "Ya quedó.", "audio": "%%%", "hz": 16000]).audio == nil && R.respuesta(["ok": true, "hablar": "Ya quedó."]).audio == nil, "audio roto o sin audio: con la voz del iPhone")
+revisa(R.respuesta(["ok": true, "hablar": " ", "audio": pcm.base64EncodedString(), "hz": 16000]).audio == nil, "sin frase, «¿me lo repites?» no lleva un audio que no es suyo")
+let tz = R.trozos(ra.audio!)
+revisa(tz.count == 5 && tz.allSatisfy { $0.count == 8000 } && tz.reduce(into: Data(), { $0.append($1) }) == ra.audio!, "suena en trozos de un cuarto de segundo, completo y en orden")
+revisa(abs(R.duracion(ra.audio!) - 1.25) < 0.001, "y sabe cuánto suena (para volver a escuchar al terminar)")
+revisa(R.audio(["audio": pcm.base64EncodedString(), "hz": 16000, "genero": "hombre"])?.count == 40000, "el saludo (voz_local.audio) también con su voz")
+
 // Lo que dice la voz del iPhone
 let d = R.paraDecir("[warm] **Listo**, quedó pedido. https://github.com/x\n- uno")
 revisa(d == "Listo, quedó pedido. uno", "sin etiquetas de emoción, markdown, enlaces ni viñetas: «\(d)»")
