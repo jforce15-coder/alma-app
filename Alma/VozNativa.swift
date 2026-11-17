@@ -1093,7 +1093,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Herramientas del lado de la app (client tools de ElevenLabs). mostrar_en_chat: abre el chat con lo que Alma
     /// pone en pantalla y la llamada sigue. Sin pantalla a la vista (teléfono bloqueado, modo anillo) no se muestra y se le
     /// dice a Alma que lo diga por voz. Las Manos de Alma (leer_pagina, senalar, tocar, escribir, bajar, abrir: ManosAlma.swift)
-    /// y correr_atajo (AtajosIOS.swift) contestan cuando terminan. Siempre se contesta: así Alma nunca se queda esperando.
+    /// correr_atajo y abrir_apple_pay (AtajosIOS.swift) contestan cuando terminan. Siempre se contesta: así Alma nunca se queda esperando.
     private func herramientaCliente(_ ev: [String: Any]) {
         guard let id = ev["tool_call_id"] as? String else { return }
         let nombre = ev["tool_name"] as? String ?? ""
@@ -1114,7 +1114,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             return
         }
-        if ManosAlma.herramientas.contains(nombre) || nombre == "correr_atajo" {
+        if ManosAlma.herramientas.contains(nombre) || nombre == "correr_atajo" || nombre == "abrir_apple_pay" {
             herramienta = true; paso("Alma usa " + nombre)
             let llamada = inicioLlamada
             let contestar: (String, Bool) -> Void = { [weak self] res, error in
@@ -1123,6 +1123,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 self.mandar(["type": "client_tool_result", "tool_call_id": id, "result": res, "is_error": error])
             }
             if nombre == "correr_atajo" { AtajosPermitidos.correr(ManosAlma.texto(p["nombre"]), contestar) }
+            else if nombre == "abrir_apple_pay" { ApplePay.abrir(contestar) }   // Hub #662: Wallet o su atajo de Apple Pay
             else { ManosAlma.shared.correr(nombre, p, contestar) }
             return
         }
