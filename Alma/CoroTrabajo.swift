@@ -1,10 +1,10 @@
 import AVFoundation
 
-/// Coro «Alma está trabajando» (Juan, 17-nov-2026): lo toca un AVAudioPlayerNode del MISMO motor que la voz de Alma
-/// (VozNativa), así la cancelación de eco lo resta del micrófono igual que su voz. Cuándo y a qué volumen: CoroReglas.
+/// Coro de espera (Juan, 17-nov-2026): lo toca un AVAudioPlayerNode del MISMO motor que la voz de Alma (VozNativa), así la
+/// cancelación de eco lo resta del micrófono igual que su voz. Cuándo y a qué volumen: CoroReglas. Primero suena el tecleo
+/// de ElevenLabs; al entrar el coro, `tecleo` baja la voz del agente (por ahí llega el tecleo) y al salir la devuelve.
 /// El archivo (Recursos/Sonidos/alma-trabaja.wav, 48 kHz mono, −24 LUFS) es un loop sin costura de 39 s: se repite solo.
-/// Solo suena si `permitido`: la conversación no trae el tecleo de ElevenLabs (Alma con las herramientas gemelas sin sonido,
-/// tool_ids_app del Hub, o Claudio, que ya no lo tiene). Si no, se oirían los dos.
+/// `permitido`: hay una conversación de ElevenLabs (no la voz local de Claudio, de respaldo ni Maricarmen).
 final class CoroTrabajo {
     let nodo = AVAudioPlayerNode()
     private(set) var buffer: AVAudioPCMBuffer?
@@ -13,6 +13,10 @@ final class CoroTrabajo {
     /// Alma suena ahora / Juan habla ahora (los da VozNativa).
     var almaHabla: () -> Bool = { false }
     var juanHabla: () -> Bool = { false }
+    /// Pone el volumen de la voz del agente (el tecleo). `normal`: el de siempre.
+    var tecleo: (Float) -> Void = { _ in }
+    var normal: Float = 1
+    private var tecleoBajo = false
     /// ¿Se oye el coro? (el micrófono lo trata como el eco de la voz de Alma: solo pasa lo que suena más fuerte)
     private(set) var audible = false
     private var nivel: Float = 0, objetivo: Float = 0, velocidad: Float = 1
@@ -35,14 +39,21 @@ final class CoroTrabajo {
         arrancarReloj()
     }
 
-    func termina(_ id: String) { reglas.termina(id) }
+    func termina(_ id: String) { if reglas.termina(id) { bajarTecleo(false) } }   // Alma va a contestar: su voz completa
 
     /// Interrupción, cambio de agente o colgar: se corta ya (sin rampa).
     func corta() {
         reglas.corta()
+        bajarTecleo(false)
         reloj?.invalidate(); reloj = nil
         if sonando { nodo.stop() }
         sonando = false; nivel = 0; objetivo = 0; audible = false; nodo.volume = 0
+    }
+
+    private func bajarTecleo(_ on: Bool) {
+        guard on != tecleoBajo else { return }
+        tecleoBajo = on
+        tecleo(CoroReglas.volumenTecleo(coroSuena: on, almaHabla: false, normal: normal))
     }
 
     private func arrancarReloj() {
@@ -65,7 +76,9 @@ final class CoroTrabajo {
             if reglas.cuantas == 0 { reloj?.invalidate(); reloj = nil }
             return
         }
-        let nuevo: Float = debe ? CoroReglas.lineal(CoroReglas.objetivoDb(almaHabla: almaHabla(), juanHabla: juanHabla())) : 0
+        let alma = almaHabla()
+        bajarTecleo(debe && !alma)   // el tecleo se baja mientras suena la espera; Alma hablando se oye completa
+        let nuevo: Float = debe ? CoroReglas.lineal(CoroReglas.objetivoDb(almaHabla: alma, juanHabla: juanHabla())) : 0
         if nuevo != objetivo {
             velocidad = abs(nuevo - nivel) / Float(max(0.01, CoroReglas.duracion(desde: nivel, hacia: nuevo)))
             objetivo = nuevo

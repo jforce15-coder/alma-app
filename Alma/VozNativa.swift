@@ -63,10 +63,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var modoAnillo: Bool { UserDefaults.standard.bool(forKey: "voz_modo_anillo") }
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
-    /// Coro «Alma está trabajando» (Juan, 17-nov-2026; CoroTrabajo.swift): suena mientras Alma usa una herramienta, en el
-    /// mismo motor que su voz (la cancelación de eco lo resta del micrófono). Reemplaza el tecleo de ElevenLabs en la app.
+    /// Coro de espera (Juan, 17-nov-2026; CoroTrabajo.swift): si una herramienta pasa de 2,5 s, el tecleo de ElevenLabs se
+    /// baja y suena el coro, en el mismo motor que su voz (la cancelación de eco lo resta del micrófono).
     private let coro = CoroTrabajo()
     private var vozJuanCoro = Date.distantPast   // la última vez que el micrófono oyó a Juan (el coro baja 6 dB)
+    private var textoAlmaCoro = Date.distantPast  // la última vez que Alma dijo algo (texto): el coro baja 10 dB
     private var formatoSalida = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
     private let formatoEntrada = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
     private var convertidor: AVAudioConverter?
@@ -839,6 +840,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     private func conectar(agente: String, ficha: [String: Any]) {
         guard estado == .conectando else { return }
+        coro.permitido = false   // llegó la conversación nueva: termina la espera (también la del cambio de agente)
         do {
             let s = AVAudioSession.sharedInstance()
             guard s.recordPermission == .granted else { fallo("Falta el permiso del micrófono: Ajustes del iPhone → Alma → Micrófono."); return }
@@ -979,11 +981,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             else { primero = retomar ?? VozNativa.saludoVariado(ficha) }
             var agent: [String: Any] = ["first_message": primero]
             if !idioma.isEmpty { agent["language"] = idioma }
-            /* Coro (Hub voz.js, vozGemelas_): con Alma, la lista de herramientas gemelas sin tecleo de ElevenLabs; así suena
-               solo el coro. Sin la lista (el Hub no la confirmó) queda el tecleo y el coro no suena (no se oyen los dos). */
-            let sinTecleo = self.agente == .alma ? (ficha["tool_ids_app"] as? [String] ?? []) : []
-            if !sinTecleo.isEmpty { agent["prompt"] = ["tool_ids": sinTecleo] }
-            self.coro.permitido = self.local == nil && (self.agente == .claudio || !sinTecleo.isEmpty)
+            /* Coro de espera (CoroTrabajo.swift): la conversación nueva empieza sin herramientas en curso (también corta la
+               espera del cambio de agente) y suena con cualquier agente de ElevenLabs; con la voz local, no. */
+            self.coro.corta(); self.coro.permitido = self.local == nil
             self.mandar(["type": "conversation_initiation_client_data", "dynamic_variables": dvListas, "conversation_config_override": ["agent": agent]])
             self.inicioEnviado = true
             // Alma saluda: lo que el micrófono guardó mientras conectaba (el «Alma», la señal, la reunión) no va; si no, ElevenLabs
@@ -1000,7 +1000,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private func prepararMotor() throws {
         if !motorListo {
             engine.attach(player); engine.attach(coro.nodo); motorListo = true
-            coro.almaHabla = { [weak self] in self?.almaHabla ?? false }
+            // Alma habla de verdad (no solo el tecleo, que también llega como su voz): suena y dijo algo hace poco.
+            coro.almaHabla = { [weak self] in guard let self else { return false }; return self.almaHabla && Date().timeIntervalSince(self.textoAlmaCoro) < 8 }
+            coro.tecleo = { [weak self] v in self?.player.volume = v }
+            coro.normal = LlamadaContinua.volumenVoz
             coro.juanHabla = { [weak self] in Date().timeIntervalSince(self?.vozJuanCoro ?? .distantPast) < 0.35 }
         }
         if !sinEco {
@@ -1204,7 +1207,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         case "agent_response":
             let ev = j["agent_response_event"] as? [String: Any] ?? [:]
             if let t = ev["agent_response"] as? String, sinSiguesAhi, LlamadaContinua.esPreguntaDeSilencio(t) { callarPregunta(); break }
-            sinVozPregunta = false
+            sinVozPregunta = false; textoAlmaCoro = Date()
             if let t = ev["agent_response"] as? String { emitir(["tipo": "alma", "texto": t]); linea(true, t); Companero.shared.sub(alma: true, t) }   // modo compañero (Hub #607)
         case "user_transcript":
             let ev = j["user_transcription_event"] as? [String: Any] ?? [:]
@@ -1597,7 +1600,6 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         guard !cambiando, estado == .hablando, let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"),
               let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
         cambiando = true
-        coro.permitido = false   // la conversación nueva decide si suena (Claudio sí; Alma, si trae las gemelas)
         let llamada = inicioLlamada, pedido = Date()
         paso("Cambiando a " + nuevo.nombre)
         var ficha: [String: Any]?, error: String?

@@ -92,7 +92,7 @@ jobs:
           xcrun swiftc Alma/GifBroma.swift Pruebas/GifBroma/main.swift -o /tmp/gif-broma
           /tmp/gif-broma
 
-      # Coro «Alma está trabajando» (Juan, 17-nov-2026): la cuenta de herramientas, el umbral de 0,6 s, el tope, el ducking
+      # Coro de espera (Juan, 17-nov-2026): tecleo para lo corto y coro pasados 2,5 s, la cuenta de herramientas, el tope, el ducking
       # (Alma −10 dB, Juan −6 dB) y las rampas. Lógica pura.
       - name: Probar el coro de Alma trabajando
         if: env.SUBIR != 'true'
