@@ -18,6 +18,8 @@ import UIKit
 ///     botón (o el anillo) sigue como siempre, también en segundo plano.
 ///   · Al apagarlo, el Hub lo clasifica (reunión, conferencia, llamada o memo · esfera · proyecto), resume los acuerdos y
 ///     lo deja en Pendientes. No se guarda audio: solo el texto.
+///   · Mientras está encendida, la pantalla no se bloquea sola (para ver las animaciones de la roca). Si la bloqueas con el
+///     botón de un lado, se bloquea como siempre y Alma sigue escuchando. Al apagarla, el bloqueo automático vuelve.
 final class Conferencia {
     static let shared = Conferencia()
     private(set) var activa = false
@@ -145,6 +147,7 @@ final class Conferencia {
                     if let pedido { self.despertar(pedido, texto: "") } else { self.escuchar() }
                     self.envio = Timer.scheduledTimer(withTimeInterval: 90, repeats: true) { [weak self] _ in self?.mandar(fin: false) }
                     self.armarApagado()
+                    Conferencia.pantallaDespierta(true)
                     self.emitir()
                 }
             }
@@ -160,11 +163,18 @@ final class Conferencia {
         cerrarArchivo()
         if reunion { subirPartes { [weak self] in self?.mandar(fin: true) } } else { mandar(fin: true); borrarPartes() }
         activa = false; enLlamada = false
+        Conferencia.pantallaDespierta(false)
         // Con «Alma con el anillo» el audio no se suelta: así el próximo doble toque llega aunque el teléfono esté bloqueado.
         if VozNativa.shared.anilloListo { VozNativa.shared.listaTrasConferencia() }
         else { VozNativa.soltarAudio() }   // sin anillo: se suelta el audio (si nadie más escucha) y las otras apps siguen
         emitir()
         EscuchaInicio.shared.liberar()   // de vuelta al Modo Inicio (otro minuto de escucha)
+    }
+
+    /// La pantalla no se apaga sola mientras la conferencia está encendida (Juan, 16-nov-2026). Solo quita el bloqueo
+    /// automático: el botón de un lado la sigue bloqueando. Al apagar la conferencia vuelve el bloqueo automático.
+    private static func pantallaDespierta(_ on: Bool) {
+        if UIApplication.shared.isIdleTimerDisabled != on { UIApplication.shared.isIdleTimerDisabled = on }
     }
 
     /// Escucha un tramo: abre el micrófono si hace falta (el de la voz si está abierto, o el propio con la sesión que se
