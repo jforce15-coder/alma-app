@@ -30,6 +30,8 @@ import UserNotifications
 /// · Conversación continua (Juan, 16-nov-2026; LlamadaContinua.swift): en el Modo calle y en conferencia Alma no se despide
 ///   ni cuelga; la app cierra sola tras un silencio y vuelve a escuchar «Alma». Si la conexión de una llamada normal se cae,
 ///   se vuelve a abrir sola; si Claudio no conecta, vuelve Alma y lo dice. Cada fin de llamada deja su porqué en los pasos.
+/// · Claudio local (Hub #629, ClaudioLocal.swift): con el Hub que lo trae, Claudio va sin ElevenLabs (dictado y voz del
+///   iPhone, el Hub contesta con su mismo prompt): las sesiones largas de trabajo no gastan créditos de voz.
 final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static let shared = VozNativa()
 
@@ -60,6 +62,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private let formatoEntrada = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
     private var convertidor: AVAudioConverter?
     private var ws: URLSessionWebSocketTask?
+    /// Claudio local (Hub #629, ClaudioLocal.swift): Claudio sin ElevenLabs. Habla como el socket: lo que se le «manda» va a
+    /// él y lo que contesta entra por mensaje(_:), así el resto de la llamada no cambia.
+    private var local: ClaudioLocal?
     private var sesionURL: URLSession?
     private var silencio: AVAudioPlayer?
     private var ultimoToque = Date.distantPast
@@ -715,6 +720,22 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             paso("Micrófono abierto · conectando la voz")
         } catch { fallo("No pude abrir el micrófono (\((error as NSError).code))."); return }
+        // Claudio local (Hub #629): si el Hub lo trae y el dictado del iPhone está listo, Claudio va sin ElevenLabs (sin créditos
+        // de voz). Si no, sigue con su agente de ElevenLabs como siempre.
+        if self.agente == .claudio, (ficha["local"] as? Bool) == true {
+            if let l = ClaudioLocal(ficha: ficha) {
+                local = l
+                l.paso = { [weak self] t in self?.paso(t) }
+                l.alEvento = { [weak self, weak l] ev in
+                    guard let self, let l, self.local === l else { return }   // uno viejo (ya volvió Alma o colgó) no cuenta
+                    self.mensaje(ev)
+                }
+                inicioEnviado = true; saludoDesde = nil; colaVoz = []
+                l.empezar()
+                return
+            }
+            paso("Claudio local no está listo (falta el permiso del dictado o no está disponible): sigue con ElevenLabs")
+        }
         let firmada = (ficha["signed_url"] as? String).flatMap { URL(string: $0) }
         guard let u = firmada ?? URL(string: "wss://api.elevenlabs.io/v1/convai/conversation?agent_id=\(agente)") else { return }
         var pedido = URLRequest(url: u); pedido.setValue("https://hub.spacioam.com", forHTTPHeaderField: "Origin")
@@ -1203,6 +1224,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     private func mandar(_ o: [String: Any]) {
+        if let l = local { l.recibir(o); return }   // Claudio local: nada va a ElevenLabs
         // Nada de la conversación antes de la ficha: si no, ElevenLabs empieza sin quien_llama (InicioVoz, 6-nov-2026).
         if InicioVoz.decidir(tipo: InicioVoz.tipo(o), inicioEnviado: inicioEnviado) == .esperar { antesDeFicha.append(o); return }
         guard let d = try? JSONSerialization.data(withJSONObject: o), let s = String(data: d, encoding: .utf8) else { return }
@@ -1318,6 +1340,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Cierre normal de verdad: se deja salir el aviso de cierre antes de soltar la sesión (invalidateAndCancel lo
         // cortaba a veces y ElevenLabs lo anotaba como corte anormal, 1006, aunque hubiera colgado la app).
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
+        local?.parar(); local = nil
         sesionURL?.finishTasksAndInvalidate(); sesionURL = nil
         player.stop()
         if modoAnillo || unRato { player.play() }   // el micrófono sigue listo para el próximo doble toque
@@ -1390,6 +1413,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let viejo = ws, viejaSesion = sesionURL
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .normalClosure, reason: nil); viejaSesion?.finishTasksAndInvalidate()
+        local?.parar(); local = nil   // Claudio local se va: vuelve Alma
         player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         inicioEnviado = false; antesDeFicha = []; colaVoz = []; sono = false
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()   // vuelve Alma: el Panel de Claudio se quita
@@ -1757,6 +1781,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let viejo = ws, viejaSesion = sesionURL
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
+        local?.parar(); local = nil
         player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         inicioEnviado = false; antesDeFicha = []; colaVoz = []
         cambiando = true   // mientras llega la conversación nueva no se cambia de agente
