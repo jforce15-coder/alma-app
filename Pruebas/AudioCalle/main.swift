@@ -16,7 +16,7 @@ revisa(!A.bajaEnConferencia(nil), "de fábrica, en conferencia la música no baj
 revisa(!A.bajaEnCalle(false) && A.bajaEnConferencia(true), "lo que Juan elige se respeta")
 revisa(A.baja(.calle, calle: true, conferencia: false) && !A.baja(.conferencia, calle: true, conferencia: false), "cada lugar usa su interruptor")
 revisa(A.baja(.aviso, calle: false, conferencia: false), "un aviso con la app abierta baja la música como siempre")
-revisa(!A.baja(.nada, calle: true, conferencia: true), "fuera del Modo calle y la conferencia, nada baja")
+revisa(A.baja(.nada, calle: false, conferencia: false), "la llamada normal desde la app baja la música (no la pausa), sin importar los interruptores")
 
 // MARK: - El momento de cada fase
 
@@ -36,8 +36,10 @@ revisa(atiende.contains(.parlante) && atiende.contains(.audifonos), "Alma se oye
 revisa(A.opciones(.atiende, donde: .calle, baja: false, anillo: false) == A.escucha, "con el interruptor apagado, Alma habla encima de la música (como antes)")
 let llamada = A.opciones(.llamada, donde: .calle, baja: true, anillo: false)!
 revisa(llamada.contains(.bajarOtras) && llamada.contains(.manosLibres), "la llamada desde el Modo calle: Spotify baja (no se pausa) y oye por el micrófono de los audífonos")
-let llamadaSola = A.opciones(.llamada, donde: .nada, baja: false, anillo: false)!
-revisa(!llamadaSola.contains(.mezclar) && !llamadaSola.contains(.bajarOtras), "una llamada fuera del Modo calle no se mezcla, como siempre")
+let llamadaNormal = A.opciones(.llamada, donde: .nada, baja: A.baja(.nada, calle: false, conferencia: false), anillo: false)!
+revisa(llamadaNormal == A.llamadaBajando, "la llamada normal: Spotify baja y sigue sonando; si arranca a media llamada, ya no la corta")
+let llamadaSola = A.opciones(.llamada, donde: .conferencia, baja: false, anillo: false)!
+revisa(!llamadaSola.contains(.mezclar) && !llamadaSola.contains(.bajarOtras), "en conferencia con el interruptor apagado, la llamada no se mezcla (lo que Juan eligió)")
 revisa(A.opciones(.llamada, donde: .conferencia, baja: true, anillo: false) == A.llamadaBajando, "en conferencia con el interruptor encendido, la llamada también baja la música")
 revisa(A.opciones(.espera, donde: .aviso, baja: true, anillo: false) == A.bajando, "un aviso con la app abierta baja mientras tiene el micrófono")
 revisa(A.opciones(.atiende, donde: .calle, baja: true, anillo: true) == nil, "con «Alma con el anillo» no se toca el audio")
