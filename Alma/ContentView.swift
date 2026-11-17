@@ -14,6 +14,8 @@ struct ContentView: View {
     /// Diagnóstico del anillo (Bluetooth): Ajustes → Alma con el anillo (DiagnosticoAnillo.swift).
     @State private var diagAnillo = false
     @State private var dispositivos = false
+    /// Guía de camino (GuiaCamino.swift): el mapa sube cuando la guía empieza con la pantalla a la vista.
+    @State private var mapaCamino = false
     @ObservedObject private var voz = VozNativa.shared
     @ObservedObject private var mejora = MejoraCampo.shared
     /// La roca de Alma del navegador: la misma de las web apps, en una capa encima de la página.
@@ -51,6 +53,9 @@ struct ContentView: View {
             // Dispositivos (el anillo y los lentes): desde Ajustes o cuando Alma la abre (anillo_estado con mostrar); la llamada se baja.
             .background { Color.clear.sheet(isPresented: $dispositivos) { DispositivosVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirDispositivos)) { _ in llamadaOculta = true; dispositivos = true }
+            // Guía de camino: el mapa con el camino y el próximo paso; la llamada se baja (sigue en la roca).
+            .background { Color.clear.sheet(isPresented: $mapaCamino) { MapaCaminoVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirGuiaCamino)) { _ in llamadaOculta = true; mapaCamino = true }
             // Manos de Alma (navegador): Alma lee o actúa en la página; la pantalla de la llamada se baja para que la veas.
             .onReceive(NotificationCenter.default.publisher(for: .manosAlma)) { _ in llamadaOculta = true }
             // Tarjeta de la llamada: «Abrir conversación» baja la pantalla de la llamada (sigue en la roca) y abre el Hub.

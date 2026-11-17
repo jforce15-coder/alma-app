@@ -785,6 +785,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Manos de Alma (navegador): qué tiene abierto el navegador de la app (las reglas están en el Hub, voz.js).
         let manos = ManosAlma.shared.ficha
         if esAlma && !manos.isEmpty { dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\n" + manos }
+        // Guía de camino (GuiaCamino.swift): si va una guía, Alma lo sabe (y puede pararla).
+        let guia = GuiaCamino.shared.ficha
+        if esAlma && !guia.isEmpty { dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\n" + guia }
         // El anillo (AnilloAlma.swift): «ANILLO DE JUAN …» solo si hay uno guardado; así Alma sabe que puede usar sus herramientas.
         if esAlma, let fa = AnilloAlma.shared.ficha { dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\n" + fa }
         // Alma abre (Hub #509 T4): qué pedido es y qué falta, para seguir la conversación si Juan contesta.
@@ -1043,7 +1046,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Herramientas del lado de la app (client tools de ElevenLabs). mostrar_en_chat: abre el chat con lo que Alma
     /// pone en pantalla y la llamada sigue. Sin pantalla a la vista (teléfono bloqueado, modo anillo) no se muestra y se le
     /// dice a Alma que lo diga por voz. Las Manos de Alma (leer_pagina, senalar, tocar, escribir, bajar, abrir: ManosAlma.swift)
-    /// y correr_atajo (AtajosIOS.swift) contestan cuando terminan. Siempre se contesta: así Alma nunca se queda esperando.
+    /// y correr_atajo (AtajosIOS.swift) contestan cuando terminan; guiar_camino (GuiaCamino.swift), igual. Siempre se contesta: así Alma nunca se queda esperando.
     private func herramientaCliente(_ ev: [String: Any]) {
         guard let id = ev["tool_call_id"] as? String else { return }
         let nombre = ev["tool_name"] as? String ?? ""
@@ -1058,6 +1061,17 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             herramienta = true; paso("Alma usa " + nombre)
             let llamada = inicioLlamada
             AnilloAlma.shared.correr(nombre, p) { [weak self] res, error in
+                guard let self, self.inicioLlamada == llamada else { return }
+                self.herramienta = false; self.ultimaActividad = Date()
+                self.mandar(["type": "client_tool_result", "tool_call_id": id, "result": res, "is_error": error])
+            }
+            return
+        }
+        // Guía de camino (Hub #661): la ruta, el mapa y los pasos al oído justo a tiempo (GuiaCamino.swift). Siempre contesta.
+        if nombre == "guiar_camino" {
+            herramienta = true; paso("Alma usa guiar_camino")
+            let llamada = inicioLlamada
+            GuiaCamino.shared.herramienta(p) { [weak self] res, error in
                 guard let self, self.inicioLlamada == llamada else { return }
                 self.herramienta = false; self.ultimaActividad = Date()
                 self.mandar(["type": "client_tool_result", "tool_call_id": id, "result": res, "is_error": error])
