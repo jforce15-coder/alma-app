@@ -54,6 +54,10 @@ revisa(A.cambio(de: A.escucha, a: A.bajando, appActiva: true) == .cambiar, "baja
 revisa(A.cambio(de: A.bajando, a: A.bajando, appActiva: false) == .nada, "sin cambio, nada")
 revisa(A.cambio(de: nil, a: A.escucha, appActiva: false) == .cambiar, "sin saber lo de antes, se ponen las opciones")
 revisa(A.cambio(de: A.escucha, a: A.escucha, appActiva: true) == .nada, "la escucha de siempre no se toca")
+revisa(A.llamadaConAnillo(anilloListo: true, otraSuena: false), "con el anillo y sin música: la llamada usa el audio del anillo")
+revisa(!A.llamadaConAnillo(anilloListo: true, otraSuena: true), "con el anillo y Spotify sonando: la llamada baja la música, no la pausa")
+revisa(A.opciones(.llamada, donde: .nada, baja: true, anillo: A.llamadaConAnillo(anilloListo: true, otraSuena: true)) == A.llamadaBajando, "esa llamada baja la música")
+revisa(!A.llamadaConAnillo(anilloListo: false, otraSuena: false), "sin el anillo, nunca")
 
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")

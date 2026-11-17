@@ -266,6 +266,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         prepararMandos()
         UNUserNotificationCenter.current().delegate = Notificaciones.shared; Notificaciones.shared.registrarCategorias()
+        // De arranque, el audio de la app se mezcla (Juan, 17-nov-2026): sin esto iOS usa el que calla a las otras apps y la
+        // primera señal o sonido de Alma pausaba Spotify. Solo se elige la categoría; no se toma el audio.
+        if !modoAnillo { try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: VozNativa.opcionesEscucha) }
         if modoAnillo { quedarLista() }
         empezarAvisos()
     }
@@ -522,6 +525,15 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     @discardableResult
     private func quedarLista() -> Bool {
         guard estado != .hablando, estado != .conectando else { return true }
+        // Con música de otra app sonando no se toma el audio que no se mezcla: la pausaría (AnilloVuelve.alQuedarLista).
+        let ocupado = Conferencia.shared.activa || ModoCalle.shared.ocupaMicrofono || EscuchaInicio.shared.escuchando
+        switch AnilloVuelve.alQuedarLista(otraSuena: VozNativa.otraAppSuena, microfonoOcupado: ocupado) {
+        case .tomar: break
+        case .dejarSonar:
+            dejarSonarLaMusica(); esperarQuePareLaMusica(); return false
+        case .esperar:
+            esperarQuePareLaMusica(); return false
+        }
         var activo = true
         do {
             let s = AVAudioSession.sharedInstance()
@@ -540,6 +552,22 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     // MARK: - El anillo que vuelve (AnilloVuelve.swift)
+
+    /// Hay música sonando y nadie más usa el micrófono: Alma suelta su audio (el silencio, el micrófono del anillo y la
+    /// sesión que no se mezcla o que baja a las otras) avisando a las otras apps, para que la música siga a su volumen.
+    private func dejarSonarLaMusica() {
+        silencio?.stop()
+        engine.inputNode.removeTap(onBus: 0); player.stop(); if engine.isRunning { engine.stop() }
+        let s = AVAudioSession.sharedInstance(), o = s.categoryOptions
+        if !o.contains(.mixWithOthers) || o.contains(.duckOthers) { try? s.setActive(false, options: .notifyOthersOnDeactivation) }
+        try? s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opcionesEscucha)
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
+    /// El anillo espera a que la música pare (se vuelve a mirar cada 30 s) y entonces vuelve solo.
+    private func esperarQuePareLaMusica() {
+        paso("Hay música sonando: no la pauso; el anillo vuelve cuando pare")
+        if anilloCortadoDesde == nil { let d = Date(); anilloCortadoDesde = d; revisarAnilloCortado(d) }
+    }
 
     /// Desde cuándo otra app o una llamada le quitó el audio al anillo (nil: nada lo interrumpe).
     private var anilloCortadoDesde: Date?
@@ -578,6 +606,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ultimoIntentoAnillo = Date()
         paso(e == .interrupcionTermino ? "Terminó la interrupción: el anillo vuelve" : e == .interrupcionSinFin ? "La interrupción no avisó que terminó: el anillo intenta volver" : "Cambió la salida de audio: el anillo vuelve")
         let activo = quedarLista()
+        if !activo && VozNativa.otraAppSuena { return }   // volvió la música: el anillo sigue esperando (sin aviso de «Abre Alma»)
         let suena = silencio?.isPlaying == true, mic = engine.isRunning
         if activo && suena && mic {
             anilloCortadoDesde = nil; anilloAvisado = false
@@ -749,7 +778,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 // Desde el Modo calle (o la conferencia, con su interruptor) la música de las otras apps baja, no se pausa (AudioCalle).
                 let donde: AudioCalle.Donde = desdeCalle ? .calle : conferencia != nil ? .conferencia : .nada
                 let o = AudioCalle.opciones(.llamada, donde: donde, baja: AudioCalle.baja(donde, calle: AudioCalle.bajaCalleAhora, conferencia: AudioCalle.bajaConferenciaAhora),
-                                            anillo: anilloListo).map(AudioCalle.ios) ?? VozNativa.opciones
+                                            anillo: AudioCalle.llamadaConAnillo(anilloListo: anilloListo, otraSuena: VozNativa.otraAppSuena)).map(AudioCalle.ios) ?? VozNativa.opciones
                 paso("Abriendo el micrófono" + (o.contains(.duckOthers) ? " (la música baja, no se pausa)" : ""))
                 try s.setCategory(.playAndRecord, mode: .default, options: o)
                 try s.setActive(true)
