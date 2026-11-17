@@ -14,6 +14,9 @@ import VisionKit
 /// · Alma las pide con la herramienta de cliente mostrar_tarjeta_club (Hub, voz.js): la tarjeta sale en una ventana propia,
 ///   encima de todo (también de la llamada), en blanco y con el brillo al máximo; al cerrarla, el brillo vuelve.
 /// · La lógica pura (códigos de barras, encontrar la que pidió, qué se le contesta a Alma) está en TarjetasClubReglas.swift.
+/// · Ajuste (Juan, 17-nov-2026): también boletos de avión, tren, conciertos y eventos, con su fecha y un detalle (asiento,
+///   puerta, sección). Se escanean igual (el PDF417 o Aztec del pase de abordar, el QR de la entrada) y Alma los enseña igual.
+///   Un día después de su fecha dejan de ofrecerse por voz; se borran a mano.
 final class TarjetasClub: ObservableObject {
     static let shared = TarjetasClub()
     @Published private(set) var tarjetas: [TarjetaClub] = []
@@ -135,7 +138,10 @@ struct TarjetaEnCaja: View {
                 ForEach(club.tarjetas) { t in
                     VStack(spacing: 18) {
                         Spacer(minLength: 0)
+                        if t.tipo.boleto { Text(t.tipo.nombre).font(Tipo.sans(11, .semibold)).tracking(2.4).textCase(.uppercase).foregroundStyle(Tinta.suave) }
                         Text(t.nombre).font(Tipo.serif(40)).multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.6)
+                        let sub = [ReglasTarjetas.fechaCorta(t.fecha, hoy: ReglasTarjetas.hoy()), t.detalle].filter { !$0.isEmpty }.joined(separator: " · ")
+                        if t.tipo.boleto, !sub.isEmpty { Text(sub).font(Tipo.sans(16, .medium)).foregroundStyle(Tinta.suave).multilineTextAlignment(.center) }
                         CodigoVista(tarjeta: t).padding(.horizontal, 18)
                         Text(t.numero).font(.system(size: 24, weight: .medium, design: .monospaced)).tracking(2)
                             .multilineTextAlignment(.center).lineLimit(2).minimumScaleFactor(0.5).textSelection(.enabled)
@@ -240,9 +246,9 @@ struct TarjetasClubVista: View {
                         }
                         VStack(alignment: .leading, spacing: 0) {
                             Text("Tarjetas")
-                            Text("de clubes").italic()
+                            Text("y boletos").italic()
                         }.font(Tipo.serif(44)).lineSpacing(-4).accessibilityAddTraits(.isHeader)
-                        Text("Las del supermercado y de cliente frecuente. Se guardan solo en este iPhone. Dile a Alma «enséñame mi tarjeta de…» y la pone en pantalla para la caja.")
+                        Text("Las del supermercado y de cliente frecuente, y tus boletos de avión, tren, conciertos y eventos. Se guardan solo en este iPhone. Dile a Alma «enséñame mi tarjeta de…» o «mi boleto del concierto» y lo pone en pantalla.")
                             .font(Tipo.sans(13)).foregroundStyle(Tinta.suave)
                     }
                     .listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 8, leading: 4, bottom: 8, trailing: 4))
@@ -252,14 +258,15 @@ struct TarjetasClubVista: View {
                         HStack(spacing: 12) {
                             Button { editando = t } label: {
                                 HStack(spacing: 12) {
-                                    Image(systemName: t.formato.cuadrado ? "qrcode" : t.formato == .numero ? "number" : "barcode")
+                                    Image(systemName: icono(t))
                                         .font(.system(size: 20)).foregroundStyle(Tinta.peach).frame(width: 30)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(t.nombre).font(Tipo.sans(15, .medium))
-                                        Text(oculto(t.numero)).font(Tipo.sans(12)).foregroundStyle(Tinta.suave)
+                                        Text(subtitulo(t)).font(Tipo.sans(12)).foregroundStyle(Tinta.suave)
                                     }
                                     Spacer()
                                 }.contentShape(Rectangle())
+                                .opacity(ReglasTarjetas.paso(t, hoy: ReglasTarjetas.hoy()) ? 0.5 : 1)
                             }.buttonStyle(.borderless).accessibilityLabel("Cambiar la tarjeta de \(t.nombre)")
                             Button { VentanaTarjeta.shared.mostrar(t.id) } label: {
                                 Text("Mostrar").font(Tipo.sans(13, .semibold)).padding(.horizontal, 12).frame(height: 32)
@@ -270,7 +277,7 @@ struct TarjetasClubVista: View {
                     .onDelete { i in i.map { club.tarjetas[$0].id }.forEach(club.borrar) }
                     .onMove { club.mover($0, $1) }
                     Button { editando = TarjetaClub(id: UUID().uuidString, nombre: "", numero: "", formato: .code128) } label: {
-                        Label("Agregar una tarjeta", systemImage: "plus.circle.fill").font(Tipo.sans(15, .medium)).foregroundStyle(Tinta.peach)
+                        Label("Agregar una tarjeta o un boleto", systemImage: "plus.circle.fill").font(Tipo.sans(15, .medium)).foregroundStyle(Tinta.peach)
                     }
                 } footer: {
                     if !club.tarjetas.isEmpty { Text("Desliza a la izquierda para borrar una.").font(Tipo.sans(11)) }
@@ -287,6 +294,22 @@ struct TarjetasClubVista: View {
 
     /// En la lista solo se ven los últimos 4 (la tarjeta completa, al mostrarla).
     private func oculto(_ n: String) -> String { n.count <= 4 ? n : "•••• " + String(n.suffix(4)) }
+    private func icono(_ t: TarjetaClub) -> String {
+        switch t.tipo {
+        case .club: return t.formato.cuadrado ? "qrcode" : t.formato == .numero ? "number" : "barcode"
+        case .avion: return "airplane"
+        case .tren: return "tram.fill"
+        case .concierto: return "music.note"
+        case .evento: return "ticket"
+        }
+    }
+    /// Una tarjeta: el número tapado. Un boleto: su tipo, la fecha y si ya pasó.
+    private func subtitulo(_ t: TarjetaClub) -> String {
+        guard t.tipo.boleto else { return oculto(t.numero) }
+        let hoy = ReglasTarjetas.hoy()
+        return [t.tipo.nombre, ReglasTarjetas.fechaCorta(t.fecha, hoy: hoy), ReglasTarjetas.paso(t, hoy: hoy) ? "ya pasó" : ""]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+    }
 }
 
 /// Agregar o cambiar una tarjeta: el nombre, el número (escaneado o tecleado) y el formato del código.
@@ -298,6 +321,15 @@ struct TarjetaClubEditor: View {
     /// El formato lo eligió Juan o el escáner: ya no se cambia solo al teclear.
     @State private var formatoFijo = false
 
+    /// La fecha del boleto como yyyy-MM-dd (sin fecha, hoy al abrir el selector).
+    private var fechaBinding: Binding<Date> {
+        Binding(get: {
+            let p = tarjeta.fecha.split(separator: "-").compactMap { Int($0) }
+            guard p.count == 3 else { return Date() }
+            return Calendar.current.date(from: DateComponents(year: p[0], month: p[1], day: p[2])) ?? Date()
+        }, set: { tarjeta.fecha = ReglasTarjetas.hoy($0) })
+    }
+
     private var puedeGuardar: Bool {
         !tarjeta.nombre.trimmingCharacters(in: .whitespaces).isEmpty && ReglasTarjetas.sePuede(tarjeta.numero, tarjeta.formato)
     }
@@ -306,13 +338,20 @@ struct TarjetaClubEditor: View {
         NavigationStack {
             Form {
                 Section {
+                    Picker("Qué es", selection: $tarjeta.tipo) {
+                        ForEach(TipoTarjeta.allCases, id: \.self) { Text($0.nombre).tag($0) }
+                    }.font(Tipo.sans(15))
                     if Escaner.disponible {
                         Button { escanear = true } label: { Label("Escanear con la cámara", systemImage: "barcode.viewfinder").font(Tipo.sans(15, .medium)) }
                     }
-                    TextField("Nombre del club (p. ej. La Torre)", text: $tarjeta.nombre).font(Tipo.sans(15)).textInputAutocapitalization(.words)
-                    TextField("Número de la tarjeta", text: $tarjeta.numero).font(Tipo.sans(15)).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                    TextField(tarjeta.tipo.boleto ? "Nombre (p. ej. Vuelo a Madrid, Coldplay)" : "Nombre del club (p. ej. La Torre)", text: $tarjeta.nombre).font(Tipo.sans(15)).textInputAutocapitalization(.words)
+                    TextField(tarjeta.tipo.boleto ? "Número o código del boleto" : "Número de la tarjeta", text: $tarjeta.numero).font(Tipo.sans(15)).textInputAutocapitalization(.characters).autocorrectionDisabled()
                         .onChange(of: tarjeta.numero) { _, n in if !formatoFijo { tarjeta.formato = ReglasTarjetas.formatoSugerido(n) } }
                     TextField("A nombre de (opcional)", text: $tarjeta.titular).font(Tipo.sans(15))
+                    if tarjeta.tipo.boleto {
+                        DatePicker("Fecha", selection: fechaBinding, displayedComponents: .date).font(Tipo.sans(15))
+                        TextField("Asiento, puerta o sección (opcional)", text: $tarjeta.detalle).font(Tipo.sans(15))
+                    }
                 } footer: {
                     Text("Alma la encuentra por el nombre: ponlo como se lo dirías.").font(Tipo.sans(11))
                 }
@@ -332,11 +371,11 @@ struct TarjetaClubEditor: View {
                 }
                 if !nueva {
                     Section {
-                        Button("Borrar esta tarjeta", role: .destructive) { TarjetasClub.shared.borrar(tarjeta.id); cerrar() }.font(Tipo.sans(15))
+                        Button(tarjeta.tipo.boleto ? "Borrar este boleto" : "Borrar esta tarjeta", role: .destructive) { TarjetasClub.shared.borrar(tarjeta.id); cerrar() }.font(Tipo.sans(15))
                     }
                 }
             }
-            .navigationTitle(nueva ? "Nueva tarjeta" : tarjeta.nombre)
+            .navigationTitle(nueva ? "Nueva" : tarjeta.nombre)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { cerrar() } }
@@ -344,6 +383,7 @@ struct TarjetaClubEditor: View {
                     Button("Guardar") {
                         tarjeta.nombre = tarjeta.nombre.trimmingCharacters(in: .whitespaces)
                         tarjeta.numero = tarjeta.numero.trimmingCharacters(in: .whitespaces)
+                        if tarjeta.tipo.boleto { if tarjeta.fecha.isEmpty { tarjeta.fecha = ReglasTarjetas.hoy() } } else { tarjeta.fecha = ""; tarjeta.detalle = "" }
                         TarjetasClub.shared.guardar(tarjeta); cerrar()
                     }.disabled(!puedeGuardar)
                 }
@@ -371,7 +411,7 @@ struct Escaner: UIViewControllerRepresentable {
         let s = DataScannerViewController(recognizedDataTypes: [.barcode()], qualityLevel: .accurate, recognizesMultipleItems: false,
                                           isHighFrameRateTrackingEnabled: false, isHighlightingEnabled: true)
         s.delegate = context.coordinator
-        s.navigationItem.title = "Apunta al código de la tarjeta"
+        s.navigationItem.title = "Apunta al código"
         s.navigationItem.leftBarButtonItem = UIBarButtonItem(systemItem: .cancel, primaryAction: UIAction { _ in cancelar() })
         DispatchQueue.main.async { try? s.startScanning() }
         return UINavigationController(rootViewController: s)

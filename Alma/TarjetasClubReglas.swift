@@ -2,10 +2,40 @@ import Foundation
 
 /// Tarjetas de clubes (Juan, 17-nov-2026): «guardar en mi perfil las tarjetas de clubes de compra o de cliente frecuente
 /// (como las del supermercado) y que, al pedirlas por voz, se muestren en pantalla para enseñárselas al dependiente».
+/// Ajuste del mismo día: también boletos de avión, tren, conciertos y eventos (TipoTarjeta), con su fecha y un detalle.
 /// Aquí va solo la lógica pura (sin iOS), probada sola en Pruebas/TarjetasClub: el código de barras de cada formato, cómo
 /// se encuentra la tarjeta que pidió por su nombre y qué se le contesta a Alma. La pantalla y el llavero: TarjetasClub.swift.
 
-/// Una tarjeta de club guardada en el iPhone.
+/// Qué es (Juan, 17-nov-2026, ajuste: «sumar el soporte para tickets de avión, tren, conciertos y eventos ocasionales para
+/// mostrarlos por voz»). Una tarjeta de club no vence; un boleto lleva su fecha y deja de ofrecerse un día después.
+enum TipoTarjeta: String, Codable, CaseIterable {
+    case club, avion, tren, concierto, evento
+
+    var nombre: String {
+        switch self {
+        case .club: return "Tarjeta de club"
+        case .avion: return "Boleto de avión"
+        case .tren: return "Boleto de tren"
+        case .concierto: return "Boleto de concierto"
+        case .evento: return "Boleto de evento"
+        }
+    }
+    var boleto: Bool { self != .club }
+    /// «la tarjeta de La Torre», «el boleto de Vuelo a Madrid»: como Alma lo dice.
+    func cual(_ nombre: String) -> String { (boleto ? "el boleto de " : "la tarjeta de ") + nombre }
+    /// Palabras con que se pide por voz cuando no se dice el nombre («mi boleto de avión», «la entrada del concierto»).
+    var palabras: Set<String> {
+        switch self {
+        case .club: return ["tarjeta", "club", "cliente", "frecuente", "puntos", "super", "supermercado"]
+        case .avion: return ["avion", "vuelo", "aerolinea", "abordar", "embarque", "aeropuerto"]
+        case .tren: return ["tren", "estacion"]
+        case .concierto: return ["concierto", "show", "festival"]
+        case .evento: return ["evento", "partido", "teatro", "museo", "cine", "feria", "obra"]
+        }
+    }
+}
+
+/// Una tarjeta de club o un boleto guardado en el iPhone.
 struct TarjetaClub: Codable, Identifiable, Equatable {
     var id: String
     /// El nombre del club como Juan lo dice («La Torre», «PriceSmart»).
@@ -15,6 +45,26 @@ struct TarjetaClub: Codable, Identifiable, Equatable {
     var formato: FormatoCodigo
     /// Opcional: a nombre de quién está (algunas cajas lo piden).
     var titular: String = ""
+    var tipo: TipoTarjeta = .club
+    /// Solo boletos: el día (yyyy-MM-dd), opcional.
+    var fecha: String = ""
+    /// Solo boletos: asiento, puerta, sección… (opcional).
+    var detalle: String = ""
+}
+
+extension TarjetaClub {
+    /// Las tarjetas guardadas antes de los boletos no traen tipo, fecha ni detalle: se leen igual (como tarjeta de club).
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        nombre = try c.decode(String.self, forKey: .nombre)
+        numero = try c.decode(String.self, forKey: .numero)
+        formato = try c.decode(FormatoCodigo.self, forKey: .formato)
+        titular = try c.decodeIfPresent(String.self, forKey: .titular) ?? ""
+        tipo = (try? c.decodeIfPresent(TipoTarjeta.self, forKey: .tipo)) ?? .club
+        fecha = try c.decodeIfPresent(String.self, forKey: .fecha) ?? ""
+        detalle = try c.decodeIfPresent(String.self, forKey: .detalle) ?? ""
+    }
 }
 
 /// Cómo se dibuja el número para que la caja lo lea.
@@ -158,6 +208,40 @@ enum ReglasTarjetas {
 
     // MARK: - Encontrar la que pidió
 
+    // MARK: - Fechas de los boletos
+
+    private static let meses = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+
+    /// Hoy en el teléfono, como yyyy-MM-dd.
+    static func hoy(_ ahora: Date = Date()) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: ahora)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// Un boleto ya pasó al día siguiente de su fecha (el de un vuelo de madrugada sigue sirviendo ese día). Una tarjeta
+    /// de club o un boleto sin fecha nunca pasa.
+    static func paso(_ t: TarjetaClub, hoy: String) -> Bool {
+        guard t.tipo.boleto, t.fecha.count == 10 else { return false }
+        let f = DateFormatter(); f.calendar = Calendar(identifier: .gregorian); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "UTC")
+        guard let d = f.date(from: t.fecha) else { return false }
+        return f.string(from: d.addingTimeInterval(86_400)) < hoy
+    }
+
+    /// «20 nov» (con el año si no es este).
+    static func fechaCorta(_ f: String, hoy: String) -> String {
+        let p = f.split(separator: "-").compactMap { Int($0) }
+        guard p.count == 3, (1...12).contains(p[1]) else { return "" }
+        return "\(p[2]) \(meses[p[1] - 1])" + (hoy.hasPrefix(String(format: "%04d", p[0])) ? "" : " \(p[0])")
+    }
+
+    /// Qué tipo pidió, si lo dijo («mi boleto de avión» → avión). Nil si no dijo ninguno de boleto.
+    static func tipoPedido(_ pedido: String) -> TipoTarjeta? {
+        let w = Set(pedido.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "es")).lowercased()
+            .map { $0.isLetter || $0.isNumber ? $0 : " " }.reduce(into: "") { $0.append($1) }.split(separator: " ").map(String.init))
+        return TipoTarjeta.allCases.first { $0.boleto && !$0.palabras.isDisjoint(with: w) }
+    }
+
     enum Encontrada: Equatable {
         case una(TarjetaClub)
         case varias([TarjetaClub])
@@ -166,7 +250,8 @@ enum ReglasTarjetas {
 
     /// Palabras que se dicen alrededor del nombre y no lo distinguen («mi tarjeta del club de La Torre»).
     private static let relleno: Set<String> = ["tarjeta", "tarjetas", "club", "clubes", "de", "del", "la", "el", "los", "las", "mi", "mis",
-                                                "cliente", "frecuente", "puntos", "socio", "membresia", "card", "the", "my", "rewards"]
+                                                "cliente", "frecuente", "puntos", "socio", "membresia", "card", "the", "my", "rewards",
+                                                "boleto", "boletos", "ticket", "tickets", "entrada", "entradas", "pase", "a", "al", "para", "en"]
 
     static func normal(_ s: String) -> String {
         s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "es"))
@@ -176,9 +261,26 @@ enum ReglasTarjetas {
             .split(separator: " ").filter { !relleno.contains(String($0)) }.joined(separator: " ")
     }
 
-    /// La tarjeta que pidió por voz: primero el nombre igual, luego el que contiene lo que dijo (o al revés), luego por
-    /// palabras sueltas. Sin nombre y con una sola guardada, esa.
-    static func buscar(_ pedido: String, en tarjetas: [TarjetaClub]) -> Encontrada {
+    /// La tarjeta o el boleto que pidió por voz. Primero entre lo vigente (los boletos que ya pasaron no se ofrecen); si ahí
+    /// no está, entre todo. Si no dijo un nombre que encaje pero sí el tipo («mi boleto de avión»), el de ese tipo: con
+    /// varios, el más próximo por fecha.
+    static func buscar(_ pedido: String, en tarjetas: [TarjetaClub], hoy: String = ReglasTarjetas.hoy()) -> Encontrada {
+        let vigentes = tarjetas.filter { !paso($0, hoy: hoy) }
+        let r = buscarNombre(pedido, en: vigentes)
+        if r != .ninguna { return r }
+        if let tipo = tipoPedido(pedido) {
+            let deTipo = vigentes.filter { $0.tipo == tipo }
+            if deTipo.count == 1 { return .una(deTipo[0]) }
+            let conFecha = deTipo.filter { !$0.fecha.isEmpty }.sorted { $0.fecha < $1.fecha }
+            if deTipo.count > 1, conFecha.count == deTipo.count, conFecha[0].fecha != conFecha[1].fecha { return .una(conFecha[0]) }
+            if deTipo.count > 1 { return .varias(deTipo) }
+        }
+        return vigentes.count == tarjetas.count ? .ninguna : buscarNombre(pedido, en: tarjetas.filter { paso($0, hoy: hoy) })
+    }
+
+    /// Por el nombre: primero el nombre igual, luego el que contiene lo que dijo (o al revés), luego por palabras sueltas.
+    /// Sin nombre y con una sola guardada, esa.
+    static func buscarNombre(_ pedido: String, en tarjetas: [TarjetaClub]) -> Encontrada {
         guard !tarjetas.isEmpty else { return .ninguna }
         let q = normal(pedido)
         if q.isEmpty { return tarjetas.count == 1 ? .una(tarjetas[0]) : .varias(tarjetas) }
@@ -209,20 +311,22 @@ enum ReglasTarjetas {
 
     /// Qué se hace y qué se le dice a Alma (la herramienta mostrar_tarjeta_club). `mostrar` es la tarjeta que se pone en
     /// pantalla (nil si no se muestra nada); `pendiente` = se mostrará al abrir la app (el teléfono estaba bloqueado).
-    static func respuesta(pedido: String, tarjetas: [TarjetaClub], pantalla: Bool) -> (texto: String, mostrar: TarjetaClub?, pendiente: Bool, error: Bool) {
+    static func respuesta(pedido: String, tarjetas: [TarjetaClub], pantalla: Bool, hoy: String = ReglasTarjetas.hoy()) -> (texto: String, mostrar: TarjetaClub?, pendiente: Bool, error: Bool) {
         if tarjetas.isEmpty {
-            return ("No tiene ninguna tarjeta de club guardada en este iPhone. Dile en una frase que la agregue en Ajustes → Tarjetas de clubes (puede escanearla con la cámara) y que luego te la pida.", nil, false, true)
+            return ("No tiene ninguna tarjeta ni boleto guardado en este iPhone. Dile en una frase que lo agregue en Ajustes → Tarjetas y boletos (puede escanearlo con la cámara) y que luego te lo pida.", nil, false, true)
         }
-        switch buscar(pedido, en: tarjetas) {
+        switch buscar(pedido, en: tarjetas, hoy: hoy) {
         case .una(let t):
+            let cual = t.tipo.cual(t.nombre)
             if pantalla {
-                return ("Listo: la tarjeta de \(t.nombre) ya está en la pantalla, con el brillo al máximo, para enseñarla en la caja. Dilo en una frase corta; no leas el número.", t, false, false)
+                return ("Listo: \(cual) ya está en la pantalla, con el brillo al máximo, para enseñarlo. Dilo en una frase corta; no leas el número.", t, false, false)
             }
-            return ("El teléfono está bloqueado: la tarjeta de \(t.nombre) aparece en cuanto abra la app. Dilo en una frase corta; no leas el número.", t, true, false)
+            return ("El teléfono está bloqueado: \(cual) aparece en cuanto abra la app. Dilo en una frase corta; no leas el número.", t, true, false)
         case .varias(let v):
             return ("Hay varias que encajan: \(lista(v)). Pregúntale cuál, en una frase, y vuelve a llamar con ese nombre.", nil, false, true)
         case .ninguna:
-            return ("No tiene guardada una tarjeta de «\(pedido)». Las que tiene: \(lista(tarjetas)). Díselo en una frase; si quiere otra, se agrega en Ajustes → Tarjetas de clubes.", nil, false, true)
+            let vigentes = tarjetas.filter { !paso($0, hoy: hoy) }
+            return ("No tiene guardado «\(pedido)». Lo que tiene: \(vigentes.isEmpty ? "solo boletos que ya pasaron" : lista(vigentes)). Díselo en una frase; si quiere otro, se agrega en Ajustes → Tarjetas y boletos.", nil, false, true)
         }
     }
 }
