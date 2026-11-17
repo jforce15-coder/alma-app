@@ -20,6 +20,7 @@ import WebKit
 ///   { accion: "anilloBle" }                  → abre el Diagnóstico del anillo (Bluetooth) (DiagnosticoAnillo.swift)
 ///   { accion: "dispositivos" }               → abre Dispositivos: el anillo y los lentes (Dispositivos.swift)
 ///   { accion: "tarjetas" }                   → abre Tarjetas de clubes (TarjetasClub.swift)
+///   { accion: "companero", on }              → Modo compañero de este dispositivo: la voz de la llamada del otro suena aquí (Retransmision.swift)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
     static let nombre = "alma"
@@ -49,6 +50,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             NotificationCenter.default.post(name: .abrirDispositivos, object: nil)
         case "tarjetas":   // Ajustes → «Tarjetas de clubes» (TarjetasClub.swift): pantalla nativa, guardadas solo en este iPhone
             NotificationCenter.default.post(name: .abrirTarjetasClub, object: nil)
+        case "companero":   // el Modo compañero de este dispositivo (Hub #727): con él encendido, la voz de la llamada del otro suena aquí
+            Retransmision.shared.poner(companero: (d["on"] as? Bool) ?? false)
         case "anilloBle":   // Ajustes → Alma con el anillo → «Diagnóstico del anillo (Bluetooth)» (DiagnosticoAnillo.swift): pantalla nativa
             NotificationCenter.default.post(name: .abrirDiagnosticoAnillo, object: nil)
         case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" } · { que: "mudo", on }
