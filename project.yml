@@ -119,7 +119,7 @@ targets:
           - location
         # El número del ícono es de Alma (temas por retomar): OneSignal no lo borra al abrir la app (Ticket #28).
         OneSignal_disable_badge_clearing: true
-        NSCameraUsageDescription: Algunas páginas (Epi, Hola) usan la cámara para tomar fotos de los reportes y documentos.
+        NSCameraUsageDescription: Para escanear el código de tus tarjetas de clubes y, en algunas páginas (Epi, Hola), tomar fotos de los reportes y documentos.
         NSPhotoLibraryUsageDescription: Para subir fotos o documentos a las páginas que lo piden.
         # La foto del contacto en la bandeja del Hub (#567 T4, FotosContactosIOS.swift): solo los números sin foto que pide el Hub.
         NSContactsUsageDescription: Alma busca en tus contactos solo los números de las conversaciones de tu bandeja que no tienen foto, para mostrar su foto ahí. No sube tu agenda ni los nombres.

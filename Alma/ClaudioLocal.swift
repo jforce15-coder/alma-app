@@ -15,7 +15,12 @@ import Speech
 /// Turnos: Juan habla → pausa → el Hub contesta → Claudio habla → vuelve a escuchar. Mientras Claudio piensa o habla, lo del
 /// micrófono no cuenta (así no se oye a sí mismo); para cortarlo, se espera a que termine su frase (son cortas).
 /// Si el dictado no tiene permiso o no está disponible, no se crea (init devuelve nil) y la llamada sigue con ElevenLabs.
+/// La voz de respaldo de Alma (Hub #657, RespaldoReglas.swift) usa esta misma clase con el modo .respaldo: la misma oreja y
+/// la misma forma de hablar con VozNativa, pero contesta el Hub por la acción calle (el Chat con Alma) y habla la voz de
+/// mujer del iPhone (VozIphone). Sin internet, lo que Juan pide se guarda (Senal) y se manda al volver la señal.
 final class ClaudioLocal: NSObject {
+    enum Modo { case claudio, respaldo, maricarmen }   // maricarmen: el alter ego de Alma (Hub #666, MaricarmenReglas.swift)
+    let modo: Modo
     /// Los eventos para VozNativa, siempre en el hilo principal.
     var alEvento: (([String: Any]) -> Void)?
     var paso: ((String) -> Void)?
@@ -47,13 +52,48 @@ final class ClaudioLocal: NSObject {
         guard (ficha["local"] as? Bool) == true, let c = ficha["conv_id"] as? String, c.hasPrefix("conv_local_"),
               SFSpeechRecognizer.authorizationStatus() == .authorized,
               let r = SFSpeechRecognizer(locale: Locale(identifier: "es-MX")), r.isAvailable else { return nil }
-        conv = c; reconocedor = r
+        conv = c; reconocedor = r; modo = .claudio
         saludo = ficha["first_message"] as? String ?? AgenteVoz.saludoClaudio
         ajustes = ClaudioLocalReglas.Ajustes(ficha["voz_local"] as? [String: Any])
         saludoAudio = ClaudioLocalReglas.audio(ficha["voz_local"] as? [String: Any])
         voz = ClaudioLocal.elegirVoz(ajustes)
         super.init()
     }
+
+    /// La voz de respaldo de Alma (Hub #657): sin ficha (con poca señal no hace falta pedirla); abre con `frase`.
+    init?(respaldo frase: String) {
+        guard SFSpeechRecognizer.authorizationStatus() == .authorized,
+              let r = SFSpeechRecognizer(locale: Locale(identifier: "es-MX")), r.isAvailable else { return nil }
+        conv = "conv_respaldo_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(20).lowercased()
+        reconocedor = r; modo = .respaldo
+        saludo = frase; saludoAudio = nil
+        var a = ClaudioLocalReglas.Ajustes(); a.hombre = false; a.tono = 1
+        ajustes = a
+        voz = VozIphone.elegida ?? ClaudioLocal.elegirVoz(a)
+        super.init()
+    }
+
+    /// Maricarmen, el alter ego de Alma (Hub #666, MaricarmenReglas.swift): como la voz de respaldo (el Chat con Alma, sin
+    /// ElevenLabs), con una voz de mujer de España si el iPhone la tiene y el alter «maricarmen» en cada pedido (Weebo 3).
+    init?(maricarmen saludo: String) {
+        guard SFSpeechRecognizer.authorizationStatus() == .authorized,
+              let r = SFSpeechRecognizer(locale: Locale(identifier: "es-MX")), r.isAvailable else { return nil }
+        conv = "conv_maricarmen_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(20).lowercased()
+        reconocedor = r; modo = .maricarmen
+        self.saludo = saludo; saludoAudio = nil
+        var a = ClaudioLocalReglas.Ajustes(); a.hombre = false; a.idiomas = MaricarmenReglas.idiomas
+        a.tono = MaricarmenReglas.tono; a.velocidad = MaricarmenReglas.velocidad
+        ajustes = a
+        let e = ClaudioLocal.elegirVoz(a)
+        voz = e?.gender == .female ? e : (VozIphone.elegida ?? e)   // nunca una voz de hombre: si no hay de mujer en español, la elegida de Alma
+        super.init()
+    }
+
+    /// Callado: ni piensa, ni habla, ni Juan está a media frase (la voz de respaldo solo cambia en un silencio así).
+    var quieto: Bool { vivo && !pensando && Date() >= ocupadoHasta && texto.isEmpty }
+
+    /// Una frase que llega de fuera (lo guardado sin internet ya se mandó): se dice solo si está callado.
+    func avisar(_ t: String) { if quieto { decir(t) } }
 
     /// Para el registro: «Juan · es-MX · hombre · mejorada · dictado en el teléfono».
     var descripcion: String {
@@ -62,6 +102,8 @@ final class ClaudioLocal: NSObject {
             switch v.quality { case .premium: calidad = "premium"; case .enhanced: calidad = "mejorada"; default: calidad = "normal" }
             return v.name + " · " + v.language + " · " + (v.gender == .male ? "hombre" : v.gender == .female ? "mujer" : "sin género") + " · " + calidad
         } ?? "la de por defecto"
+        if modo == .maricarmen { return "Maricarmen · " + v + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple") }
+        if modo == .respaldo { return "voz de respaldo de Alma · " + v + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple") }
         return (saludoAudio != nil ? "voz de ElevenLabs (respaldo: " + v + ")" : v) + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple")
     }
 
@@ -83,7 +125,7 @@ final class ClaudioLocal: NSObject {
     func empezar() {
         emitir(["type": "conversation_initiation_metadata",
                 "conversation_initiation_metadata_event": ["conversation_id": conv, "agent_output_audio_format": "pcm_16000"]])
-        paso?("Claudio local · " + descripcion)
+        paso?(modo == .respaldo ? "Alma con la voz de respaldo · " + descripcion : modo == .maricarmen ? "Con " + descripcion : "Claudio local · " + descripcion)
         historial = ClaudioLocalReglas.sumar(historial, .init(deClaudio: true, texto: saludo))
         decir(saludo, audio: saludoAudio)
         reloj = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.revisar() }
@@ -173,6 +215,7 @@ final class ClaudioLocal: NSObject {
 
     private func turno(_ t: String) {
         guard vivo, !pensando else { return }
+        if modo != .claudio { turnoRespaldo(t); return }   // la voz de respaldo y Maricarmen: el Chat con Alma
         pensando = true
         empezarTecleo()
         emitir(["type": "user_transcript", "user_transcription_event": ["user_transcript": t]])
@@ -210,6 +253,58 @@ final class ClaudioLocal: NSObject {
             // Ya dijo «Listo, te paso con Alma.»: la app vuelve con Alma, como con la herramienta de ElevenLabs.
             self.emitir(["type": "client_tool_call", "client_tool_call": ["tool_call_id": "local_volver", "tool_name": "volver_con_alma", "parameters": [String: Any]()]])
         }
+    }
+
+    // MARK: - Pensar con la voz de respaldo de Alma (el Chat con Alma, acción calle)
+
+    /// Lo que Juan dijo va al Hub como en el Modo calle, sin audio. Sin internet se guarda y se manda al volver la señal.
+    private func turnoRespaldo(_ t: String) {
+        emitir(["type": "user_transcript", "user_transcription_event": ["user_transcript": t]])
+        // Maricarmen (Hub #666): «pásame con Alma» vuelve a la voz de siempre; «pásame con Maricarmen» desde la voz de respaldo
+        // la llama. Lo decide la app (VozNativa, evento «maricarmen»), sin ir al Hub.
+        if modo == .maricarmen, MaricarmenReglas.pideVolver(t) {
+            decir(MaricarmenReglas.despedida) { [weak self] in self?.emitir(["type": "maricarmen", "hacer": "volver"]) }; return
+        }
+        if modo == .respaldo, MaricarmenReglas.pideIr(t) { emitir(["type": "maricarmen", "hacer": "ir"]); return }
+        let conNotas = notas.isEmpty ? t : t + "\n(Nota de la app: " + notas.joined(separator: " · ") + ")"
+        notas = []
+        guard Senal.shared.hayRed else { guardarSinRed(t); return }
+        guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else {
+            paso?("Voz de respaldo: sin sesión del Hub"); decir(RespaldoReglas.fraseSinRespuesta); return
+        }
+        pensando = true
+        empezarTecleo()
+        emitir(["type": "agent_tool_request", "agent_tool_request": ["tool_name": "respaldo"]])   // trabaja: no se cuelga por silencio
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 30
+        r.httpBody = try? JSONSerialization.data(withJSONObject: RespaldoReglas.pedido(token: token, sesion: sesion, texto: conNotas,
+                                                                                alter: modo == .maricarmen ? MaricarmenReglas.alter : nil))
+        llamadas += 1; let mia = llamadas, t0 = Date()
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, err in
+            let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let deRed = j == nil && err.map { RespaldoReglas.esDeRed(($0 as NSError).code) } == true
+            DispatchQueue.main.async {
+                guard let self, self.vivo, self.llamadas == mia else { return }
+                self.pararTecleo()
+                self.pensando = false
+                self.emitir(["type": "agent_tool_response", "agent_tool_response": ["tool_name": "respaldo"]])
+                self.paso?(String(format: "Voz de respaldo: el Hub contestó en %.1f s", Date().timeIntervalSince(t0)))
+                if deRed { self.guardarSinRed(t); return }
+                guard let res = RespaldoReglas.respuesta(j) else {
+                    self.paso?("Voz de respaldo: " + (err?.localizedDescription ?? "sin respuesta del Hub")); self.decir(RespaldoReglas.fraseSinRespuesta); return
+                }
+                self.decir(res.hablar) { [weak self] in
+                    guard let self, res.claudio else { return }
+                    // «Quiero hablar con Claudio»: como la herramienta de Alma (Claudio local tampoco usa ElevenLabs).
+                    self.emitir(["type": "client_tool_call", "client_tool_call": ["tool_call_id": "respaldo_claudio", "tool_name": "hablar_con_claudio", "parameters": ["motivo": t]]])
+                }
+            }
+        }.resume()
+    }
+
+    private func guardarSinRed(_ t: String) {
+        let ok = Senal.shared.guardar(t)
+        paso?(ok ? "Voz de respaldo: sin internet, el pedido quedó guardado" : "Voz de respaldo: sin internet y ya no caben más pedidos guardados")
+        decir(ok ? RespaldoReglas.fraseGuardado : RespaldoReglas.fraseLleno)
     }
 
     // MARK: - El tecleo mientras piensa (Hub #651: como el de ElevenLabs cuando Alma usa una herramienta)

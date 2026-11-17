@@ -16,6 +16,8 @@ struct ContentView: View {
     @State private var dispositivos = false
     /// Guía de camino (GuiaCamino.swift): el mapa sube cuando la guía empieza con la pantalla a la vista.
     @State private var mapaCamino = false
+    /// Ajustes → «Tarjetas de clubes» (TarjetasClub.swift).
+    @State private var tarjetasClub = false
     @ObservedObject private var voz = VozNativa.shared
     @ObservedObject private var mejora = MejoraCampo.shared
     /// La roca de Alma del navegador: la misma de las web apps, en una capa encima de la página.
@@ -56,6 +58,8 @@ struct ContentView: View {
             // Guía de camino: el mapa con el camino y el próximo paso; la llamada se baja (sigue en la roca).
             .background { Color.clear.sheet(isPresented: $mapaCamino) { MapaCaminoVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirGuiaCamino)) { _ in llamadaOculta = true; mapaCamino = true }
+            .background { Color.clear.sheet(isPresented: $tarjetasClub) { TarjetasClubVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirTarjetasClub)) { _ in llamadaOculta = true; tarjetasClub = true }
             // Manos de Alma (navegador): Alma lee o actúa en la página; la pantalla de la llamada se baja para que la veas.
             .onReceive(NotificationCenter.default.publisher(for: .manosAlma)) { _ in llamadaOculta = true }
             // Tarjeta de la llamada: «Abrir conversación» baja la pantalla de la llamada (sigue en la roca) y abre el Hub.
