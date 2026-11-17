@@ -15,6 +15,10 @@ import Foundation
 enum MaricarmenReglas {
 
     static let alter = "maricarmen"
+    /// La herramienta de cliente con la que Alma (ElevenLabs) pasa a Juan con Maricarmen cuando la app no reconoció la frase
+    /// (Hub #707, Juan 17-nov-2026: «hablar directamente con Maricarmen dentro de la llamada, sin derivarlo a WhatsApp ni
+    /// llamadas externas»). No se contesta (expects_response false): no hace hablar a Alma.
+    static let herramienta = "pasar_a_maricarmen"
 
     /// «Pásame con Maricarmen», «¿me pasas con Maricarmen?», «quiero hablar con Maricarmen», «Maricarmen, ven». El verbo va pegado
     /// a su nombre: «pásale el recado a Maricarmen» o «llama a Maricarmen» (una persona de verdad) no la llaman. «No me pases…» no.

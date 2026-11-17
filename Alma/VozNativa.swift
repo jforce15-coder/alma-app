@@ -1164,6 +1164,17 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let nuevo = AgenteVoz.cambio(herramienta: nombre, actual: agente) { cambiarAgente(nuevo, motivo: p["motivo"] as? String ?? "") }
             return
         }
+        // Maricarmen (Hub #707): Alma entendió que Juan quiere hablar con ella (dicho de una forma que la app no reconoció) y la
+        // pasa sin colgar, como «pásame con Maricarmen». No se contesta (expects_response false). Si no se puede (conferencia,
+        // Claudio, ya está con ella), Alma se entera para no prometer lo que no pasó.
+        if nombre == MaricarmenReglas.herramienta {
+            if local == nil, puedeMaricarmen, !cambiando { pasarAMaricarmen() }
+            else if local?.modo != .maricarmen, ws != nil {
+                paso("Alma pidió pasar con Maricarmen, pero aquí no se puede")
+                mandar(["type": "contextual_update", "text": "No se pudo pasar con Maricarmen en este momento (" + (conferencia != nil ? "estás en modo conferencia" : "esta conversación no lo permite") + "). Díselo a Juan en una frase; nunca le ofrezcas WhatsApp ni una llamada aparte."])
+            }
+            return
+        }
         // El anillo QRing (AnilloAlma.swift): estado, medidas, medir ahora, ajustes y buscar. Siempre contesta (también sin anillo).
         if AnilloAlma.herramientas.contains(nombre) {
             herramienta = true; paso("Alma usa " + nombre)
