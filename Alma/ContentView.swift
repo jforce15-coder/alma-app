@@ -20,6 +20,8 @@ struct ContentView: View {
     @State private var mapaCamino = false
     /// Ajustes → «Tarjetas de clubes» (TarjetasClub.swift).
     @State private var tarjetasClub = false
+    /// Ajustes → Voz y modos → «Voces locales» (VocesLocalesVista.swift).
+    @State private var vocesLocales = false
     @ObservedObject private var voz = VozNativa.shared
     @ObservedObject private var mejora = MejoraCampo.shared
     /// La roca de Alma del navegador: la misma de las web apps, en una capa encima de la página.
@@ -85,6 +87,8 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .abrirGuiaCamino)) { _ in llamadaOculta = true; mapaCamino = true }
             .background { Color.clear.sheet(isPresented: $tarjetasClub) { TarjetasClubVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirTarjetasClub)) { _ in llamadaOculta = true; tarjetasClub = true }
+            .background { Color.clear.sheet(isPresented: $vocesLocales) { VocesLocalesVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirVocesLocales)) { _ in vocesLocales = true }
     }
 
     /// La roca del navegador: se aparta de los cuadros de texto, brilla mientras escucha y cuenta los toques.
