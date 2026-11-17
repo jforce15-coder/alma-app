@@ -149,6 +149,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         case "mudo": v.silenciar((d["on"] as? Bool) ?? false)
         case "sinvoz": v.sinVoz((d["on"] as? Bool) ?? false)   // modo chat: Alma oye pero no habla
         case "sonido": v.sonar(d["n"] as? String ?? ""); return   // la señal de la voz de las páginas (alma-voz.js)
+        // Coro «Alma está trabajando» de la voz de las páginas (alma-voz.js): la página dice a qué volumen y en cuánto tiempo.
+        case "coro": CoroPagina.shared.poner((d["v"] as? NSNumber)?.floatValue ?? 0, en: (d["t"] as? NSNumber)?.doubleValue ?? 0.4); return
         // Medidor de personalidad (#410): Juan cambió el Modo Weebo en la hoja de la llamada; Alma se entera en la misma llamada.
         case "personalidad": v.ajustarWeebo(modo: d["modo"] as? String ?? "auto", nivel: (d["nivel"] as? NSNumber)?.intValue ?? 1)
         // Tarjeta de la llamada (#446 T2): lo que Juan toca en la tarjeta de la roca del inicio (alma/inicio.html)

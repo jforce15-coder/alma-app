@@ -92,6 +92,14 @@ jobs:
           xcrun swiftc Alma/GifBroma.swift Pruebas/GifBroma/main.swift -o /tmp/gif-broma
           /tmp/gif-broma
 
+      # Coro «Alma está trabajando» (Juan, 17-nov-2026): la cuenta de herramientas, el umbral de 0,6 s, el tope, el ducking
+      # (Alma −10 dB, Juan −6 dB) y las rampas. Lógica pura.
+      - name: Probar el coro de Alma trabajando
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/CoroTrabajoReglas.swift Pruebas/CoroTrabajo/main.swift -o /tmp/coro-trabajo
+          /tmp/coro-trabajo
+
       # Tarjetas de clubes (Juan, 17-nov-2026): los códigos EAN y Code 39, el formato sugerido, encontrar la que pidió por
       # voz y qué se le contesta a Alma. Lógica pura.
       - name: Probar las tarjetas de clubes
