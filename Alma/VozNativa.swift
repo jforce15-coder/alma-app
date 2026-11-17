@@ -1769,7 +1769,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                                                   orbita: a["orbita"] as? String)   // al tocarla, el chat con su id (Hub #583)
                 }
                 if hablarlo {
-                    ModoCalle.shared.avisoHablado(id: id, texto: texto, resultado: resultado, hablar: a["hablar"] as? String ?? "",
+                    ModoCalle.shared.avisoHablado(id: id, texto: texto, nivel: n, resultado: resultado, hablar: a["hablar"] as? String ?? "",
                                                   audio: a["audio"] as? String, vozMotivo: a["vozMotivo"] as? String, abre: AlmaAbre.desde(a))
                 }
             }

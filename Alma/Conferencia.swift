@@ -60,7 +60,7 @@ final class Conferencia {
     private var apagarTras: TimeInterval?, relojApagar: Timer?
     /// Alma acaba de decir un aviso (lo que terminó en segundo plano: «Juan, ya terminé lo que me pediste… ¿Quieres que te cuente?»): lo que
     /// contesten en estos segundos abre la llamada con el aviso de contexto, sin tener que decir «Alma». «No» o «luego»: nada.
-    private var respuestaHasta: Date?, respuestaAviso = ""
+    private var respuestaHasta: Date?, respuestaAviso = "", respuestaId: String?
     private func armarApagado() {
         relojApagar?.invalidate(); relojApagar = nil
         guard let t = apagarTras else { return }
@@ -271,10 +271,10 @@ final class Conferencia {
     }
 
     /// Alma dijo un aviso (ModoCalle.procesarAvisos): durante 8 s lo que digas es la respuesta, sin «Alma».
-    func esperarRespuesta(aviso: String) {
+    func esperarRespuesta(aviso: String, id: String? = nil) {
         guard activa, !enLlamada, !mudo, !interrumpida else { return }
         guardarTramo()   // lo que se venía diciendo (y la voz de Alma) queda en su tramo; la respuesta empieza limpia
-        respuestaAviso = aviso; respuestaHasta = Date().addingTimeInterval(8)
+        respuestaAviso = aviso; respuestaId = id; respuestaHasta = Date().addingTimeInterval(8)
         escuchar()
     }
 
@@ -287,6 +287,8 @@ final class Conferencia {
         if Date() > h.addingTimeInterval(15) { respuestaHasta = nil; return false }
         guard Date().timeIntervalSince(ultimoCambio) >= quieto else { return false }
         respuestaHasta = nil
+        // Contestó el aviso (también «luego»): sale de la rotación de avisos (RitmoAvisos); sin respuesta, se recuerda después.
+        if let i = respuestaId { respuestaId = nil; DispatchQueue.main.async { ModoCalle.shared.avisoAtendido(i) } }
         let llano = dicho.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "es"))
         if llano.range(of: "^\\W*(no|ahorita no|ahora no|luego|despues|mas tarde|al rato)\\b", options: .regularExpression) != nil { return false }
         reciente.append("[Alma te avisó] " + respuestaAviso)
