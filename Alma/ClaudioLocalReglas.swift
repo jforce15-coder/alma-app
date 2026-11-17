@@ -9,6 +9,9 @@ import Foundation
 ///   con ElevenLabs, sin bajar el nivel»). El Hub manda cada frase ya dicha con su voz (audio PCM 16 kHz, como la llamada).
 /// · Si no llega audio (ElevenLabs falló o el Hub dice motor «iphone»), la voz del iPhone que más se parece: de hombre, en el
 ///   primer idioma que haya, la de mejor calidad; los ajustes vienen del Hub (voz_local) y se cambian sin otra versión.
+/// · Que suene natural (Hub #687; Juan, 17-nov-2026: «que la voz suene natural otra vez»): la voz del iPhone ya no se
+///   aplana a 16 kHz como la de una llamada de ElevenLabs (sonaba de teléfono, sin las eses); sale a 24 kHz. Y una voz
+///   mejorada o premium va antes que una normal («compacta», la más robótica) aunque sea de otro país.
 enum ClaudioLocalReglas {
 
     // MARK: - Fin de la frase
@@ -57,6 +60,10 @@ enum ClaudioLocalReglas {
     // MARK: - La voz de ElevenLabs (del Hub)
 
     static let hz = 16000
+    /// A cuántos hz suena la conversación local. La voz del iPhone, a 24 kHz (Hub #687: a 16 kHz perdía claridad y sonaba
+    /// de teléfono). Solo si el Hub manda su voz de ElevenLabs (motor «elevenlabs», siempre a 16 kHz) se queda en 16 kHz.
+    static let hzIphone = 24000
+    static func hzSalida(_ vozLocal: [String: Any]?) -> Int { (vozLocal?["motor"] as? String) == "elevenlabs" ? hz : hzIphone }
     /// El audio que manda el Hub con la voz de Claudio: PCM 16 bits a 16 kHz en base64 (audio + hz). Otro formato, roto o
     /// vacío: nada (se dice con la voz del iPhone).
     static func audio(_ d: [String: Any]?) -> Data? {
@@ -81,7 +88,7 @@ enum ClaudioLocalReglas {
     static let tecleoTras = 0.6, tecleoCada = 0.3, tecleoTrozo = 0.28
     /// Un trozo de tecleo: clics cortos de ruido que se apagan (6–10 ms), separados 70–200 ms y a veces una pausa de palabra.
     /// Bajito (como mucho un décimo del volumen). La misma semilla da el mismo trozo (para las pruebas); otra, otro ritmo.
-    static func tecleo(segundos: Double = tecleoTrozo, semilla: UInt64) -> Data {
+    static func tecleo(segundos: Double = tecleoTrozo, semilla: UInt64, hz: Int = ClaudioLocalReglas.hz) -> Data {
         let n = max(0, Int(segundos * Double(hz)))
         guard n > 0 else { return Data() }
         var m = [Int16](repeating: 0, count: n)
@@ -128,7 +135,7 @@ enum ClaudioLocalReglas {
         var idiomas = ["es-MX", "es-US", "es-419", "es-ES"]
         var hombre = true
         var velocidad: Float = 0.5   // la de fábrica del iPhone (AVSpeechUtteranceDefaultSpeechRate)
-        var tono: Float = 0.92       // un poco más grave, como su voz de ElevenLabs
+        var tono: Float = 1          // el natural de la voz: cambiarlo la hace sonar procesada (Hub #687; antes 0.92)
         var volumen: Float = 1
         init() {}
         init(_ d: [String: Any]?) {
@@ -147,12 +154,14 @@ enum ClaudioLocalReglas {
         let rara: Bool     // de novedad (robot, burbujas) o la Voz personal de alguien: nunca
     }
     /// La que más se parece a Claudio: del género pedido y en el primer idioma que haya; dentro del idioma, la mejor calidad.
+    /// Una normal («compacta», la más robótica) solo si no hay ninguna mejorada o premium en español (Hub #687: suena más
+    /// natural una mejorada de España que una compacta de México).
     /// Si no hay del género pedido, la mejor en español (mejor una voz que ninguna).
     static func elegir(_ voces: [Voz], _ a: Ajustes) -> Voz? {
         func puntos(_ v: Voz, genero: Bool) -> Int? {
             guard !v.rara, let i = a.idiomas.firstIndex(of: v.idioma) else { return nil }
             if genero && v.hombre != a.hombre { return nil }
-            return i * 10 + v.calidad
+            return (v.calidad >= 2 ? 1000 : 0) + i * 10 + v.calidad
         }
         let mejor = { (g: Bool) in voces.compactMap { v in puntos(v, genero: g).map { (v, $0) } }.min(by: { $0.1 < $1.1 })?.0 }
         return mejor(true) ?? mejor(false)
