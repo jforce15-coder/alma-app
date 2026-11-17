@@ -75,6 +75,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var enRespaldo: Bool { local?.modo == .respaldo || local?.modo == .maricarmen }
     /// Solo en una llamada normal con Alma: el Modo calle y la conferencia tienen su propio camino sin ElevenLabs.
     private var puedeRespaldo: Bool { agente == .alma && !desdeCalle && conferencia == nil }
+    /// Maricarmen (Hub #680): también en la llamada que abrió el Modo calle (antes ahí no se podía y la frase no hacía nada).
+    private var puedeMaricarmen: Bool { agente == .alma && conferencia == nil }
+    /// El Modo calle pidió abrir la llamada directo con Maricarmen (hablarConMaricarmen): sin ficha ni ElevenLabs.
+    private var abrirMaricarmen = false
     private var sesionURL: URLSession?
     private var silencio: AVAudioPlayer?
     private var ultimoToque = Date.distantPast
@@ -349,6 +353,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     func hablarAlOir(_ texto: String) {
         guard estado == .lista || estado == .apagada else { return }
         desdePantalla = true; alOir = true; textoInicial = texto; hablar()
+    }
+    /// «Alma, pásame con Maricarmen» en el Modo calle (Hub #680): la llamada se abre directo con Maricarmen, con la voz del
+    /// iPhone (sin pedir la ficha ni abrir ElevenLabs). Sin el permiso del dictado, la app dice por qué.
+    func hablarConMaricarmen() {
+        guard estado == .lista || estado == .apagada else { return }
+        desdePantalla = true; abrirMaricarmen = true; hablar()
     }
     /// Tres toques a la roca del navegador: Alma solo por voz (sin el chat), sobre lo que se ve. La página (título y dirección)
     /// va en la ficha de la llamada; la captura la lee el Hub (almaFoto, la misma del chat) y llega como contexto en unos
@@ -739,6 +749,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         sonido("alma-inicio", llamada: true)   // el segundo beep: el de la llamada a Alma, suena siempre (también en conferencia): lo que digas se guarda mientras conecta
         infoBloqueo("Te escucho…")
         cortesRed = []; intentoVolver = nil
+        let conMaricarmen = abrirMaricarmen; abrirMaricarmen = false
+        if conMaricarmen && agente == .alma {   // Hub #680: directo con Maricarmen; si no está lista, conectar sigue con Alma
+            paso("Juan pidió a Maricarmen desde el Modo calle"); conectar(agente: "", ficha: [:], maricarmen: true); return
+        }
         if puedeRespaldo && !Senal.shared.hayRed {   // sin internet: ni se pide la ficha
             paso("Sin internet: Alma va con la voz de respaldo"); conectar(agente: "", ficha: VozNativa.fichaRespaldo); return
         }
@@ -766,7 +780,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }.resume()
     }
 
-    private func conectar(agente: String, ficha: [String: Any]) {
+    private func conectar(agente: String, ficha: [String: Any], maricarmen: Bool = false) {
         guard estado == .conectando else { return }
         do {
             let s = AVAudioSession.sharedInstance()
@@ -786,6 +800,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             paso("Micrófono abierto · conectando la voz")
         } catch { fallo("No pude abrir el micrófono (\((error as NSError).code))."); return }
+        // Maricarmen desde el Modo calle (Hub #680): directo con ella. Sin el permiso del dictado, se dice por qué y se cierra.
+        if maricarmen {
+            if !pasarAMaricarmen() { fallo(MaricarmenReglas.noLista) }
+            return
+        }
         // Voz de respaldo (Hub #657): sin señal, Alma va sin ElevenLabs desde el principio.
         if self.agente == .alma, (ficha["respaldo"] as? Bool) == true {
             if !arrancarRespaldo(frase: RespaldoReglas.fraseAlEmpezar) { fallo("No hay internet y la voz de respaldo no está lista: falta el permiso del dictado (Ajustes del iPhone → Alma → Reconocimiento de voz).") }
@@ -1103,7 +1122,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t); Companero.shared.sub(alma: false, t)
                 if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { juanDijo = Date() }
                 // Maricarmen (Hub #666): «pásame con Maricarmen» con la voz de ElevenLabs. La app lo oye y cambia ya, sin esperar a Alma.
-                if local == nil, puedeRespaldo, !cambiando, MaricarmenReglas.pideIr(t) { pasarAMaricarmen(); return }
+                if local == nil, puedeMaricarmen, !cambiando, MaricarmenReglas.pideIr(t) { pasarAMaricarmen(); return }
                 if tiemposCierre != nil, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     vozJuanCalle = Date()
                     if SuenoCalle.esCierre(t) { colgarCalle(.cierre) }
@@ -1960,11 +1979,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     /// «Pásame con Maricarmen»: se cierra ElevenLabs (o la voz de respaldo) y sigue Maricarmen con la voz del iPhone, sin colgar.
     /// No vuelve sola con buena señal: Juan la pidió. Sin el permiso del dictado no se cambia y Alma lo dice.
-    private func pasarAMaricarmen() {
+    @discardableResult
+    private func pasarAMaricarmen() -> Bool {
         guard let l = ClaudioLocal(maricarmen: MaricarmenReglas.saludo) else {
             paso("Maricarmen no está lista (falta el permiso del dictado o no está disponible)")
             if ws != nil { mandar(["type": "contextual_update", "text": "Juan pidió pasar con Maricarmen, tu alter ego local, pero falta el permiso del dictado en el iPhone. Díselo en una frase: «" + MaricarmenReglas.noLista + "»"]) }
-            return
+            return false
         }
         paso("Juan pidió a Maricarmen: sigue su alter ego, sin ElevenLabs")
         relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; aConferencia = false
@@ -1988,6 +2008,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         inicioEnviado = true; saludoDesde = nil; colaVoz = []; antesDeFicha = []; cambiando = false
         l.empezar()
+        return true
     }
 
     /// Cada 2 s: con la señal estable 20 s y en un silencio, Alma vuelve a su voz de siempre (se reabre la conversación con
