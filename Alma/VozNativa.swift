@@ -71,7 +71,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var cortesRed: [Date] = []
     private var relojRespaldo: Timer?
     private var intentoVolver: Date?
-    private var enRespaldo: Bool { local?.modo == .respaldo }
+    /// Alma sin ElevenLabs por el Chat con Alma: la voz de respaldo o Maricarmen, su alter ego (Hub #666).
+    private var enRespaldo: Bool { local?.modo == .respaldo || local?.modo == .maricarmen }
     /// Solo en una llamada normal con Alma: el Modo calle y la conferencia tienen su propio camino sin ElevenLabs.
     private var puedeRespaldo: Bool { agente == .alma && !desdeCalle && conferencia == nil }
     private var sesionURL: URLSession?
@@ -427,7 +428,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
                                 "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
                                 "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar",
-                                "agente": agente.rawValue, "diagBle": true, "dispositivos": true]   // la app sabe abrir el Diagnóstico del anillo (Bluetooth)
+                                "agente": agente.rawValue, "diagBle": true, "dispositivos": true, "tarjetas": true]   // la app sabe abrir el Diagnóstico del anillo (Bluetooth) y las Tarjetas de clubes (TarjetasClub.swift)
         // la página que se abre a media llamada (o se recarga) pinta los chips con esto
         if estado == .hablando || estado == .conectando, let p = personalidad { r["personalidad"] = p }
         if estado == .hablando || estado == .conectando, let t = tarjeta, tarjetaVista != .nada { r["tarjeta"] = t.crudo; r["tarjetaVista"] = tarjetaVista.rawValue }
@@ -466,7 +467,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             ? "MODO WEEBO FIJO: Juan acaba de poner el techo de tu Modo Weebo en el nivel \(n). Es tu techo, no tu punto de partida: subes por grados solo si la charla lo abre (con un problema o una urgencia, vuelve a tu centro). No lo comentes."
             : "MODO WEEBO AUTOMÁTICO: Juan dejó tu Modo Weebo en automático: vuelve a medirlo tú. No lo comentes."])
     }
-    /// La sesión de la llamada (y la del anillo): no se mezcla, así que pausa la música o los videos de otras apps.
+    /// La sesión del anillo (y de la llamada con el anillo): no se mezcla, así que pausa la música o los videos de otras apps.
+    /// La llamada sin el anillo baja la música en vez de pausarla (AudioCalle).
     static let opciones: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
     /// La sesión para solo escuchar (Modo Inicio, conferencia, Mejora): se mezcla con las otras apps (TikTok, Facebook, la voz
     /// de Claude siguen sonando). Sin `.allowBluetooth` (manos libres): así los audífonos siguen en alta calidad para la otra
@@ -491,6 +493,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         try? s.setCategory(.playAndRecord, mode: .default, options: opcionesEscucha)
         try? s.setActive(true)
+    }
+
+    /// Otra app (Spotify, Música, un video) está sonando con su audio propio. Tomar el audio que no se mezcla la pausaría.
+    static var otraAppSuena: Bool {
+        let s = AVAudioSession.sharedInstance()
+        return s.secondaryAudioShouldBeSilencedHint || s.isOtherAudioPlaying
     }
 
     /// Suelta el audio cuando ya nadie lo usa (ni llamada, ni anillo, ni Modo Inicio, ni conferencia, ni Mejora), avisando a las
@@ -557,11 +565,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private func anilloVuelve(_ e: AnilloVuelve.Evento) {
         if case .ruta = e, Date().timeIntervalSince(ultimoIntentoAnillo) < 5 { return }   // el cambio de ruta que provoca quedarLista
         let telefono = CXCallObserver().calls.contains { !$0.hasEnded }
+        let suenaOtra = VozNativa.otraAppSuena
         let que = AnilloVuelve.decidir(e, modoAnillo: modoAnillo || unRato, enLlamada: estado == .hablando || estado == .conectando,
-                                       microfono: engine.isRunning, silencio: silencio?.isPlaying == true, telefono: telefono)
+                                       microfono: engine.isRunning, silencio: silencio?.isPlaying == true, telefono: telefono, otraSuena: suenaOtra)
         switch que {
         case .nada: return
-        case .esperar: if let d = anilloCortadoDesde { revisarAnilloCortado(d) }; return   // llamada de teléfono: se vuelve a mirar
+        case .esperar:   // llamada de teléfono o música de otra app: no se le quita el audio; se vuelve a mirar en 30 s
+            if suenaOtra && e == .interrupcionSinFin { paso("Otra app está sonando: el anillo espera sin pausarla") }
+            if let d = anilloCortadoDesde { revisarAnilloCortado(d) }; return
         case .quedarLista: break
         }
         ultimoIntentoAnillo = Date()
@@ -624,6 +635,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             self.buscarAvisos()
             self.precargarSiToca()   // al abrir la app ya se pide la ficha: si la llaman, no espera al Hub
             guard self.modoAnillo || self.unRato, self.estado == .lista || self.estado == .apagada else { return }
+            // Con música de otra app sonando no se toma el audio (la pausaría): el anillo espera a que pare (AnilloVuelve).
+            guard AnilloVuelve.alAbrir(modoAnillo: true, otraSuena: VozNativa.otraAppSuena) else {
+                self.paso("Abriste Alma con música sonando: no la pauso; el anillo vuelve cuando pare")
+                if self.anilloCortadoDesde == nil { let d = Date(); self.anilloCortadoDesde = d; self.revisarAnilloCortado(d) }
+                return
+            }
             if self.quedarLista() {   // con la app a la vista el anillo vuelve: el aviso de «Abre Alma» ya no hace falta
                 self.anilloCortadoDesde = nil; self.anilloAvisado = false
                 UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [VozNativa.idAvisoAnillo])
@@ -1053,11 +1070,19 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let t = ev["user_transcript"] as? String {
                 ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t); Companero.shared.sub(alma: false, t)
                 if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { juanDijo = Date() }
+                // Maricarmen (Hub #666): «pásame con Maricarmen» con la voz de ElevenLabs. La app lo oye y cambia ya, sin esperar a Alma.
+                if local == nil, puedeRespaldo, !cambiando, MaricarmenReglas.pideIr(t) { pasarAMaricarmen(); return }
                 if tiemposCierre != nil, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     vozJuanCalle = Date()
                     if SuenoCalle.esCierre(t) { colgarCalle(.cierre) }
                 }
             }
+        case "maricarmen":   // Maricarmen (Hub #666): lo manda ClaudioLocal (Juan pidió ir con ella o volver con Alma)
+            guard estado == .hablando, !cambiando else { break }
+            if (j["hacer"] as? String) == "volver", local?.modo == .maricarmen {
+                paso("Juan pidió volver con Alma")
+                reabrir(por: "Juan pidió volver con Alma", frase: MaricarmenReglas.vuelta, porClaudio: false)
+            } else if (j["hacer"] as? String) == "ir", puedeRespaldo { pasarAMaricarmen() }
         case "vad_score":   // solo llega si el agente lo tiene encendido: «alguien habla» según ElevenLabs (mejor que el volumen)
             let v = ((j["vad_score_event"] as? [String: Any])?["vad_score"] as? NSNumber)?.doubleValue ?? 0
             if v >= 0.6 { sonidoCalle = Date() }
@@ -1115,6 +1140,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let idea = reglasGif.pedir(p["idea"], principal: personalidad != nil, pantalla: pantallaVisible, conAlma: agente == .alma) {
                 paso("Alma muestra un GIF: " + idea); emitir(["tipo": "gif", "idea": idea])
             }
+            return
+        }
+        // Tarjetas de clubes (Juan, 17-nov-2026; TarjetasClub.swift): la tarjeta que pidió sale en pantalla para la caja, encima
+        // de la llamada, y la llamada sigue. Con el teléfono bloqueado, sale al abrir la app. Siempre contesta enseguida.
+        if nombre == "mostrar_tarjeta_club" {
+            let r = TarjetasClub.shared.porVoz((p["club"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+            paso("Alma muestra una tarjeta de club" + (r.error ? " (no se mostró)" : ""))
+            mandar(["type": "client_tool_result", "tool_call_id": id, "result": r.texto, "is_error": r.error])
             return
         }
         var res = "Esta herramienta no existe en la app.", error = true
@@ -1878,6 +1911,40 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
         if !arrancarRespaldo(frase: conectada ? RespaldoReglas.fraseSeFue : RespaldoReglas.fraseAlEmpezar) { fallo(m) }
+    }
+
+    // MARK: - Maricarmen, el alter ego de Alma (Hub #666, MaricarmenReglas.swift)
+
+    /// «Pásame con Maricarmen»: se cierra ElevenLabs (o la voz de respaldo) y sigue Maricarmen con la voz del iPhone, sin colgar.
+    /// No vuelve sola con buena señal: Juan la pidió. Sin el permiso del dictado no se cambia y Alma lo dice.
+    private func pasarAMaricarmen() {
+        guard let l = ClaudioLocal(maricarmen: MaricarmenReglas.saludo) else {
+            paso("Maricarmen no está lista (falta el permiso del dictado o no está disponible)")
+            if ws != nil { mandar(["type": "contextual_update", "text": "Juan pidió pasar con Maricarmen, tu alter ego local, pero falta el permiso del dictado en el iPhone. Díselo en una frase: «" + MaricarmenReglas.noLista + "»"]) }
+            return
+        }
+        paso("Juan pidió a Maricarmen: sigue su alter ego, sin ElevenLabs")
+        relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; aConferencia = false
+        relojEspera?.invalidate(); relojEspera = nil; herramienta = false
+        relojRespaldo?.invalidate(); relojRespaldo = nil
+        let viejo = ws, viejaSesion = sesionURL
+        ws = nil; sesionURL = nil
+        viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
+        local?.parar(); local = nil
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
+        local = l
+        l.paso = { [weak self] t in self?.paso(t) }
+        l.alEvento = { [weak self, weak l] ev in
+            guard let self, let l, self.local === l else { return }
+            self.mensaje(ev)
+        }
+        Senal.shared.alMandar = { [weak self, weak l] h in
+            guard let self, let l, self.local === l else { return }
+            l.avisar(RespaldoReglas.fraseMandado + " " + h)
+        }
+        inicioEnviado = true; saludoDesde = nil; colaVoz = []; antesDeFicha = []; cambiando = false
+        l.empezar()
     }
 
     /// Cada 2 s: con la señal estable 20 s y en un silencio, Alma vuelve a su voz de siempre (se reabre la conversación con

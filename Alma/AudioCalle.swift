@@ -6,7 +6,10 @@ import Foundation
 ///   · Mientras Alma atiende (oye tu pedido, piensa, te contesta o escucha tu respuesta a un aviso): la música baja (duck) y lo
 ///     hablado (un podcast) se pausa; nada se pausa del todo. Al volver a esperar, se mezcla otra vez.
 ///   · La llamada de ElevenLabs que abre el Modo calle (o la conferencia, con el interruptor) usa las mismas opciones: Spotify
-///     baja, no se pausa. Las demás llamadas siguen como siempre: no se mezclan (la música se pausa).
+///     baja, no se pausa. La llamada normal desde la app (Juan, 17-nov-2026: «que no haya conflictos en la reproducción»)
+///     también la baja: la música no se pausa al llamar y, si pides «pon música» a media llamada, Spotify ya no corta la
+///     llamada (antes la sesión que no se mezcla perdía el audio y salía «Otra app o una llamada tomó el audio»). Al colgar,
+///     la música vuelve a su volumen.
 ///   · Interruptor «Bajar la música cuando Alma hable» (Ajustes): encendido de fábrica en el Modo calle, apagado en
 ///     conferencia. Apagado, Alma habla encima de la música (se mezcla) y la llamada la pausa, como antes.
 ///   · Un aviso con la app abierta (sin el Modo calle) baja la música mientras usa el micrófono, como siempre.
@@ -54,7 +57,7 @@ enum AudioCalle {
         case .calle: return calle
         case .aviso: return true
         case .conferencia: return conferencia
-        case .nada: return false
+        case .nada: return true   // la llamada normal: baja, no pausa (Juan, 17-nov-2026)
         }
     }
 
