@@ -218,6 +218,14 @@ jobs:
           xcrun swiftc Alma/AnilloDatos.swift Pruebas/AnilloDatos/main.swift -o /tmp/anillo-datos
           /tmp/anillo-datos
 
+      # Saludos grabados (Hub #724): cuándo suena uno al abrir la llamada, cuál (nunca el mismo dos veces), cuándo se piden al
+      # Hub y lo que va y viene. Lógica pura.
+      - name: Probar los saludos grabados
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/SaludosGrabadosReglas.swift Pruebas/SaludosGrabados/main.swift -o /tmp/saludos-grabados
+          /tmp/saludos-grabados
+
       - name: Probar el anillo que vuelve
         if: env.SUBIR != 'true'
         run: |
