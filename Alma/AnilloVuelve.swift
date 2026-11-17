@@ -6,6 +6,9 @@ import Foundation
 ///   · Al terminar la interrupción (o si iOS la da por terminada al cambiar la salida de audio), la app vuelve a quedar lista.
 ///   · Si una interrupción no termina sola en 30 s (Spotify sigue sonando y nunca avisa), se intenta; durante una llamada de
 ///     teléfono se espera otros 30 s (no se avisa nada a media llamada).
+///   · Música de otra app sonando (Juan, 17-nov-2026: «que no haya conflictos en la reproducción»): el anillo no le quita el
+///     audio, ni a los 30 s ni al abrir la app; espera a que la música pare y vuelve solo. Mientras suena, el toque del anillo
+///     pausa la música (iOS se lo da a la app que suena) y con eso el anillo vuelve a Alma.
 ///   · Si no se puede (con el teléfono bloqueado iOS no deja abrir el micrófono otra vez, u otra app no suelta el audio), una
 ///     notificación: «Abre Alma para que el anillo vuelva a funcionar». Una sola vez hasta que vuelva a funcionar.
 ///   · Los pasos de la voz (voz_pasos) van al Hub con los avisos (vozAvisos), sin datos personales, para el diagnóstico.
@@ -25,18 +28,22 @@ enum AnilloVuelve {
     static let texto = "Abre Alma para que el anillo vuelva a funcionar."
 
     /// ¿Se vuelve a quedar lista? Solo con el modo anillo, sin llamada de Alma; en una ruta, solo si algo se rompió (el
-    /// micrófono o el audio en silencio se detuvieron). `telefono`: hay una llamada de teléfono en curso.
-    static func decidir(_ e: Evento, modoAnillo: Bool, enLlamada: Bool, microfono: Bool, silencio: Bool, telefono: Bool = false) -> Que {
+    /// micrófono o el audio en silencio se detuvieron). `telefono`: hay una llamada de teléfono en curso. `otraSuena`: otra app
+    /// está sonando (Spotify): tomar el audio la pausaría, así que se espera.
+    static func decidir(_ e: Evento, modoAnillo: Bool, enLlamada: Bool, microfono: Bool, silencio: Bool, telefono: Bool = false, otraSuena: Bool = false) -> Que {
         guard modoAnillo, !enLlamada else { return .nada }
         switch e {
         case .interrupcionTermino: return .quedarLista
-        case .interrupcionSinFin: return telefono ? .esperar : .quedarLista
-        case .ruta(let m): return motivosRuta.contains(m) && (!microfono || !silencio) ? .quedarLista : .nada
+        case .interrupcionSinFin: return telefono || otraSuena ? .esperar : .quedarLista
+        case .ruta(let m): return motivosRuta.contains(m) && (!microfono || !silencio) && !otraSuena ? .quedarLista : .nada
         }
     }
 
     /// Después de intentarlo: ¿hay que pedir que abra la app? Si el audio no se pudo tomar, si el audio en silencio no suena
     /// (sin él la app deja de estar «Reproduciendo») o si el micrófono quedó apagado con la app en segundo plano.
+    /// Al abrir la app: ¿se vuelve a tomar el audio para el anillo? No si otra app está sonando (la pausaría).
+    static func alAbrir(modoAnillo: Bool, otraSuena: Bool) -> Bool { modoAnillo && !otraSuena }
+
     static func avisar(activo: Bool, silencio: Bool, microfono: Bool, appActiva: Bool, yaAvisado: Bool) -> Bool {
         guard !appActiva, !yaAvisado else { return false }
         return !activo || !silencio || !microfono

@@ -466,7 +466,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             ? "MODO WEEBO FIJO: Juan acaba de poner el techo de tu Modo Weebo en el nivel \(n). Es tu techo, no tu punto de partida: subes por grados solo si la charla lo abre (con un problema o una urgencia, vuelve a tu centro). No lo comentes."
             : "MODO WEEBO AUTOMÁTICO: Juan dejó tu Modo Weebo en automático: vuelve a medirlo tú. No lo comentes."])
     }
-    /// La sesión de la llamada (y la del anillo): no se mezcla, así que pausa la música o los videos de otras apps.
+    /// La sesión del anillo (y de la llamada con el anillo): no se mezcla, así que pausa la música o los videos de otras apps.
+    /// La llamada sin el anillo baja la música en vez de pausarla (AudioCalle).
     static let opciones: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP]
     /// La sesión para solo escuchar (Modo Inicio, conferencia, Mejora): se mezcla con las otras apps (TikTok, Facebook, la voz
     /// de Claude siguen sonando). Sin `.allowBluetooth` (manos libres): así los audífonos siguen en alta calidad para la otra
@@ -491,6 +492,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         try? s.setCategory(.playAndRecord, mode: .default, options: opcionesEscucha)
         try? s.setActive(true)
+    }
+
+    /// Otra app (Spotify, Música, un video) está sonando con su audio propio. Tomar el audio que no se mezcla la pausaría.
+    static var otraAppSuena: Bool {
+        let s = AVAudioSession.sharedInstance()
+        return s.secondaryAudioShouldBeSilencedHint || s.isOtherAudioPlaying
     }
 
     /// Suelta el audio cuando ya nadie lo usa (ni llamada, ni anillo, ni Modo Inicio, ni conferencia, ni Mejora), avisando a las
@@ -557,11 +564,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private func anilloVuelve(_ e: AnilloVuelve.Evento) {
         if case .ruta = e, Date().timeIntervalSince(ultimoIntentoAnillo) < 5 { return }   // el cambio de ruta que provoca quedarLista
         let telefono = CXCallObserver().calls.contains { !$0.hasEnded }
+        let suenaOtra = VozNativa.otraAppSuena
         let que = AnilloVuelve.decidir(e, modoAnillo: modoAnillo || unRato, enLlamada: estado == .hablando || estado == .conectando,
-                                       microfono: engine.isRunning, silencio: silencio?.isPlaying == true, telefono: telefono)
+                                       microfono: engine.isRunning, silencio: silencio?.isPlaying == true, telefono: telefono, otraSuena: suenaOtra)
         switch que {
         case .nada: return
-        case .esperar: if let d = anilloCortadoDesde { revisarAnilloCortado(d) }; return   // llamada de teléfono: se vuelve a mirar
+        case .esperar:   // llamada de teléfono o música de otra app: no se le quita el audio; se vuelve a mirar en 30 s
+            if suenaOtra && e == .interrupcionSinFin { paso("Otra app está sonando: el anillo espera sin pausarla") }
+            if let d = anilloCortadoDesde { revisarAnilloCortado(d) }; return
         case .quedarLista: break
         }
         ultimoIntentoAnillo = Date()
@@ -624,6 +634,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             self.buscarAvisos()
             self.precargarSiToca()   // al abrir la app ya se pide la ficha: si la llaman, no espera al Hub
             guard self.modoAnillo || self.unRato, self.estado == .lista || self.estado == .apagada else { return }
+            // Con música de otra app sonando no se toma el audio (la pausaría): el anillo espera a que pare (AnilloVuelve).
+            guard AnilloVuelve.alAbrir(modoAnillo: true, otraSuena: VozNativa.otraAppSuena) else {
+                self.paso("Abriste Alma con música sonando: no la pauso; el anillo vuelve cuando pare")
+                if self.anilloCortadoDesde == nil { let d = Date(); self.anilloCortadoDesde = d; self.revisarAnilloCortado(d) }
+                return
+            }
             if self.quedarLista() {   // con la app a la vista el anillo vuelve: el aviso de «Abre Alma» ya no hace falta
                 self.anilloCortadoDesde = nil; self.anilloAvisado = false
                 UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [VozNativa.idAvisoAnillo])
