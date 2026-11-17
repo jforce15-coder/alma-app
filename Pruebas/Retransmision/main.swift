@@ -31,5 +31,18 @@ revisa(!ReglasRetransmision.acepta(contexto: Data(p2!.utf8), pareja: p1, llamada
 revisa(!ReglasRetransmision.acepta(contexto: Data(p1!.utf8), pareja: p1, llamadaAqui: false), "y sin llamada tampoco")
 revisa(!ReglasRetransmision.acepta(contexto: nil, pareja: p1, llamadaAqui: true), "sin huella tampoco")
 
+// Una sola llamada (Juan, 17-nov-2026: «Importante que en modo Companion sólo haya una llamada»)
+let t0 = Date()
+var u = ReglasRetransmision(); u.companero = true
+revisa(!u.llamadaEnOtro(t0), "sin noticias de otra llamada, aquí se puede llamar")
+u.otraVista = t0; u.otroDispositivo = "iPhone"
+revisa(u.llamadaEnOtro(t0.addingTimeInterval(5)), "con la llamada viva en el iPhone, el iPad no abre otra")
+revisa(!u.llamadaEnOtro(t0.addingTimeInterval(25)), "si dejó de verse hace más de 20 s, ya se puede llamar")
+u.companero = false
+revisa(!u.llamadaEnOtro(t0.addingTimeInterval(5)), "con el Modo compañero apagado, cada dispositivo llama libre")
+u.companero = true; u.llamadaAqui = true
+revisa(!u.llamadaEnOtro(t0.addingTimeInterval(5)), "la llamada de este mismo dispositivo no se bloquea a sí misma")
+revisa(ReglasRetransmision.avisoUnaLlamada("iPhone").contains("desde tu iPhone") && ReglasRetransmision.avisoUnaLlamada("").contains("tu otro dispositivo"), "el aviso dice dónde está la llamada")
+
 print(fallos == 0 ? "OK" : "\(fallos) fallos")
 exit(fallos == 0 ? 0 : 1)

@@ -20,7 +20,8 @@ import WebKit
 ///   { accion: "anilloBle" }                  → abre el Diagnóstico del anillo (Bluetooth) (DiagnosticoAnillo.swift)
 ///   { accion: "dispositivos" }               → abre Dispositivos: el anillo y los lentes (Dispositivos.swift)
 ///   { accion: "tarjetas" }                   → abre Tarjetas de clubes (TarjetasClub.swift)
-///   { accion: "companero", on }              → Modo compañero de este dispositivo: la voz de la llamada del otro suena aquí (Retransmision.swift)
+///   { accion: "companero", on, llamada, de } → Modo compañero de este dispositivo: la voz de la llamada del otro suena aquí y,
+///                                               mientras hay llamada en el otro, aquí no se abre otra (Retransmision.swift)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
     static let nombre = "alma"
@@ -52,6 +53,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             NotificationCenter.default.post(name: .abrirTarjetasClub, object: nil)
         case "companero":   // el Modo compañero de este dispositivo (Hub #727): con él encendido, la voz de la llamada del otro suena aquí
             Retransmision.shared.poner(companero: (d["on"] as? Bool) ?? false)
+            // { llamada, de }: la página ve en el Hub si hay una llamada viva en el otro dispositivo (una sola llamada)
+            if let hay = d["llamada"] as? Bool { Retransmision.shared.llamadaOtro(hay, de: d["de"] as? String ?? "") }
         case "anilloBle":   // Ajustes → Alma con el anillo → «Diagnóstico del anillo (Bluetooth)» (DiagnosticoAnillo.swift): pantalla nativa
             NotificationCenter.default.post(name: .abrirDiagnosticoAnillo, object: nil)
         case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" } · { que: "mudo", on }

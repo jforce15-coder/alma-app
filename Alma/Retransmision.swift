@@ -10,6 +10,7 @@ import UIKit
 ///   · El compañero (el iPad con «Modo compañero» encendido, que la página avisa con { accion: "companero", on }) busca
 ///     esa llamada con la app abierta y reproduce lo que llega. El micrófono sigue solo en el teléfono.
 ///   · Solo se juntan dispositivos de la misma cuenta (la huella de la llave de la app) y el canal va cifrado.
+///   · Una sola llamada: mientras el compañero sabe que hay una llamada viva en el otro, aquí no se abre otra (VozNativa).
 final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertiserDelegate, MCNearbyServiceBrowserDelegate {
     static let shared = Retransmision()
     static let servicio = "alma-vivo"   // NSBonjourServices: _alma-vivo._tcp y _alma-vivo._udp (project.yml)
@@ -50,6 +51,18 @@ final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertise
             self.reglas.companero = on; self.actualizar()
         }
     }
+
+    /// La página vio (o dejó de ver) en el Hub una llamada viva en el otro dispositivo (Juan, 17-nov-2026: «Importante que en
+    /// modo Companion sólo haya una llamada»).
+    func llamadaOtro(_ hay: Bool, de dispositivo: String) {
+        DispatchQueue.main.async {
+            self.reglas.otraVista = hay ? Date() : nil
+            if hay, !dispositivo.isEmpty { self.reglas.otroDispositivo = String(dispositivo.prefix(20)) }
+        }
+    }
+    /// ¿Hay una llamada viva en el otro dispositivo? Entonces aquí no se abre otra (VozNativa.hablar). En el hilo principal.
+    var llamadaEnOtro: Bool { reglas.llamadaEnOtro(Date()) }
+    var avisoUnaLlamada: String { ReglasRetransmision.avisoUnaLlamada(reglas.otroDispositivo) }
 
     // MARK: - El dispositivo de la llamada (Companero.swift y VozNativa.swift)
 
@@ -126,9 +139,9 @@ final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertise
         DispatchQueue.main.async {
             guard self.reglas.suena else { return }
             switch p {
-            case let .audio(hz, pcm): self.sonar(pcm, hz: hz)
+            case let .audio(hz, pcm): self.reglas.otraVista = Date(); self.sonar(pcm, hz: hz)   // la voz que llega también dice que hay llamada allá
             case .corte: self.callar(apagar: false)
-            case .fin: self.callar(apagar: true)
+            case .fin: self.reglas.otraVista = nil; self.callar(apagar: true)
             }
         }
     }
