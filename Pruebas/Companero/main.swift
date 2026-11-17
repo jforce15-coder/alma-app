@@ -28,5 +28,13 @@ revisa((b4?["estado"] as? String) == "fin" && c.conv.isEmpty && c.sacar(t0.addin
 c.empezo("conv-2")
 revisa(c.subs.isEmpty && c.mirando && c.conv == "conv-2", "una llamada nueva empieza vacía")
 
+// Una sola llamada (Juan, 17-nov-2026): el compañero no abre otra
+revisa(UnaLlamada.motivo(companero: false, porVoz: true, otra: "iPhone", visto: t0, ahora: t0) == nil, "sin Modo compañero, todo como antes")
+revisa(UnaLlamada.motivo(companero: true, porVoz: true, otra: "", visto: nil, ahora: t0) != nil, "con Modo compañero, por voz nunca (aunque no se sepa de otra llamada)")
+revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "", visto: t0, ahora: t0) == nil, "a mano y sin llamada en el otro, sí")
+revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: t0, ahora: t0.addingTimeInterval(5))?.contains("iPhone") == true, "a mano con la llamada en el iPhone, no")
+revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: t0, ahora: t0.addingTimeInterval(31)) == nil, "lo que dijo la página vence a los 30 s")
+revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: nil, ahora: t0) == nil, "sin noticia de la página, a mano sí")
+
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallaron.")
 exit(fallos == 0 ? 0 : 1)

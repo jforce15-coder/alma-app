@@ -20,6 +20,7 @@ import WebKit
 ///   { accion: "anilloBle" }                  → abre el Diagnóstico del anillo (Bluetooth) (DiagnosticoAnillo.swift)
 ///   { accion: "dispositivos" }               → abre Dispositivos: el anillo y los lentes (Dispositivos.swift)
 ///   { accion: "tarjetas" }                   → abre Tarjetas de clubes (TarjetasClub.swift)
+///   { accion: "companero", on, otra }        → Modo compañero de este dispositivo y si la llamada está en el otro (Companero.swift)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
     static let nombre = "alma"
@@ -87,6 +88,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
                 NivelAvisos.poner(t, nivel: n.intValue, por: d["por"] as? String ?? "4h")
             }
             responder("AlmaAvisos.evento", [NivelAvisos.resumen])
+        case "companero":   // Modo compañero (alma/inicio.html): { on, otra } → una sola llamada (UnaLlamada, ColaVivo.swift)
+            Companero.shared.pagina(on: (d["on"] as? Bool) ?? false, otra: d["otra"] as? String ?? "")
         case "voz":
             voz(d)
         case "navegador":   // llevaste a Alma hacia un lado en el inicio: se abre el navegador con la búsqueda lista
