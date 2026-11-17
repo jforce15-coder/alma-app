@@ -62,6 +62,29 @@ revisa(decide(momentos(alma: 5, juan: 20, sonido: 60), a: 61) == nil, "41 s de v
 revisa(decide(momentos(alma: 5, sonido: 199.5), a: 200) == .tope, "3 min de sonido sin una palabra escrita: es ruido de fondo, cierra")
 revisa(decide(momentos(alma: 5, juan: 45, sonido: 69.5), a: 70) == nil, "Juan sigue hablando pasado el tope: no se corta")
 revisa(decide(momentos(alma: 20, juan: 25), a: 71) == .silencio, "Juan dejó de hablar hace 46 s: cierra")
+// Lo que vivió Juan (17-nov-2026): en una reunión siguen hablando entre ellos y la llamada con Alma no se cerraba nunca.
+let duro = C.topeConferencia + C.margenDuro
+func decideDuro(_ m: SuenoCalle.Momentos, a s: TimeInterval) -> SuenoCalle.Motivo? {
+    SuenoCalle.decidir(m, ahora: t0.addingTimeInterval(s), silencio: conf.silencio, tope: conf.tope, ruido: conf.ruido, pausa: conf.pausa, duro: duro)
+}
+revisa(duro == 90, "tope duro de fábrica en conferencia: 90 s sin que Alma hable")
+var reunion: [SuenoCalle.Motivo?] = [], antes: [SuenoCalle.Motivo?] = []   // hablan sin parar, con pausas de 4 s cada 6 s (nunca 8 s), y sus palabras siguen llegando
+for s in stride(from: 6.0, through: 300.0, by: 0.5) {
+    let resto = s.truncatingRemainder(dividingBy: 6)
+    let ultimoSonido = resto < 4 ? s - resto : s - 0.3
+    reunion.append(decideDuro(momentos(alma: 5, juan: s - 1, sonido: ultimoSonido), a: s))
+    antes.append(decide(momentos(alma: 5, juan: s - 1, sonido: ultimoSonido), a: s))
+}
+revisa(antes.allSatisfy { $0 == nil }, "antes: la reunión sigue y la llamada no se cerraba nunca")
+revisa(reunion.contains(SuenoCalle.Motivo.tope), "ahora: con la reunión hablando, la llamada se cierra sola")
+let cuando = 6.0 + Double(reunion.firstIndex(of: SuenoCalle.Motivo.tope) ?? 0) * 0.5
+revisa(cuando >= 95 && cuando <= 110, "se cierra al pasar el tope duro (90 s tras la última palabra de Alma), en una pausa corta")
+revisa(decideDuro(momentos(alma: 5, juan: 99, sonido: 99.5), a: 100) == nil, "pasado el tope duro, nunca a media frase (se espera una pausa de 3 s)")
+revisa(decideDuro(momentos(alma: 5, juan: 99, sonido: 99), a: 102.5) == .tope, "pasado el tope duro, en una pausa de 3 s: cierra")
+revisa(decideDuro(momentos(alma: 80, juan: 99, sonido: 99), a: 102.5) == nil, "Alma habló hace poco: el tope duro no corre")
+revisa(decideDuro(momentos(alma: 5, sonido: 70), a: 75) == nil, "la pausa de 5 s pensando (a los 70 s) sigue sin cerrarla")
+revisa(decideDuro(momentos(alma: 5, herramienta: 10), a: 95) == nil, "mientras Alma trabaja, el tope duro tampoco corta")
+revisa(C.tiempos(calle: true, conferencia: false, porAviso: false, juanHablo: true, deCalle: calle, deConferencia: C.Tiempos(silencio: 45, tope: 60, duro: 90))?.duro == nil, "el Modo calle no cambia: sin tope duro")
 let callePrueba = { (m: SuenoCalle.Momentos, s: TimeInterval) in SuenoCalle.decidir(m, ahora: t0.addingTimeInterval(s), silencio: calle.silencio, tope: calle.tope, ruido: calle.ruido, pausa: calle.pausa) }
 revisa(callePrueba(momentos(alma: 5, sonido: 23.5), 24) == nil, "Modo calle: Juan empezó una frase larga tras el silencio: no se corta (antes, a los 8 s de gracia)")
 revisa(callePrueba(momentos(alma: 5), 12) == .silencio, "Modo calle: 6 s callado: cuelga como siempre")
