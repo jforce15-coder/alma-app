@@ -13,6 +13,8 @@ struct AlmaApp: App {
         PushAlma.shared.arrancar()
         // «Alma con el anillo»: la app queda lista para que dos toques del anillo enciendan o apaguen el modo conferencia, también con el teléfono bloqueado.
         VozNativa.shared.arrancarSiHaceFalta()
+        // Voz de respaldo (Hub #657): la conexión a internet se vigila desde el arranque, para saber al instante si se fue.
+        _ = Conexion.shared
     }
 
     var body: some Scene {

@@ -15,12 +15,19 @@ import Speech
 /// Turnos: Juan habla → pausa → el Hub contesta → Claudio habla → vuelve a escuchar. Mientras Claudio piensa o habla, lo del
 /// micrófono no cuenta (así no se oye a sí mismo); para cortarlo, se espera a que termine su frase (son cortas).
 /// Si el dictado no tiene permiso o no está disponible, no se crea (init devuelve nil) y la llamada sigue con ElevenLabs.
+/// Voz de respaldo de Alma (Hub #657, RespaldoVoz.swift): el mismo motor, con init(respaldo:). Oye el dictado del iPhone (en
+/// el teléfono, sirve sin internet), contesta el Hub con la acción «calle» (solo texto) y habla una voz de mujer del iPhone.
+/// Sin internet, lo que dice Juan se guarda y se manda solo cuando vuelve.
 final class ClaudioLocal: NSObject {
     /// Los eventos para VozNativa, siempre en el hilo principal.
     var alEvento: (([String: Any]) -> Void)?
     var paso: ((String) -> Void)?
 
     private let conv: String, saludo: String
+    /// Es la voz de respaldo de Alma (no Claudio): otra cabeza (acción «calle») y otra voz.
+    let respaldo: Bool
+    /// Respaldo: lo que Juan dijo sin internet, por mandar.
+    private var cola: [String] = []
     private let saludoAudio: Data?
     private let ajustes: ClaudioLocalReglas.Ajustes
     private let reconocedor: SFSpeechRecognizer
@@ -47,13 +54,28 @@ final class ClaudioLocal: NSObject {
         guard (ficha["local"] as? Bool) == true, let c = ficha["conv_id"] as? String, c.hasPrefix("conv_local_"),
               SFSpeechRecognizer.authorizationStatus() == .authorized,
               let r = SFSpeechRecognizer(locale: Locale(identifier: "es-MX")), r.isAvailable else { return nil }
-        conv = c; reconocedor = r
+        conv = c; reconocedor = r; respaldo = false
         saludo = ficha["first_message"] as? String ?? AgenteVoz.saludoClaudio
         ajustes = ClaudioLocalReglas.Ajustes(ficha["voz_local"] as? [String: Any])
         saludoAudio = ClaudioLocalReglas.audio(ficha["voz_local"] as? [String: Any])
         voz = ClaudioLocal.elegirVoz(ajustes)
         super.init()
     }
+
+    /// La voz de respaldo de Alma: abre con `frase` («Se me fue el internet…») y sigue con la voz del iPhone.
+    init?(respaldo frase: String) {
+        guard SFSpeechRecognizer.authorizationStatus() == .authorized,
+              let r = SFSpeechRecognizer(locale: Locale(identifier: "es-MX")), r.isAvailable || r.supportsOnDeviceRecognition else { return nil }
+        conv = "respaldo_" + UUID().uuidString.prefix(8).lowercased(); reconocedor = r; respaldo = true
+        saludo = frase; saludoAudio = nil
+        ajustes = ClaudioLocalReglas.Ajustes(RespaldoVoz.voz)
+        voz = ClaudioLocal.elegirVoz(ajustes)
+        super.init()
+    }
+
+    /// Respaldo: ¿está pensando o hablando? (Mientras, no se vuelve a ElevenLabs.) ¿Cuánto queda guardado por mandar?
+    var ocupada: Bool { pensando || Date() < ocupadoHasta || !texto.isEmpty }   // con texto: Juan está a media frase
+    var pendientes: Int { cola.count }
 
     /// Para el registro: «Juan · es-MX · hombre · mejorada · dictado en el teléfono».
     var descripcion: String {
@@ -83,7 +105,7 @@ final class ClaudioLocal: NSObject {
     func empezar() {
         emitir(["type": "conversation_initiation_metadata",
                 "conversation_initiation_metadata_event": ["conversation_id": conv, "agent_output_audio_format": "pcm_16000"]])
-        paso?("Claudio local · " + descripcion)
+        paso?((respaldo ? "Voz de respaldo · " : "Claudio local · ") + descripcion)
         historial = ClaudioLocalReglas.sumar(historial, .init(deClaudio: true, texto: saludo))
         decir(saludo, audio: saludoAudio)
         reloj = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.revisar() }
@@ -158,6 +180,13 @@ final class ClaudioLocal: NSObject {
         guard vivo, !pensando, Date() >= ocupadoHasta else { return }
         if pedido == nil { nuevoPedido(); return }
         if ClaudioLocalReglas.termino(texto: texto, ultimoCambio: ultimoCambio, empezo: empezo, ahora: Date()) { cerrarFrase(); return }
+        // Respaldo: volvió el internet y hay algo guardado (y Juan no está hablando): se manda solo.
+        if respaldo, !cola.isEmpty, texto.isEmpty, Conexion.shared.hayRed {
+            let piezas = cola; cola = []
+            paso?("Voz de respaldo: volvió el internet, mando lo guardado (\(piezas.count))")
+            pedirRespaldo(RespaldoVoz.juntar(piezas), piezas: piezas)
+            return
+        }
         // El dictado de Apple escucha como un minuto por pedido: callado, se renueva antes.
         if texto.isEmpty && Date().timeIntervalSince(desdePedido) > 50 { nuevoPedido() }
     }
@@ -173,6 +202,16 @@ final class ClaudioLocal: NSObject {
 
     private func turno(_ t: String) {
         guard vivo, !pensando else { return }
+        if respaldo {
+            emitir(["type": "user_transcript", "user_transcription_event": ["user_transcript": t]])
+            if !Conexion.shared.hayRed {
+                let g = RespaldoVoz.guardar(cola, t); cola = g.cola
+                paso?("Voz de respaldo: sin internet, lo guardo (\(cola.count) por mandar)")
+                decir(RespaldoVoz.trasGuardar(cuantas: cola.count, cupo: g.cupo))
+                return
+            }
+            pedirRespaldo(t, piezas: [t]); return
+        }
         pensando = true
         empezarTecleo()
         emitir(["type": "user_transcript", "user_transcription_event": ["user_transcript": t]])
@@ -193,6 +232,39 @@ final class ClaudioLocal: NSObject {
                 guard let self, self.vivo, self.llamadas == mia else { return }
                 self.paso?(ClaudioLocalReglas.tiempos(total: Date().timeIntervalSince(t0), j))
                 self.contestar(j, error: j == nil ? (err?.localizedDescription ?? "sin respuesta del Hub") : (j?["ok"] as? Bool) == false ? (j?["error"] as? String) : nil)
+            }
+        }.resume()
+    }
+
+    /// Respaldo: la frase al Hub (acción «calle», sin audio). Si se fue el internet a medio camino, lo de `piezas` vuelve a
+    /// quedar guardado; si el Hub no contestó por otra cosa (tardó), no se repite solo (pudo haberse hecho): se dice.
+    private func pedirRespaldo(_ t: String, piezas: [String]) {
+        guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else {
+            decir("No tengo la sesión del Hub. Ábreme con sesión y seguimos."); return
+        }
+        pensando = true
+        empezarTecleo()
+        emitir(["type": "agent_tool_request", "agent_tool_request": ["tool_name": "respaldo"]])   // trabaja: no se cuelga por silencio
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 25
+        r.httpBody = try? JSONSerialization.data(withJSONObject: RespaldoVoz.pedido(token: token, sesion: sesion, texto: t))
+        llamadas += 1; let mia = llamadas, t0 = Date()
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, err in
+            let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let sinRed = j == nil && err.map { EstadoCalle.esSinRed(($0 as NSError).code) } == true
+            DispatchQueue.main.async {
+                guard let self, self.vivo, self.llamadas == mia else { return }
+                self.pararTecleo()
+                self.emitir(["type": "agent_tool_response", "agent_tool_response": ["tool_name": "respaldo"]])
+                self.pensando = false
+                self.paso?(String(format: "Voz de respaldo: el Hub contestó en %.1f s", Date().timeIntervalSince(t0)) + (j == nil ? " (sin respuesta" + (sinRed ? ", sin internet)" : ")") : ""))
+                if sinRed {
+                    self.cola = Array((piezas + self.cola).prefix(RespaldoVoz.maxCola))
+                    self.decir(RespaldoVoz.trasGuardar(cuantas: self.cola.count, cupo: true))
+                    return
+                }
+                let h = RespaldoVoz.hablar(j)
+                self.historial = ClaudioLocalReglas.sumar(self.historial, .init(deClaudio: true, texto: h))
+                self.decir(h)
             }
         }.resume()
     }

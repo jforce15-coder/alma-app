@@ -32,6 +32,9 @@ import UserNotifications
 ///   se vuelve a abrir sola; si Claudio no conecta, vuelve Alma y lo dice. Cada fin de llamada deja su porqué en los pasos.
 /// · Claudio local (Hub #629, ClaudioLocal.swift): con el Hub que lo trae, Claudio va sin ElevenLabs (dictado y voz del
 ///   iPhone, el Hub contesta con su mismo prompt): las sesiones largas de trabajo no gastan créditos de voz.
+/// · Voz de respaldo (Hub #657, RespaldoVoz.swift): la app vigila la conexión (Conexion.swift). Si en una llamada normal se va
+///   el internet o la voz se corta seguido, Alma sigue con el motor de Claudio local (dictado y voz de mujer del iPhone; el Hub
+///   contesta por texto) y, cuando la conexión vuelve y se queda estable, vuelve a su voz de ElevenLabs sin colgar.
 final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static let shared = VozNativa()
 
@@ -190,6 +193,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var intentoConexion = 0
     /// Las veces que esta llamada se reabrió sola (tras un corte, o con Alma si Claudio no conectó).
     private var reabiertas = 0
+    /// Voz de respaldo (Hub #657): cuándo se cortó la voz (para ver si la conexión está inestable), desde cuándo está el
+    /// respaldo, cuántas veces volvió a ElevenLabs en esta llamada y el reloj que mira si ya puede volver.
+    private var cortesRed: [Date] = []
+    private var respaldoDesde = Date.distantPast
+    private var vueltasRespaldo = 0
+    private var relojRespaldo: Timer?
+    private var oyeConexion = false
+    private var enRespaldo: Bool { local?.respaldo == true }
     /// La conversación que conecta es una reapertura: la frase con la que Alma abre y lo último que se dijo.
     private var reabierta: (frase: String, charla: [String], porClaudio: Bool)?
     /// Por qué termina la llamada (queda en el paso «Llamada terminada»).
@@ -694,7 +705,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             guard let d = data, let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any], (j["ok"] as? Bool) == true,
                   let agente = j["agent_id"] as? String else {
                 let por = err?.localizedDescription ?? (data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["error"] as? String) ?? "sin respuesta del Hub"
-                DispatchQueue.main.async { self.fallo("No pude pedir tu ficha: \(por)") }; return
+                let sinRed = err.map { EstadoCalle.esSinRed(($0 as NSError).code) } == true
+                DispatchQueue.main.async {
+                    // Sin internet desde el inicio: Alma contesta igual con la voz de respaldo (lo que pidas se guarda y se manda al volver).
+                    if self.estado == .conectando, sinRed || !Conexion.shared.hayRed, !self.desdeCalle, self.conferencia == nil,
+                       self.entrarRespaldo(por: "no pude pedir tu ficha: \(por)") { return }
+                    self.fallo("No pude pedir tu ficha: \(por)")
+                }; return
             }
             DispatchQueue.main.async { self.paso("Ficha lista" + (j["signed_url"] != nil ? " (URL firmada)" : "")); self.conectar(agente: agente, ficha: j) }
         }.resume()
@@ -702,6 +719,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     private func conectar(agente: String, ficha: [String: Any]) {
         guard estado == .conectando else { return }
+        vigilarConexion()
         do {
             let s = AVAudioSession.sharedInstance()
             guard s.recordPermission == .granted else { fallo("Falta el permiso del micrófono: Ajustes del iPhone → Alma → Micrófono."); return }
@@ -722,18 +740,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         } catch { fallo("No pude abrir el micrófono (\((error as NSError).code))."); return }
         // Claudio local (Hub #629): si el Hub lo trae y el dictado del iPhone está listo, Claudio va sin ElevenLabs (sin créditos
         // de voz). Si no, sigue con su agente de ElevenLabs como siempre.
+        if let l = ficha["respaldo"] as? ClaudioLocal { usarLocal(l); return }   // voz de respaldo (Hub #657)
         if self.agente == .claudio, (ficha["local"] as? Bool) == true {
-            if let l = ClaudioLocal(ficha: ficha) {
-                local = l
-                l.paso = { [weak self] t in self?.paso(t) }
-                l.alEvento = { [weak self, weak l] ev in
-                    guard let self, let l, self.local === l else { return }   // uno viejo (ya volvió Alma o colgó) no cuenta
-                    self.mensaje(ev)
-                }
-                inicioEnviado = true; saludoDesde = nil; colaVoz = []
-                l.empezar()
-                return
-            }
+            if let l = ClaudioLocal(ficha: ficha) { usarLocal(l); return }
             paso("Claudio local no está listo (falta el permiso del dictado o no está disponible): sigue con ElevenLabs")
         }
         let firmada = (ficha["signed_url"] as? String).flatMap { URL(string: $0) }
@@ -967,7 +976,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             vigilar()
             aConferencia = false; relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; ultimaActividad = Date(); herramienta = false
             if tiemposCierre != nil { vigilarCalle() }   // Modo calle, conferencia (conversación continua) o la que abrió un aviso
-            if conferencia == nil && !desdeCalle && agente == .alma {   // en el Modo calle manda el sueño (más corto); pasar a conferencia apagaría el Modo calle
+            if conferencia == nil && !desdeCalle && agente == .alma && !enRespaldo {   // en el Modo calle manda el sueño (más corto); pasar a conferencia apagaría el Modo calle
                 relojLargo = Timer.scheduledTimer(withTimeInterval: segundosLargo, repeats: false) { [weak self] _ in
                     guard let self, self.estado == .hablando else { return }
                     self.aConferencia = true; self.paso("Llamada larga: en la próxima pausa larga pasa al modo conferencia")
@@ -987,7 +996,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let v = vistaPendiente { vistaPendiente = nil; mandar(["type": "contextual_update", "text": v]) }   // la captura llegó mientras conectaba
             infoBloqueo("Te escucho · dos toques para pausar")
             emitirPersonalidad()   // los chips de la llamada (si es el principal)
-            if agente == .alma, let id = ev["conversation_id"] as? String { vincular(id) }   // Claudio: el Hub lo reconoce por su firma (claudio.js)
+            if agente == .alma, let id = ev["conversation_id"] as? String, !id.hasPrefix("respaldo_") { vincular(id) }   // la voz de respaldo no tiene conversación en ElevenLabs   // Claudio: el Hub lo reconoce por su firma (claudio.js)
             if agente == .claudio, let id = ev["conversation_id"] as? String { idClaudio = id; pedirPanelClaudio(intento: 0) }   // Panel de Claudio: la lista al entrar
         case "audio":
             let ev = j["audio_event"] as? [String: Any] ?? [:]
@@ -1318,6 +1327,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// conversación continua) está en LlamadaContinua.regla; lo que queda trabajando se lo cuenta después Alma abre.
     private func terminar() {
         vigia?.invalidate(); vigia = nil
+        relojRespaldo?.invalidate(); relojRespaldo = nil; cortesRed = []; vueltasRespaldo = 0
         vigiaCalle?.invalidate(); vigiaCalle = nil
         if estado == .hablando || estado == .conectando {
             ultimaLlamada = (estado == .hablando ? max(0, Date().timeIntervalSince(conectadaDesde)) : 0, motivoCalle)
@@ -1758,6 +1768,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// conferencia se cierra sin error y se vuelve a escuchar «Alma». Solo si no hay cómo seguir se dice el error y termina.
     private func corte(_ m: String, sinCreditos: Bool = false) {
         guard estado == .conectando || estado == .hablando else { return }
+        // Voz de respaldo (Hub #657): sin internet, o la voz ya se cortó varias veces seguidas, Alma sigue con la voz del iPhone
+        // en vez de reabrir ElevenLabs (que no conectaría) o de colgar con error.
+        let ahora = Date()
+        cortesRed = cortesRed.filter { ahora.timeIntervalSince($0) <= RespaldoVoz.ventanaCortes } + [ahora]
+        if !enRespaldo, RespaldoVoz.usar(hayRed: Conexion.shared.hayRed, cortes: cortesRed, ahora: ahora, calle: desdeCalle,
+                                         conferencia: conferencia != nil, sinCreditos: sinCreditos), entrarRespaldo(por: m) { return }
         let conectada: TimeInterval? = estado == .hablando ? Date().timeIntervalSince(conectadaDesde) : nil
         switch LlamadaContinua.trasCorte(claudio: agente == .claudio, calle: desdeCalle, conferencia: conferencia != nil, conectada: conectada,
                                          reabiertas: reabiertas, sinCreditos: sinCreditos) {
@@ -1771,9 +1787,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Vuelve a abrir la conversación con Alma sin colgar la llamada: el micrófono y el audio siguen, lo último que se dijo
     /// va en la ficha y Alma abre con una frase que dice qué pasó. Si el Hub no da la conversación nueva, entonces sí es un
     /// error y se dice el de antes.
-    private func reabrir(por m: String, frase: String, porClaudio: Bool) {
+    private func reabrir(por m: String, frase: String, porClaudio: Bool, contar: Bool = true) {
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { fallo(m); return }
-        reabiertas += 1
+        if contar { reabiertas += 1 }   // volver de la voz de respaldo no cuenta como reapertura
         let llamada = inicioLlamada, charla = charlaReciente
         paso((porClaudio ? "Claudio no siguió (" : "Se cortó la conexión (") + m + (porClaudio ? "): vuelvo con Alma" : "): la vuelvo a abrir"))
         relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; aConferencia = false
@@ -1796,12 +1812,90 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 guard let self, self.inicioLlamada == llamada, self.estado == .conectando, self.intentoConexion == intento else { return }   // colgó o empezó otra llamada
                 self.cambiando = false
                 guard let j, (j["ok"] as? Bool) == true, j["agent_id"] is String else {
-                    self.paso("El Hub no dio la conversación nueva"); self.fallo(m); return
+                    self.paso("El Hub no dio la conversación nueva")
+                    if !self.desdeCalle, self.conferencia == nil, self.entrarRespaldo(por: m) { return }   // la conexión sigue mala: voz de respaldo
+                    self.fallo(m); return
                 }
                 self.reabierta = (frase, charla, porClaudio)
                 self.reconectar(.alma, ficha: j)
             }
         }.resume()
+    }
+
+    // MARK: - Voz de respaldo (Hub #657, RespaldoVoz.swift)
+
+    /// La conversación sigue con un motor local (Claudio local o la voz de respaldo): lo que se «manda» va a él, no al socket.
+    private func usarLocal(_ l: ClaudioLocal) {
+        local = l
+        l.paso = { [weak self] t in self?.paso(t) }
+        l.alEvento = { [weak self, weak l] ev in
+            guard let self, let l, self.local === l else { return }   // uno viejo (ya volvió Alma o colgó) no cuenta
+            self.mensaje(ev)
+        }
+        inicioEnviado = true; saludoDesde = nil; colaVoz = []
+        l.empezar()
+        if l.respaldo { vigilarVuelta() }
+    }
+
+    /// La conexión se vigila desde la primera llamada: si se va con la llamada en curso (y sigue sin volver unos segundos), es
+    /// un corte, y corte() pasa a la voz de respaldo.
+    private func vigilarConexion() {
+        guard !oyeConexion else { return }
+        oyeConexion = true
+        Conexion.shared.escuchar { [weak self] hay in self?.cambioConexion(hay) }
+    }
+    private func cambioConexion(_ hay: Bool) {
+        guard estado == .hablando || estado == .conectando else { return }
+        paso(hay ? "Volvió el internet (" + Conexion.shared.via + ")" : "Se fue el internet")
+        guard !hay, !enRespaldo, !desdeCalle, conferencia == nil else { return }
+        let llamada = inicioLlamada
+        DispatchQueue.main.asyncAfter(deadline: .now() + RespaldoVoz.sinRedTras) { [weak self] in
+            guard let self, self.inicioLlamada == llamada, !Conexion.shared.hayRed, !self.enRespaldo,
+                  self.estado == .hablando || self.estado == .conectando else { return }
+            self.corte("se fue el internet")
+        }
+    }
+
+    /// Cambia a la voz de respaldo sin colgar: se cierra el socket (o lo que estaba conectando) y sigue el motor local. Si el
+    /// dictado no tiene permiso o no está disponible, devuelve false (y queda lo de siempre: reabrir o el error).
+    @discardableResult
+    private func entrarRespaldo(por m: String) -> Bool {
+        guard let l = ClaudioLocal(respaldo: RespaldoVoz.frase(hayRed: Conexion.shared.hayRed)) else {
+            paso("No hay voz de respaldo (falta el permiso del dictado o no está disponible)"); return false
+        }
+        paso("La conexión falló (" + m + "): sigo con la voz de respaldo")
+        relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; aConferencia = false
+        relojEspera?.invalidate(); relojEspera = nil; herramienta = false
+        let viejo = ws, viejaSesion = sesionURL
+        ws = nil; sesionURL = nil
+        viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
+        local?.parar(); local = nil
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        antesDeFicha = []; colaVoz = []; sono = false
+        idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()
+        cambiando = false; volviendo = false; reabierta = nil
+        intentoConexion += 1   // el reloj de 12 s y la reapertura que estaban en curso ya no cuentan
+        if agente != .alma { agente = .alma }   // Claudio tampoco tiene internet: sigue Alma
+        respaldoDesde = Date()
+        estado = .conectando
+        conectar(agente: "", ficha: ["respaldo": l])
+        return local === l
+    }
+
+    /// Mientras está la voz de respaldo: cuando la conexión vuelve y se queda estable (y Alma no está pensando, hablando ni
+    /// con algo guardado por mandar), vuelve a su voz de ElevenLabs sin colgar y lo dice.
+    private func vigilarVuelta() {
+        relojRespaldo?.invalidate()
+        let llamada = inicioLlamada
+        relojRespaldo = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] t in
+            guard let self, self.inicioLlamada == llamada, self.estado == .hablando, let l = self.local, l.respaldo else { t.invalidate(); return }
+            let c = Conexion.shared
+            guard RespaldoVoz.puedeVolver(hayRed: c.hayRed, redDesde: max(c.desde, self.respaldoDesde), ahora: Date(), vueltas: self.vueltasRespaldo,
+                                          ocupada: l.ocupada || self.cambiando, pendientes: l.pendientes) else { return }
+            t.invalidate(); self.relojRespaldo = nil
+            self.vueltasRespaldo += 1
+            self.reabrir(por: "volvió el internet", frase: RespaldoVoz.vuelve, porClaudio: false, contar: false)
+        }
     }
 
     private func avisar() { emitir(resumen) }
