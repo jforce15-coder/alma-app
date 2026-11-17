@@ -555,7 +555,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     }
 
     private static let hora: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f }()
-    private func anotar(_ t: String) {
+    func anotar(_ t: String) {
         eventos.append(ModoCalle.hora.string(from: Date()) + " " + t)
         if eventos.count > 14 { eventos.removeFirst(eventos.count - 14) }
     }
@@ -1079,7 +1079,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private func listo(_ pide: String) {
         cerrarEscucha()
         let aviso = avisoActual; avisoActual = nil
-        if let aviso { avisoAtendido(aviso) }   // contestó el aviso: sale de la rotación
+        // Contestó el aviso: sale de la rotación cuando el Hub confirma que le respondía (RespuestaAviso.swift; si no, vuelve).
         let boton = porBoton; porBoton = false
         if encendido { uso.pedidos += 1 }
         anotar((boton ? "Pedido (botón): «" : "Pedido: «") + ModoCalle.corto(pide, palabras: 12) + "»")
@@ -1156,11 +1156,17 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     /// La frase al Hub: acción «calle» → { ok, hablar, conversar, audio? }. Si el Hub todavía no la tiene, va al chat con
     /// Alma (opEnviar, canal «calle») y se dice corto lo que contestó.
     private func preguntar(_ texto: String, aviso: String?, turno: Int) {
-        if hubSinCalle { porChat(texto, aviso: aviso, turno: turno); return }
+        if hubSinCalle { if let aviso { avisoAtendido(aviso) }; porChat(texto, aviso: aviso, turno: turno); return }
         var b: [String: Any] = ["texto": texto, "canal": "calle"]
-        if let aviso { b["aviso_id"] = aviso }
+        if let aviso { b["aviso_id"] = aviso; b["puede_callar"] = true }   // el juez del aviso del Hub (RespuestaAviso.swift)
         llamarHub(b, accion: "calle", timeout: EsperaCalle.plazo + EsperaCalle.tardeMax) { [weak self] j in
             guard let self, self.ocupaMicrofono else { return }
+            // Tras un aviso, lo que se oyó no le respondía (otra plática, ruido): Alma no dice nada y vuelve a esperar «Alma».
+            if aviso != nil, RespuestaAviso.callar(calle: j) {
+                if self.vigente(turno) { self.anotar("Tras el aviso: " + RespuestaAviso.motivo(j) + "; Alma se queda callada"); self.volverAEsperar() }
+                return
+            }
+            if let aviso { self.avisoAtendido(aviso) }
             guard self.vigente(turno) else { self.llegoTarde(turno, j, pedido: texto); return }
             if j == nil { self.sinRespuesta(EsperaCalle.motivo(red: self.errorRed, segundos: Date().timeIntervalSince(self.pedidoDesde))); return }
             if let j, (j["ok"] as? Bool) == true {
@@ -1268,7 +1274,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         }
     }
 
-    private func llamarHub(_ cuerpo: [String: Any], accion: String, timeout: TimeInterval, _ listo: @escaping ([String: Any]?) -> Void) {
+    func llamarHub(_ cuerpo: [String: Any], accion: String, timeout: TimeInterval, _ listo: @escaping ([String: Any]?) -> Void) {
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else {
             DispatchQueue.main.async { self.errorRed = "falta la sesión del Hub: abre Alma con sesión"; listo(nil) }; return
         }

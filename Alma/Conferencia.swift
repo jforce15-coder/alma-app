@@ -61,6 +61,8 @@ final class Conferencia {
     /// Alma acaba de decir un aviso (lo que terminó en segundo plano: «Juan, ya terminé lo que me pediste… ¿Quieres que te cuente?»): lo que
     /// contesten en estos segundos abre la llamada con el aviso de contexto, sin tener que decir «Alma». «No» o «luego»: nada.
     private var respuestaHasta: Date?, respuestaAviso = "", respuestaId: String?
+    /// El juez del aviso del Hub está decidiendo si lo que dijeron le responde (RespuestaAviso.swift): no se escucha otro tramo.
+    private var juzgando = false
     private func armarApagado() {
         relojApagar?.invalidate(); relojApagar = nil
         guard let t = apagarTras else { return }
@@ -231,7 +233,7 @@ final class Conferencia {
         actual = ""; conAlma = nil; inicioTramo = Date(); ultimoCambio = Date()
         tarea = reconocedor?.recognitionTask(with: p) { [weak self] r, e in
             DispatchQueue.main.async {
-                guard let self, self.vuelta == mia, self.activa, !self.enLlamada, !self.mudo else { return }
+                guard let self, self.vuelta == mia, self.activa, !self.enLlamada, !self.mudo, !self.juzgando else { return }
                 if let r {
                     let t = r.bestTranscription.formattedString
                     if t != self.actual { self.actual = t; self.ultimoCambio = Date() }
@@ -251,7 +253,7 @@ final class Conferencia {
 
     /// Cada cuarto de segundo: ¿llamaron a Alma?, ¿terminó una frase (pausa)?, ¿el tramo ya es largo?
     private func revisar() {
-        guard activa, !enLlamada, !mudo, !interrumpida else { return }
+        guard activa, !enLlamada, !mudo, !interrumpida, !juzgando else { return }
         let quieto = Date().timeIntervalSince(ultimoCambio)
         // Solo «Alma» (sin pedido): despierta rápido (0,7 s quieto). Con pedido, espera 1,2 s para no cortar lo que piden.
         if let a = conAlma, let pide = Conferencia.pedidoAAlma(a), quieto > (pide.isEmpty ? 0.7 : 1.2) { respuestaHasta = nil; despertar(pide, texto: a); return }
@@ -287,12 +289,26 @@ final class Conferencia {
         if Date() > h.addingTimeInterval(15) { respuestaHasta = nil; return false }
         guard Date().timeIntervalSince(ultimoCambio) >= quieto else { return false }
         respuestaHasta = nil
-        // Contestó el aviso (también «luego»): sale de la rotación de avisos (RitmoAvisos); sin respuesta, se recuerda después.
-        if let i = respuestaId { respuestaId = nil; DispatchQueue.main.async { ModoCalle.shared.avisoAtendido(i) } }
-        let llano = dicho.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "es"))
-        if llano.range(of: "^\\W*(no|ahorita no|ahora no|luego|despues|mas tarde|al rato)\\b", options: .regularExpression) != nil { return false }
-        reciente.append("[Alma te avisó] " + respuestaAviso)
-        despertar(conAlma.flatMap { Conferencia.pedidoAAlma($0) } ?? dicho, texto: conAlma ?? "")
+        let id = respuestaId; respuestaId = nil
+        // Contestó «no» o «luego»: sale de la rotación de avisos (RitmoAvisos); sin respuesta, se recuerda después.
+        if RespuestaAviso.esNoOLuego(dicho) { if let id { DispatchQueue.main.async { ModoCalle.shared.avisoAtendido(id) } }; return false }
+        // ¿De verdad le contestó? (Juan, 17-nov-2026; RespuestaAviso.swift): antes cualquier voz abría la llamada. El juez del
+        // aviso del Hub lo decide; si es otra plática o ruido, nada suena, no se abre la llamada y el aviso vuelve después.
+        // Mientras tanto no se escucha otro tramo (juzgando). Sin respuesta del Hub a tiempo, se abre como antes.
+        let aviso = respuestaAviso, conA = conAlma
+        juzgando = true
+        ModoCalle.shared.llamarHub(["texto": dicho, "aviso": aviso, "aviso_id": id ?? ""], accion: "avisoRespuesta", timeout: RespuestaAviso.espera) { [weak self] j in
+            guard let self, self.juzgando else { return }
+            self.juzgando = false
+            guard self.activa, !self.enLlamada, !self.mudo, !self.interrumpida else { return }
+            if RespuestaAviso.callar(avisoRespuesta: j) {
+                ModoCalle.shared.anotar("Tras el aviso: " + RespuestaAviso.motivo(j) + "; Alma se queda callada")
+                self.siguienteTramo(); return
+            }
+            if let id { ModoCalle.shared.avisoAtendido(id) }
+            self.reciente.append("[Alma te avisó] " + aviso)
+            self.despertar(conA.flatMap { Conferencia.pedidoAAlma($0) } ?? dicho, texto: conA ?? "")
+        }
         return true
     }
 

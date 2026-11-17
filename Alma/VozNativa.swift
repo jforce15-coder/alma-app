@@ -859,7 +859,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // Alma abre (Hub #509 T4): esta vez nadie la nombró; abrió ella para contar un resultado (ALMA ABRE, al final).
             let quien = porAviso != nil ? " Esta vez abriste tú la conversación para contarle un resultado (ALMA ABRE, al final): no saludes ni te presentes." :
                 " Alguien te nombró («Alma, …»): responde solo eso, corto y claro, sin saludar ni presentarte." + (sinPedido ? " Solo dijeron «Alma»: ya contestaste con un saludo corto; escucha lo que te piden." : "")
-            let reglas = " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. " + LlamadaContinua.regla
+            let reglas = " Si en LO ÚLTIMO QUE SE DIJO hay una línea «[Alma te avisó] …», le acabas de avisar que algo ya quedó listo y Juan te contestó: dale ese resultado en corto (búscalo con tus herramientas si hace falta), sin volver a preguntar si quiere verlo. " + RespuestaAviso.regla + " " + LlamadaContinua.regla
             dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO CONFERENCIA: Juan está en una reunión y tú la escuchas en silencio." + quien + reglas + " En este modo hay silencios largos y es normal: NUNCA preguntes si siguen ahí ni insistas. LO ÚLTIMO QUE SE DIJO:\n" + cf
         }
         if esAlma && desdeCalle {
