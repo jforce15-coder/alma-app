@@ -428,7 +428,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
                                 "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
                                 "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar",
-                                "agente": agente.rawValue, "diagBle": true, "dispositivos": true]   // la app sabe abrir el Diagnóstico del anillo (Bluetooth)
+                                "agente": agente.rawValue, "diagBle": true, "dispositivos": true, "tarjetas": true]   // la app sabe abrir el Diagnóstico del anillo (Bluetooth) y las Tarjetas de clubes (TarjetasClub.swift)
         // la página que se abre a media llamada (o se recarga) pinta los chips con esto
         if estado == .hablando || estado == .conectando, let p = personalidad { r["personalidad"] = p }
         if estado == .hablando || estado == .conectando, let t = tarjeta, tarjetaVista != .nada { r["tarjeta"] = t.crudo; r["tarjetaVista"] = tarjetaVista.rawValue }
@@ -1139,6 +1139,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let idea = reglasGif.pedir(p["idea"], principal: personalidad != nil, pantalla: pantallaVisible, conAlma: agente == .alma) {
                 paso("Alma muestra un GIF: " + idea); emitir(["tipo": "gif", "idea": idea])
             }
+            return
+        }
+        // Tarjetas de clubes (Juan, 17-nov-2026; TarjetasClub.swift): la tarjeta que pidió sale en pantalla para la caja, encima
+        // de la llamada, y la llamada sigue. Con el teléfono bloqueado, sale al abrir la app. Siempre contesta enseguida.
+        if nombre == "mostrar_tarjeta_club" {
+            let r = TarjetasClub.shared.porVoz((p["club"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+            paso("Alma muestra una tarjeta de club" + (r.error ? " (no se mostró)" : ""))
+            mandar(["type": "client_tool_result", "tool_call_id": id, "result": r.texto, "is_error": r.error])
             return
         }
         var res = "Esta herramienta no existe en la app.", error = true
