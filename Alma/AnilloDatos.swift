@@ -3,7 +3,7 @@ import Foundation
 /// Lo que el anillo QRing (Colmi R08) manda, leído sin iOS: se prueba solo en Pruebas/AnilloDatos.
 /// Paquetes de 16 bytes: [comando, 14 bytes de datos, suma]. Lo conocido viene de Gadgetbridge y colmi_r02_client.
 /// AnilloAlma.swift lo usa para las herramientas de la voz (anillo_estado, anillo_medidas, anillo_medir_ahora,
-/// anillo_ajustes, anillo_buscar), la pantalla Dispositivos y la Lectura del anillo que va al Hub.
+/// anillo_ajustes, anillo_buscar), la pantalla Wearables y la Lectura del anillo que va al Hub.
 enum AnilloDatos {
     enum Medida: String { case ritmo, oxigeno }
 

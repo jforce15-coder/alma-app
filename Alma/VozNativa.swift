@@ -496,7 +496,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
                                 "pasos": UserDefaults.standard.stringArray(forKey: "voz_pasos") ?? [],
                                 "microfono": AVAudioSession.sharedInstance().recordPermission == .granted ? "si" : AVAudioSession.sharedInstance().recordPermission == .denied ? "no" : "sin preguntar",
-                                "agente": agente.rawValue, "diagBle": true, "dispositivos": true, "tarjetas": true]   // la app sabe abrir el Diagnóstico del anillo (Bluetooth) y las Tarjetas de clubes (TarjetasClub.swift)
+                                "agente": agente.rawValue, "diagBle": true, "dispositivos": true, "tarjetas": true,
+                                "wearables": WearablesReglas.resumenWeb(WearablesModelo.shared.lista)]   // Ajustes → Wearables: una tarjeta por wearable con su batería   // la app sabe abrir el Diagnóstico del anillo (Bluetooth) y las Tarjetas de clubes (TarjetasClub.swift)
         // la página que se abre a media llamada (o se recarga) pinta los chips con esto
         if estado == .hablando || estado == .conectando, let p = personalidad { r["personalidad"] = p }
         if estado == .hablando || estado == .conectando, let t = tarjeta, tarjetaVista != .nada { r["tarjeta"] = t.crudo; r["tarjetaVista"] = tarjetaVista.rawValue }

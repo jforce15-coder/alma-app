@@ -234,6 +234,14 @@ jobs:
           xcrun swiftc Alma/AnilloDatos.swift Pruebas/AnilloDatos/main.swift -o /tmp/anillo-datos
           /tmp/anillo-datos
 
+      # Wearables (Juan, 17-nov-2026): agregar audífonos sin repetir ni confundirlos con los lentes, la batería sin inventar y
+      # lo que va a Ajustes (una tarjeta por wearable). Lógica pura.
+      - name: Probar Wearables
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/WearablesReglas.swift Pruebas/Wearables/main.swift -o /tmp/wearables
+          /tmp/wearables
+
       # Saludos grabados (Hub #724): cuándo suena uno al abrir la llamada, cuál (nunca el mismo dos veces), cuándo se piden al
       # Hub y lo que va y viene. Lógica pura.
       - name: Probar los saludos grabados
