@@ -82,5 +82,41 @@ do {   // se guardan y vuelven igual
     revisa((try? JSONDecoder().decode([TarjetaClub].self, from: d)) == todas, "se guardan y se leen igual")
 }
 
+do {   // boletos (ajuste del 17-nov-2026): avión, tren, concierto y evento, con fecha y detalle
+    let hoy = "2026-11-17"
+    var madrid = TarjetaClub(id: "b1", nombre: "Vuelo a Madrid", numero: "M1OVALLE/JUAN EABC123", formato: .pdf417)
+    madrid.tipo = .avion; madrid.fecha = "2026-11-20"; madrid.detalle = "Asiento 14C"
+    var regreso = TarjetaClub(id: "b2", nombre: "Regreso de Madrid", numero: "M1OVALLE/JUAN EXYZ987", formato: .aztec)
+    regreso.tipo = .avion; regreso.fecha = "2026-11-28"
+    var coldplay = TarjetaClub(id: "b3", nombre: "Coldplay", numero: "TK-88412", formato: .qr)
+    coldplay.tipo = .concierto; coldplay.fecha = "2026-12-05"
+    var tren = TarjetaClub(id: "b4", nombre: "AVE a Sevilla", numero: "7781", formato: .qr)
+    tren.tipo = .tren; tren.fecha = "2026-11-16"   // ayer: todavía sirve hoy
+    var partido = TarjetaClub(id: "b5", nombre: "Partido Municipal", numero: "X1", formato: .qr)
+    partido.tipo = .evento; partido.fecha = "2026-10-02"   // ya pasó
+    let todo = [torre, price, madrid, regreso, coldplay, tren, partido]
+
+    revisa(ReglasTarjetas.buscar("vuelo a madrid", en: todo, hoy: hoy) == .una(madrid), "un boleto por su nombre")
+    revisa(ReglasTarjetas.buscar("mi boleto de avión", en: todo, hoy: hoy) == .una(madrid), "por el tipo: el vuelo más próximo")
+    revisa(ReglasTarjetas.buscar("la entrada del concierto", en: todo, hoy: hoy) == .una(coldplay), "«la entrada del concierto»")
+    revisa(ReglasTarjetas.buscar("el boleto del tren", en: todo, hoy: hoy) == .una(tren), "el de ayer todavía se ofrece hoy")
+    revisa(ReglasTarjetas.buscar("boleto del partido", en: todo, hoy: hoy) == .una(partido), "uno que ya pasó solo sale si lo nombra")
+    revisa(ReglasTarjetas.buscar("el boleto del evento", en: todo, hoy: hoy) == .ninguna, "por el tipo no se ofrece uno que ya pasó")
+    revisa(ReglasTarjetas.buscar("la torre", en: todo, hoy: hoy) == .una(torre), "las tarjetas de club siguen igual")
+    revisa(ReglasTarjetas.paso(partido, hoy: hoy) && !ReglasTarjetas.paso(tren, hoy: hoy) && !ReglasTarjetas.paso(torre, hoy: hoy), "cuándo pasa un boleto")
+    revisa(ReglasTarjetas.tipoPedido("mi pase de abordar") == .avion && ReglasTarjetas.tipoPedido("la de La Torre") == nil, "el tipo que pidió")
+    revisa(ReglasTarjetas.fechaCorta("2026-11-20", hoy: hoy) == "20 nov" && ReglasTarjetas.fechaCorta("2027-01-03", hoy: hoy) == "3 ene 2027", "la fecha corta")
+    let r = ReglasTarjetas.respuesta(pedido: "mi boleto de avión", tarjetas: todo, pantalla: true, hoy: hoy)
+    revisa(r.mostrar == madrid && r.texto.contains("el boleto de Vuelo a Madrid") && !r.texto.contains(madrid.numero), "Alma dice «el boleto de…» y nunca el número")
+    let n = ReglasTarjetas.respuesta(pedido: "walmart", tarjetas: todo, pantalla: true, hoy: hoy)
+    revisa(!n.texto.contains("Partido Municipal"), "lo que ya pasó no se ofrece en la lista")
+    // las guardadas antes de los boletos (sin tipo, fecha ni detalle) se leen igual, como tarjeta de club
+    let vieja = #"[{"id":"1","nombre":"La Torre","numero":"4006381333931","formato":"ean13","titular":""}]"#
+    let l = try? JSONDecoder().decode([TarjetaClub].self, from: Data(vieja.utf8))
+    revisa(l?.first == torre && l?.first?.tipo == .club, "las tarjetas guardadas antes se leen igual")
+    let d = try! JSONEncoder().encode(todo)
+    revisa((try? JSONDecoder().decode([TarjetaClub].self, from: d)) == todo, "los boletos se guardan y se leen igual")
+}
+
 print(fallos == 0 ? "\nTodo bien." : "\n\(fallos) fallaron.")
 exit(fallos == 0 ? 0 : 1)

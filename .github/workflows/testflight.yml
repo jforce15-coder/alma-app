@@ -155,6 +155,12 @@ jobs:
         run: |
           xcrun swiftc Alma/RespaldoReglas.swift Pruebas/Respaldo/main.swift -o /tmp/respaldo
           /tmp/respaldo
+      # Apple Pay por voz (Hub #662): qué atajo permitido abre la vista de pago y, si no hay, Wallet directo. Lógica pura.
+      - name: Probar Apple Pay por voz
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/ApplePayReglas.swift Pruebas/ApplePay/main.swift -o /tmp/apple-pay
+          /tmp/apple-pay
       # Maricarmen, el alter ego de Alma (Hub #666): cuándo entra y sale, qué se manda al Hub y su voz. Lógica pura.
       - name: Probar Maricarmen
         if: env.SUBIR != 'true'
