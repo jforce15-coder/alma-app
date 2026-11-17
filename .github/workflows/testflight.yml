@@ -119,6 +119,14 @@ jobs:
           xcrun swiftc Alma/ColaVivo.swift Pruebas/Companero/main.swift -o /tmp/companero
           /tmp/companero
 
+      # El audio de la llamada (Juan, 17-nov-2026): con el Modo compañero, el micrófono del teléfono de fábrica; lo que elige
+      # Juan manda y, si no está conectado, vale lo automático. Lógica pura.
+      - name: Probar el audio de la llamada
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/AudioLlamadaReglas.swift Pruebas/AudioLlamada/main.swift -o /tmp/audio-llamada
+          /tmp/audio-llamada
+
       # El encendido del Modo calle (Juan, 6-nov-2026): arranca como lo dejó Juan, apagar apaga de verdad, un aviso con la app
       # abierta no se ve como Modo calle y la voz del aviso es la de Alma. Lógica pura, se prueba sola en segundos.
       - name: Probar el encendido del Modo calle

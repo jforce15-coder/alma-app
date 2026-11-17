@@ -6,6 +6,8 @@ struct LlamadaVista: View {
     @ObservedObject var voz: VozNativa
     let ocultar: () -> Void
     @Environment(\.accessibilityReduceMotion) private var sinMovimiento
+    @ObservedObject private var audio = AudioLlamada.shared
+    @State private var verAudio = false
     /// Tarjeta de la llamada abierta (#446 T2): la roca se achica a 96 px y la tarjeta sube desde abajo.
     private var conTarjeta: Bool { voz.tarjeta != nil && (voz.tarjetaVista == .abierta || voz.tarjetaVista == .detalle) }
     private var conPestana: Bool { voz.tarjeta != nil && voz.tarjetaVista == .pestana }
@@ -35,7 +37,12 @@ struct LlamadaVista: View {
                     Spacer()
                     Text(voz.agente == .claudio ? "CLAUDIO" : "ALMA").tracking(3.5).font(.custom("Montserrat", size: 11).weight(.medium))
                     Spacer()
-                    Color.clear.frame(width: 40, height: 40)
+                    // Audio de la llamada (Juan, 17-nov-2026): el micrófono y la salida (AudioLlamada.swift).
+                    Button { verAudio = true } label: {
+                        Image(systemName: audio.iconoAhora).font(.system(size: 15, weight: .semibold))
+                            .frame(width: 40, height: 40).background(Circle().fill(.white.opacity(0.16)))
+                    }
+                    .accessibilityLabel("Audio de la llamada: micrófono y salida")
                 }
                 .foregroundStyle(.white)
                 if conPestana, let t = voz.tarjeta { pestana(t).padding(.top, 10).transition(.opacity) }
@@ -86,6 +93,7 @@ struct LlamadaVista: View {
             .padding(.horizontal, conTarjeta ? 12 : 24).padding(.vertical, 18)
             .animation(sinMovimiento ? .easeInOut(duration: 0.2) : .spring(response: 0.5, dampingFraction: 0.86), value: voz.tarjetaVista)
         }
+        .sheet(isPresented: $verAudio) { AudioLlamadaVista().presentationDetents([.large]).presentationDragIndicator(.visible).presentationCornerRadius(28) }
     }
 
     /// La pestañita de la tarjeta: arriba, bajo «ALMA». Tocarla la abre otra vez.
