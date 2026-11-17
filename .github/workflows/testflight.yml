@@ -126,6 +126,13 @@ jobs:
         run: |
           xcrun swiftc Alma/AgenteVoz.swift Pruebas/AgenteVoz/main.swift -o /tmp/agente-voz
           /tmp/agente-voz
+      # Claudio local (Hub #629): cuándo terminó de hablar Juan, qué se manda al Hub, qué se dice y qué voz del iPhone imita a
+      # Claudio. Lógica pura.
+      - name: Probar Claudio local
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/AgenteVoz.swift Alma/ClaudioLocalReglas.swift Pruebas/ClaudioLocal/main.swift -o /tmp/claudio-local
+          /tmp/claudio-local
       # Notificaciones por tipo (Hub #551): cómo se arma cada una con los ajustes de su tipo (dónde se ve, sonido, urgente,
       # agrupar, vista previa) y Siri solo con la app cerrada o en segundo plano, fuera de conferencia y Modo calle. Lógica pura.
       - name: Probar las notificaciones por tipo
