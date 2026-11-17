@@ -156,5 +156,17 @@ var lista: [String] = []
 for i in 0..<70 { lista = C.guardar(lista, "10:00:\(i) paso \(i)") }
 revisa(lista.count == C.pasosGuardados && lista.last == "10:00:69 paso 69" && lista.first == "10:00:10 paso 10", "se guardan los últimos 60 pasos, también los de la llamada anterior")
 
+// MARK: - Sin «¿sigues ahí?» en calle ni conferencia (Juan, 17-nov-2026)
+
+for f in ["¿Sigues ahí?", "¿Juan, sigues ahí?", "¿Estás ahí?", "¿Me escuchas?", "¿Hola?", "¿Juan?", "¿Sigues conmigo, Juan?",
+          "¿Todavía estás ahí?", "Hola, ¿sigues ahí? Aquí estoy cuando quieras.", "¿Se cortó?", "¿SIGUES AHI?"] {
+    revisa(C.esPreguntaDeSilencio(f), "se calla: «\(f)»")
+}
+for f in ["Listo, ya agendé la limpieza del 1104 para mañana a las nueve.", "Hola, cuéntame.", "Entendido, te aviso.",
+          "La reserva del 301 entra el viernes; el huésped dijo que sigue ahí hasta el domingo y pidió toallas extra para la noche.",
+          "Juan, el pago ya entró.", ""] {
+    revisa(!C.esPreguntaDeSilencio(f), "no se calla una respuesta de verdad: «\(f)»")
+}
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")

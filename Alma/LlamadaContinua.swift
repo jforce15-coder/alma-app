@@ -173,4 +173,28 @@ enum LlamadaContinua {
     /// siguiente empezaba antes de la vuelta de avisos (45 s), los pasos de la que se cortó se perdían.
     static let pasosGuardados = 60
     static func guardar(_ lista: [String], _ paso: String) -> [String] { Array((lista + [paso]).suffix(pasosGuardados)) }
+
+    // MARK: - Sin «¿sigues ahí?» (Juan, 17-nov-2026)
+
+    /// «En modo conferencia y modo calle, eliminar completamente la pregunta de si Juan sigue ahí. Si hay silencio o ruido,
+    /// quedarse en silencio esperando el llamado sin insistir.» La ficha ya se lo prohíbe, pero ElevenLabs le da un turno a
+    /// Alma tras unos segundos de silencio y a veces lo usa para preguntarlo. La app lo calla: si lo que Alma va a decir es
+    /// solo esa pregunta (una frase corta), su voz no suena y la llamada sigue escuchando hasta que Juan hable.
+    /// Si la pregunta va pegada a una respuesta de verdad (más de `palabrasMaximas` palabras), se deja: no se pierde lo que respondió.
+    static let palabrasMaximas = 12
+    static let preguntasDeSilencio = ["sigues ahi", "siguen ahi", "sigue ahi", "seguis ahi", "sigues ahi juan", "estas ahi", "estan ahi",
+                                      "esta ahi", "sigues conmigo", "siguen conmigo", "sigues en linea", "todavia estas", "aun estas",
+                                      "me escuchas", "me oyes", "me escuchan", "me oyen", "hay alguien", "se corto", "se cayo",
+                                      "sigues por ahi", "estas por ahi", "estas ocupado", "puedes hablar"]
+    static func esPreguntaDeSilencio(_ texto: String) -> Bool {
+        let n = texto.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "es"))
+            .map { $0.isLetter || $0.isNumber ? String($0) : " " }.joined()
+        let palabras = n.split(separator: " ").map(String.init)
+        guard !palabras.isEmpty, palabras.count <= palabrasMaximas else { return false }
+        let junto = " " + palabras.joined(separator: " ") + " "
+        if preguntasDeSilencio.contains(where: { junto.contains(" " + $0 + " ") }) { return true }
+        // Solo «¿Hola?» o «¿Juan?» (con o sin «Alma aquí»): también es preguntar si sigue ahí.
+        let resto = palabras.filter { !["hola", "juan", "oye", "alma", "aqui", "estoy", "eh", "mm", "este"].contains($0) }
+        return resto.isEmpty && (palabras.contains("hola") || palabras.contains("juan")) && texto.contains("?")
+    }
 }

@@ -89,6 +89,16 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var ultimaVoz = Date.distantPast
     private var vigia: Timer?   // si la cancelación de eco falló una vez, ya no se intenta
     private var sono = false
+    /// Calle y conferencia (Juan, 17-nov-2026): Alma iba a preguntar «¿sigues ahí?» (LlamadaContinua.esPreguntaDeSilencio).
+    /// Su voz no suena hasta que Juan hable o Alma diga otra cosa; la llamada sigue escuchando en silencio.
+    private var sinVozPregunta = false
+    private var sinSiguesAhi: Bool { desdeCalle || conferencia != nil }
+    private func callarPregunta() {
+        sinVozPregunta = true
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        paso("Alma iba a preguntar si sigues ahí: no suena (calle o conferencia)")
+        mandar(["type": "contextual_update", "text": "No preguntes si Juan sigue ahí ni insistas: en este modo el silencio y el ruido son normales. Quédate en silencio con skip_turn hasta que te llamen."])
+    }
     // ficha pedida de antemano (la URL firmada de ElevenLabs dura ~15 min; se usa si tiene menos de 9)
     private var fichaLista: (j: [String: Any], t: Date)?
     private var pidiendoFicha = false
@@ -1079,6 +1089,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if agente == .claudio, let id = ev["conversation_id"] as? String { idClaudio = id; pedirPanelClaudio(intento: 0) }   // Panel de Claudio: la lista al entrar
         case "audio":
             let ev = j["audio_event"] as? [String: Any] ?? [:]
+            if sinVozPregunta { break }   // la pregunta de «¿sigues ahí?» no suena
             ultimaActividad = Date()
             if let b = ev["audio_base_64"] as? String, let d = Data(base64Encoded: b) {
                 let primera = !sono
@@ -1094,6 +1105,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             ultimaActividad = Date()
             herramientaCliente(j["client_tool_call"] as? [String: Any] ?? [:])
         case "agent_tool_response":
+            sinVozPregunta = false
             herramienta = false; ultimaActividad = Date()
             relojEspera?.invalidate(); relojEspera = nil
             let rt = j["agent_tool_response"] as? [String: Any] ?? [:]
@@ -1110,10 +1122,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             mandar(["type": "pong", "event_id": ev["event_id"] ?? 0])
         case "agent_response":
             let ev = j["agent_response_event"] as? [String: Any] ?? [:]
+            if let t = ev["agent_response"] as? String, sinSiguesAhi, LlamadaContinua.esPreguntaDeSilencio(t) { callarPregunta(); break }
+            sinVozPregunta = false
             if let t = ev["agent_response"] as? String { emitir(["tipo": "alma", "texto": t]); linea(true, t); Companero.shared.sub(alma: true, t) }   // modo compañero (Hub #607)
         case "user_transcript":
             let ev = j["user_transcription_event"] as? [String: Any] ?? [:]
             if let t = ev["user_transcript"] as? String {
+                if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { sinVozPregunta = false }
                 ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t); Companero.shared.sub(alma: false, t)
                 if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { juanDijo = Date() }
                 // Maricarmen (Hub #666): «pásame con Maricarmen» con la voz de ElevenLabs. La app lo oye y cambia ya, sin esperar a Alma.
@@ -1453,7 +1468,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // El porqué queda en el registro (antes decía solo «Pausa» y no se sabía quién había colgado).
         if habia { paso("Llamada terminada" + (motivoFin.map { " · " + $0 } ?? "")) }
         motivoFin = nil
-        UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false
+        UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false; sinVozPregunta = false
         // Cierre normal de verdad: se deja salir el aviso de cierre antes de soltar la sesión (invalidateAndCancel lo
         // cortaba a veces y ElevenLabs lo anotaba como corte anormal, 1006, aunque hubiera colgado la app).
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
@@ -1532,7 +1547,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         viejo?.cancel(with: .normalClosure, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil   // Claudio local se va: vuelve Alma
         player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
-        inicioEnviado = false; antesDeFicha = []; colaVoz = []; sono = false
+        inicioEnviado = false; antesDeFicha = []; colaVoz = []; sono = false; sinVozPregunta = false
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()   // vuelve Alma: el Panel de Claudio se quita
         volviendo = nuevo == .alma
         agente = nuevo
