@@ -20,6 +20,7 @@ import WebKit
 ///   { accion: "anilloBle" }                  → abre el Diagnóstico del anillo (Bluetooth) (DiagnosticoAnillo.swift)
 ///   { accion: "dispositivos" }               → abre Dispositivos: el anillo y los lentes (Dispositivos.swift)
 ///   { accion: "tarjetas" }                   → abre Tarjetas de clubes (TarjetasClub.swift)
+///   { accion: "companero", on, par }        → Modo compañero con sonido: toca aquí la voz de la llamada del otro dispositivo (Retransmision.swift)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
     static let nombre = "alma"
@@ -51,6 +52,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             NotificationCenter.default.post(name: .abrirTarjetasClub, object: nil)
         case "anilloBle":   // Ajustes → Alma con el anillo → «Diagnóstico del anillo (Bluetooth)» (DiagnosticoAnillo.swift): pantalla nativa
             NotificationCenter.default.post(name: .abrirDiagnosticoAnillo, object: nil)
+        case "companero":   // Modo compañero con sonido (alma/inicio.html): { on, par } → este dispositivo toca la voz de la llamada del otro (Retransmision.swift)
+            Retransmision.shared.receptor(on: (d["on"] as? Bool) ?? false, par: d["par"] as? String ?? "")
         case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" } · { que: "mudo", on }
             let c = Conferencia.shared
             c.alEvento = { [weak self] e in self?.responder("AlmaConf.evento", [e]) }

@@ -119,6 +119,14 @@ jobs:
           xcrun swiftc Alma/ColaVivo.swift Pruebas/Companero/main.swift -o /tmp/companero
           /tmp/companero
 
+      # Modo compañero con sonido (Hub #727): solo el iPad del mismo administrador puede oír la llamada, y el sonido va y
+      # vuelve igual por la red local. Lógica pura.
+      - name: Probar la retransmisión del sonido
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/RetransmisionReglas.swift Pruebas/Retransmision/main.swift -o /tmp/retransmision
+          /tmp/retransmision
+
       # El encendido del Modo calle (Juan, 6-nov-2026): arranca como lo dejó Juan, apagar apaga de verdad, un aviso con la app
       # abierta no se ve como Modo calle y la voz del aviso es la de Alma. Lógica pura, se prueba sola en segundos.
       - name: Probar el encendido del Modo calle

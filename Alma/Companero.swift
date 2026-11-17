@@ -1,7 +1,7 @@
 import UIKit
 
 /// Modo compañero (Hub #607 T-C1): manda al Hub (acción vivoPublicar) el estado y los subtítulos de la llamada que está en
-/// este dispositivo, para que el otro los muestre sin audio. Las reglas de cuándo mandar: ColaVivo.swift.
+/// este dispositivo, para que el otro los muestre. El sonido va aparte, directo por la red local (Retransmision.swift). Las reglas de cuándo mandar: ColaVivo.swift.
 final class Companero {
     static let shared = Companero()
     private var cola = ColaVivo()
@@ -9,8 +9,8 @@ final class Companero {
     private var enviando = false
     private let dispositivo = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
 
-    func empezo(_ conv: String) { DispatchQueue.main.async { self.cola.empezo(conv); self.revisar() } }
-    func estado(_ e: String) { DispatchQueue.main.async { self.cola.cambiar(e); self.revisar() } }
+    func empezo(_ conv: String) { DispatchQueue.main.async { self.cola.empezo(conv); self.revisar() }; Retransmision.shared.empezo() }
+    func estado(_ e: String) { DispatchQueue.main.async { self.cola.cambiar(e); self.revisar() }; if e == "fin" { Retransmision.shared.fin() } }
     func sub(alma: Bool, _ t: String) { DispatchQueue.main.async { self.cola.sub(alma: alma, t); self.revisar() } }
 
     private func revisar() {
@@ -31,6 +31,7 @@ final class Companero {
                 guard let self else { return }
                 self.enviando = false
                 if let m = j?["mirando"] as? Bool { self.cola.mirando = m }
+                if let p = j?["par"] as? String { Retransmision.shared.ponerPar(p) }   // el sonido va directo al iPad (Retransmision.swift)
             }
         }.resume()
     }

@@ -95,7 +95,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var sinSiguesAhi: Bool { desdeCalle || conferencia != nil }
     private func callarPregunta() {
         sinVozPregunta = true
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
         paso("Alma iba a preguntar si sigues ahí: no suena (calle o conferencia)")
         mandar(["type": "contextual_update", "text": "No preguntes si Juan sigue ahí ni insistas: en este modo el silencio y el ruido son normales. Quédate en silencio con skip_turn hasta que te llamen."])
     }
@@ -1117,6 +1117,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let tirada = max(0, finVozAlma.timeIntervalSinceNow); cortesVoz += 1
             if tirada > 0.3 { paso(String(format: "ElevenLabs cortó a Alma (oyó voz): %.1f s de su voz no sonaron (corte %d)", tirada, cortesVoz)) }
             player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+            Retransmision.shared.corte()   // el iPad del Modo compañero también se calla (Hub #727)
         case "ping":
             let ev = j["ping_event"] as? [String: Any] ?? [:]
             mandar(["type": "pong", "event_id": ev["event_id"] ?? 0])
@@ -1304,6 +1305,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         player.scheduleBuffer(buf, completionHandler: nil)
         if !player.isPlaying { player.play() }
+        Retransmision.shared.audio(pcm16, hz: formatoSalida.sampleRate)   // y en el iPad del Modo compañero (Hub #727)
     }
 
     /// La voz de Alma tiene que oírse (Juan, 16-nov-2026: «todo el audio previo estaba en mute y el saludo no se escuchó»).
@@ -1557,7 +1559,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .normalClosure, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil   // Claudio local se va: vuelve Alma
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
         inicioEnviado = false; antesDeFicha = []; colaVoz = []; sono = false; sinVozPregunta = false
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()   // vuelve Alma: el Panel de Claudio se quita
         volviendo = nuevo == .alma
@@ -1932,7 +1934,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
         inicioEnviado = false; antesDeFicha = []; colaVoz = []
         cambiando = true   // mientras llega la conversación nueva no se cambia de agente
         estado = .conectando
@@ -1991,7 +1993,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
         intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
         if !arrancarRespaldo(frase: conectada ? RespaldoReglas.fraseSeFue : RespaldoReglas.fraseAlEmpezar) { fallo(m) }
     }
@@ -2014,7 +2016,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
         intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
         local = l
         l.paso = { [weak self] t in self?.paso(t) }
