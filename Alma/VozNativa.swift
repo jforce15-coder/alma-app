@@ -1012,7 +1012,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let v = vistaPendiente { vistaPendiente = nil; mandar(["type": "contextual_update", "text": v]) }   // la captura llegó mientras conectaba
             infoBloqueo("Te escucho · dos toques para pausar")
             emitirPersonalidad()   // los chips de la llamada (si es el principal)
-            if agente == .alma, !enRespaldo, let id = ev["conversation_id"] as? String { vincular(id) }   // la voz de respaldo ya va por el Chat con Alma   // Claudio: el Hub lo reconoce por su firma (claudio.js)
+            if agente == .alma, !enRespaldo, let id = ev["conversation_id"] as? String { vincular(id) }   // Claudio: el Hub lo reconoce por su firma; la voz de respaldo ya va por el Chat con Alma
             if agente == .claudio, let id = ev["conversation_id"] as? String { idClaudio = id; pedirPanelClaudio(intento: 0) }   // Panel de Claudio: la lista al entrar
         case "audio":
             let ev = j["audio_event"] as? [String: Any] ?? [:]
