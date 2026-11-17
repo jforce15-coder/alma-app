@@ -61,6 +61,13 @@ jobs:
           xcrun swiftc Alma/OidoCalle.swift Pruebas/OidoCalle/main.swift -o /tmp/oido-calle
           /tmp/oido-calle
 
+      # La Guía de camino (Hub #661): cada paso justo a tiempo, «llegaste» una vez y recalcular fuera del camino. Lógica pura.
+      - name: Probar la Guía de camino
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/GuiaCaminoReglas.swift Pruebas/GuiaCamino/main.swift -o /tmp/guia-camino
+          /tmp/guia-camino
+
       # La tarjeta de la llamada (#446 T2) y el tablero bento por estado (Hub #508): una a la vez, se queda hasta que llega
       # otra o se cuelga, también en conferencia con la pantalla encendida, y nada con el teléfono bloqueado. Lógica pura.
       - name: Probar la tarjeta de la llamada

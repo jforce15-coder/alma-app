@@ -115,13 +115,16 @@ targets:
           - bluetooth-central
           - audio
           - remote-notification
+          # Guía de camino (GuiaCamino.swift): el GPS sigue con el teléfono bloqueado mientras Alma te guía.
+          - location
         # El número del ícono es de Alma (temas por retomar): OneSignal no lo borra al abrir la app (Ticket #28).
         OneSignal_disable_badge_clearing: true
         NSCameraUsageDescription: Para escanear el código de tus tarjetas de clubes y, en algunas páginas (Epi, Hola), tomar fotos de los reportes y documentos.
         NSPhotoLibraryUsageDescription: Para subir fotos o documentos a las páginas que lo piden.
         # La foto del contacto en la bandeja del Hub (#567 T4, FotosContactosIOS.swift): solo los números sin foto que pide el Hub.
         NSContactsUsageDescription: Alma busca en tus contactos solo los números de las conversaciones de tu bandeja que no tienen foto, para mostrar su foto ahí. No sube tu agenda ni los nombres.
-        NSLocationWhenInUseUsageDescription: Algunas páginas usan tu ubicación, por ejemplo para las rutas del equipo.
+        NSLocationWhenInUseUsageDescription: Alma usa tu ubicación para guiarte paso a paso cuando le pides cómo llegar a un lugar, y algunas páginas la usan, por ejemplo para las rutas del equipo.
+        NSLocationAlwaysAndWhenInUseUsageDescription: Con «Siempre», Alma puede empezar a guiarte aunque tengas el teléfono bloqueado (en el Modo calle). Solo mide tu ubicación mientras te guía.
   # Extensión de notificaciones (Ticket #28): cada push del Hub pasa por aquí antes de verse (con la app cerrada o dormida)
   # y se arma con los ajustes de su tipo; si el tipo tiene Siri, como mensaje de Alma con su foto. Comparte con la app la
   # lógica pura (AjustesNotif, NotifPush) y el mensaje de Alma (NotifComunicacion). No lleva el SDK de OneSignal ni App Group.
