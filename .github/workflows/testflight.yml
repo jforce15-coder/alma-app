@@ -140,6 +140,12 @@ jobs:
         run: |
           xcrun swiftc Alma/RespaldoReglas.swift Pruebas/Respaldo/main.swift -o /tmp/respaldo
           /tmp/respaldo
+      # Apple Pay por voz (Hub #662): qué atajo permitido abre la vista de pago y, si no hay, Wallet directo. Lógica pura.
+      - name: Probar Apple Pay por voz
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/ApplePayReglas.swift Pruebas/ApplePay/main.swift -o /tmp/apple-pay
+          /tmp/apple-pay
       # Notificaciones por tipo (Hub #551): cómo se arma cada una con los ajustes de su tipo (dónde se ve, sonido, urgente,
       # agrupar, vista previa) y Siri solo con la app cerrada o en segundo plano, fuera de conferencia y Modo calle. Lógica pura.
       - name: Probar las notificaciones por tipo
