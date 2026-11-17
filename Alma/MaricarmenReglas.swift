@@ -19,18 +19,21 @@ enum MaricarmenReglas {
     /// «Pásame con Maricarmen», «¿me pasas con Maricarmen?», «quiero hablar con Maricarmen», «Maricarmen, ven». El verbo va pegado
     /// a su nombre: «pásale el recado a Maricarmen» o «llama a Maricarmen» (una persona de verdad) no la llaman. «No me pases…» no.
     /// Hub #679: también «¿me puedes pasar con Maricarmen?», «quiero comunicarme con Maricarmen», «comunícate con Maricarmen»,
-    /// «Marycarmen» y «Hola, Maricarmen» al empezar la frase. Con un infinitivo («pasar», «comunicarme») va solo con «con».
-    static let patronIr = #"(?:^|\s)(?:(?:pasame|pasas|pases|pasarme|pasarias|ponme|pones|ponerme|comunicame|comunicas|comuniques|comunicarme|conectame|conectas|conectarme|cambiame|cambiarme)\s+(?:con|a)\s+maricarmen|(?:pasar|comunicar|comunicate|comunicarte|comunicarnos|conectar|conectate|conectarte|hablar|habla|hablo|hablemos|platicar|platica|conversar)\s+con\s+maricarmen|(?:ven|aparece)\s+maricarmen|maricarmen\s+(?:ven|aparece))(?:\s|$)|^(?:alma\s+)?(?:hola|oye|hey)\s+maricarmen(?:\s|$)"#
+    /// «Marycarmen» y «Hola, Maricarmen» al empezar la frase. Hub #680: «pásame ya con la Maricarmen» (relleno corto y «la»). Con un infinitivo («pasar», «comunicarme») va solo con «con».
+    static let patronIr = #"(?:^|\s)(?:(?:pasame|pasas|pases|pasarme|pasarias|ponme|pones|ponerme|comunicame|comunicas|comuniques|comunicarme|conectame|conectas|conectarme|cambiame|cambiarme)(?:\s+(?:me|ya|ahora|otra|vez|por|favor|porfa|un|rato|directo|directamente)){0,3}\s+(?:con|a)\s+(?:la\s+)?maricarmen|(?:pasar|comunicar|comunicate|comunicarte|comunicarnos|conectar|conectate|conectarte|hablar|habla|hablo|hablemos|platicar|platica|conversar)(?:\s+(?:me|ya|ahora|otra|vez|por|favor|porfa|un|rato|directo|directamente)){0,3}\s+con\s+(?:la\s+)?maricarmen|(?:ven|aparece)\s+maricarmen|maricarmen\s+(?:ven|aparece))(?:\s|$)|^(?:alma\s+)?(?:hola|oye|hey)\s+maricarmen(?:\s|$)"#
     /// Volver con Alma: «pásame con Alma», «vuelve Alma», «regresa con Alma», «quiero hablar con Alma».
     static let patronVolver = #"(?:^|\s)(?:(?:pasame|pasas|pases|pasarme|ponme|pones|ponerme|comunicame|comunicarme|conectame|conectarme|cambiame|cambiarme|regresame|devuelveme|vuelveme)\s+(?:con|a)\s+alma|(?:hablar|habla|hablo|volver|vuelvo|regresar|regreso)\s+con\s+alma|(?:vuelve|regresa|ven)\s+alma)(?:\s|$)"#
     static let patronNo = #"(?:^|\s)no\s+(?:quiero\s+|necesito\s+|me\s+)?(?:hablar|habla|pases|pasar|pasame|comuniques|comunicar|comunicarme|conectes|cambies|volver|regresar|vuelvas|regreses)(?:\s|$)"#
 
+    /// Cómo puede escribir su nombre el dictado (ElevenLabs o el del iPhone). Hub #680: «María Carmen» o «Mari Karmen» no la llamaban.
+    static let variantes = ["mari carmen", "mary carmen", "marycarmen", "maria carmen", "mari karmen", "marikarmen", "mary karmen"]
     /// Minúsculas, sin acentos y sin signos: «¿Me pasas con Maricarmen?» → «me pasas con maricarmen». «Mari Carmen» cuenta igual.
     static func normal(_ t: String) -> String {
         let s = t.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "es")).lowercased()
         let solo = String(s.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : " " })
-        return solo.split(separator: " ").joined(separator: " ").replacingOccurrences(of: "mari carmen", with: "maricarmen")
-            .replacingOccurrences(of: "mary carmen", with: "maricarmen").replacingOccurrences(of: "marycarmen", with: "maricarmen")
+        var r = " " + solo.split(separator: " ").joined(separator: " ") + " "
+        for v in variantes { r = r.replacingOccurrences(of: " " + v + " ", with: " maricarmen ") }   // como lo escribe el dictado
+        return r.trimmingCharacters(in: .whitespaces)
     }
     private static func hay(_ patron: String, _ t: String) -> Bool {
         guard let re = try? NSRegularExpression(pattern: patron) else { return false }
