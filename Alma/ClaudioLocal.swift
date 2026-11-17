@@ -6,7 +6,8 @@ import Speech
 /// La conversación con Claudio sin ElevenLabs:
 ///   · oído: el dictado del iPhone, en el teléfono cuando se puede (lo mismo que el modo conferencia);
 ///   · cabeza: el Hub (acción claudioLocal), con el mismo prompt, la misma ficha y las mismas herramientas de Claudio;
-///   · voz: una voz de hombre del iPhone, la mejor que tenga en español, afinada como la de Claudio (voz_local del Hub).
+///   · voz: la misma de Claudio en ElevenLabs (Hub #636): el Hub manda cada frase ya dicha con su voz y aquí solo suena.
+///     Si no llega (ElevenLabs falló), una voz de hombre del iPhone afinada como la de Claudio (voz_local del Hub).
 /// VozNativa no cambia su manera de llevar la llamada: esta clase habla el mismo idioma que el socket de ElevenLabs
 /// (recibe user_audio_chunk y devuelve conversation_initiation_metadata, audio, user_transcript, agent_response,
 /// agent_tool_request/response y client_tool_call de volver_con_alma). Así el halo naranja, el Panel de Claudio, la vuelta
@@ -20,6 +21,7 @@ final class ClaudioLocal: NSObject {
     var paso: ((String) -> Void)?
 
     private let conv: String, saludo: String
+    private let saludoAudio: Data?
     private let ajustes: ClaudioLocalReglas.Ajustes
     private let reconocedor: SFSpeechRecognizer
     private let voz: AVSpeechSynthesisVoice?
@@ -47,6 +49,7 @@ final class ClaudioLocal: NSObject {
         conv = c; reconocedor = r
         saludo = ficha["first_message"] as? String ?? AgenteVoz.saludoClaudio
         ajustes = ClaudioLocalReglas.Ajustes(ficha["voz_local"] as? [String: Any])
+        saludoAudio = ClaudioLocalReglas.audio(ficha["voz_local"] as? [String: Any])
         voz = ClaudioLocal.elegirVoz(ajustes)
         super.init()
     }
@@ -58,7 +61,7 @@ final class ClaudioLocal: NSObject {
             switch v.quality { case .premium: calidad = "premium"; case .enhanced: calidad = "mejorada"; default: calidad = "normal" }
             return v.name + " · " + v.language + " · " + (v.gender == .male ? "hombre" : v.gender == .female ? "mujer" : "sin género") + " · " + calidad
         } ?? "la de por defecto"
-        return v + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple")
+        return (saludoAudio != nil ? "voz de ElevenLabs (respaldo: " + v + ")" : v) + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple")
     }
 
     private static func elegirVoz(_ a: ClaudioLocalReglas.Ajustes) -> AVSpeechSynthesisVoice? {
@@ -81,7 +84,7 @@ final class ClaudioLocal: NSObject {
                 "conversation_initiation_metadata_event": ["conversation_id": conv, "agent_output_audio_format": "pcm_16000"]])
         paso?("Claudio local · " + descripcion)
         historial = ClaudioLocalReglas.sumar(historial, .init(deClaudio: true, texto: saludo))
-        decir(saludo)
+        decir(saludo, audio: saludoAudio)
         reloj = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.revisar() }
     }
 
@@ -198,21 +201,33 @@ final class ClaudioLocal: NSObject {
         emitir(["type": "agent_tool_response", "agent_tool_response": ["tool_name": "claudio_local"]])
         historial = ClaudioLocalReglas.sumar(historial, .init(deClaudio: true, texto: r.hablar))
         pensando = false
-        decir(r.hablar) { [weak self] in
+        decir(r.hablar, audio: r.audio) { [weak self] in
             guard let self, r.volver else { return }
             // Ya dijo «Listo, te paso con Alma.»: la app vuelve con Alma, como con la herramienta de ElevenLabs.
             self.emitir(["type": "client_tool_call", "client_tool_call": ["tool_call_id": "local_volver", "tool_name": "volver_con_alma", "parameters": [String: Any]()]])
         }
     }
 
-    // MARK: - Hablar (la voz del iPhone)
+    // MARK: - Hablar (su voz de ElevenLabs; si no llegó, la del iPhone)
 
-    /// Dice la frase con la voz elegida. El audio sale en trozos de 16 kHz, igual que el de ElevenLabs, y VozNativa lo suena
-    /// en su reproductor (el halo late con la voz). Al terminar de sonar, vuelve a escuchar.
-    private func decir(_ t: String, luego: (() -> Void)? = nil) {
+    /// Dice la frase. Con el audio del Hub (su voz de ElevenLabs, PCM 16 kHz) lo suena tal cual; si no, con la voz del iPhone.
+    /// El audio sale en trozos de 16 kHz, igual que el del socket de ElevenLabs, y VozNativa lo suena en su reproductor (el
+    /// halo late con la voz). Al terminar de sonar, vuelve a escuchar.
+    private func decir(_ t: String, audio: Data? = nil, luego: (() -> Void)? = nil) {
         ocupadoHasta = .distantFuture
         texto = ""; soltarPedido()
         emitir(["type": "agent_response", "agent_response_event": ["agent_response": t]])
+        if let a = audio {
+            for d in ClaudioLocalReglas.trozos(a) { emitir(["type": "audio", "audio_event": ["audio_base_64": d.base64EncodedString()]]) }
+            let fin = Date().addingTimeInterval(ClaudioLocalReglas.duracion(a) + 0.45)
+            ocupadoHasta = fin
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, fin.timeIntervalSinceNow)) { [weak self] in
+                guard let self, self.vivo else { return }
+                luego?()
+                if !self.pensando, self.pedido == nil { self.nuevoPedido() }
+            }
+            return
+        }
         let u = AVSpeechUtterance(string: ClaudioLocalReglas.paraDecir(t))
         u.voice = voz; u.rate = ajustes.velocidad; u.pitchMultiplier = ajustes.tono; u.volume = ajustes.volumen
         u.preUtteranceDelay = 0; u.postUtteranceDelay = 0
