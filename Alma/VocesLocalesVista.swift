@@ -15,7 +15,9 @@ struct VocesLocalesVista: View {
     @ObservedObject private var llamada = VozNativa.shared
     @Environment(\.dismiss) private var cerrar
     @StateObject private var prueba = PruebaVoz()
-    @State private var enlace = "", nombre = "", avisoEnlace: String?
+    @State private var enlace = ""
+    @State private var nombre = ""
+    @State private var avisoEnlace: String?
 
     var body: some View {
         NavigationStack {

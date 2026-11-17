@@ -48,10 +48,10 @@ enum VozKokoroReglas {
     static func leer(_ d: [String: Any]?, _ p: Personaje) -> Ajustes {
         var a = deFabrica(p)
         guard let d else { return a }
-        if let m = (d["motor"] as? String).flatMap(Motor.init) { a.motor = m }
+        if let m = (d["motor"] as? String).flatMap { Motor(rawValue: $0) } { a.motor = m }
         if let v = d["voz"] as? String, idValido(v) { a.voz = v }
         if let v = (d["velocidad"] as? NSNumber)?.floatValue, v.isFinite { a.velocidad = min(velocidades.upperBound, max(velocidades.lowerBound, v)) }
-        if let c = (d["acento"] as? String).flatMap(FonemasES.Acento.init) { a.acento = c }
+        if let c = (d["acento"] as? String).flatMap { FonemasES.Acento(rawValue: $0) } { a.acento = c }
         return a
     }
     static func guardar(_ a: Ajustes) -> [String: Any] {
@@ -91,7 +91,7 @@ enum VozKokoroReglas {
             let sha = (v["sha256"] as? String)?.lowercased()
             if let s = sha, s.count != 64 || !s.allSatisfy({ $0.isHexDigit }) { continue }
             let nueva = Voz(id: id, nombre: (v["nombre"] as? String).map { String($0.prefix(60)) } ?? id, url: url, sha256: sha,
-                            acento: (v["acento"] as? String).flatMap(FonemasES.Acento.init) ?? .latino, mujer: (v["genero"] as? String) == "mujer")
+                            acento: (v["acento"] as? String).flatMap { FonemasES.Acento(rawValue: $0) } ?? .latino, mujer: (v["genero"] as? String) == "mujer")
             if let i = voces.firstIndex(where: { $0.id == id }) { voces[i] = nueva } else { voces.append(nueva) }
         }
         for (k, v) in d["pronunciaciones"] as? [String: String] ?? [:] where !k.isEmpty && !v.isEmpty && v.count <= 120 {

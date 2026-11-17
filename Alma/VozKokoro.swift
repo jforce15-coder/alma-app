@@ -410,7 +410,7 @@ final class VocesLocales: ObservableObject {
         }
         observaProgreso = tarea.progress.observe(\.fractionCompleted) { [weak self] p, _ in
             let f = p.fractionCompleted
-            DispatchQueue.main.async { if case .bajando = self?.modelo { self?.modelo = .bajando(f) } }
+            DispatchQueue.main.async { if let s = self, case .bajando = s.modelo { s.modelo = .bajando(f) } }
         }
         tareaModelo = tarea
         tarea.resume()
