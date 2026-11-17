@@ -199,6 +199,13 @@ jobs:
         run: |
           xcrun swiftc Alma/MaricarmenReglas.swift Alma/RespaldoReglas.swift Pruebas/Maricarmen/main.swift -o /tmp/maricarmen
           /tmp/maricarmen
+      # La voz local con Kokoro (Juan, 17-nov-2026): los fonemas en español sin espeak (latino y España), números y siglas,
+      # el archivo de la voz (.bin / .npy), el catálogo, por frases y cuándo cae a la voz del iPhone. Lógica pura.
+      - name: Probar la voz local con Kokoro
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/FonemasES.swift Alma/VozKokoroReglas.swift Pruebas/VozKokoro/main.swift -o /tmp/voz-kokoro
+          /tmp/voz-kokoro
       # Notificaciones por tipo (Hub #551): cómo se arma cada una con los ajustes de su tipo (dónde se ve, sonido, urgente,
       # agrupar, vista previa) y Siri solo con la app cerrada o en segundo plano, fuera de conferencia y Modo calle. Lógica pura.
       - name: Probar las notificaciones por tipo

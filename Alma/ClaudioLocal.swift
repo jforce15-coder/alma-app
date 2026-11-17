@@ -18,6 +18,8 @@ import Speech
 /// La voz de respaldo de Alma (Hub #657, RespaldoReglas.swift) usa esta misma clase con el modo .respaldo: la misma oreja y
 /// la misma forma de hablar con VozNativa, pero contesta el Hub por la acción calle (el Chat con Alma) y habla la voz de
 /// mujer del iPhone (VozIphone). Sin internet, lo que Juan pide se guarda (Senal) y se manda al volver la señal.
+/// La voz local (Juan, 17-nov-2026; VozKokoro.swift): Claudio local y Maricarmen hablan con Kokoro, en el teléfono, si lo
+/// tienen elegido en Ajustes → Voz y modos → Voces locales y ya se bajó; si no, falla o tarda, con la voz del iPhone.
 final class ClaudioLocal: NSObject {
     enum Modo { case claudio, respaldo, maricarmen }   // maricarmen: el alter ego de Alma (Hub #666, MaricarmenReglas.swift)
     let modo: Modo
@@ -30,12 +32,12 @@ final class ClaudioLocal: NSObject {
     private let ajustes: ClaudioLocalReglas.Ajustes
     private let reconocedor: SFSpeechRecognizer
     private let voz: AVSpeechSynthesisVoice?
-    private let sintetizador = AVSpeechSynthesizer()
+    /// La voz que habla: Kokoro del personaje (si está listo) y, de respaldo, la del iPhone.
+    private let habla: HablaPorFrases
+    private let vozLocal: String
     private let formatoOido = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
     /// A cuántos hz sale su voz (Hub #687): 24 kHz con la voz del iPhone; 16 kHz solo con la de ElevenLabs del Hub.
     private let hz: Int
-    private let formatoVoz: AVAudioFormat
-    private var convertidor: AVAudioConverter?
 
     private var pedido: SFSpeechAudioBufferRecognitionRequest?
     private var tarea: SFSpeechRecognitionTask?
@@ -60,7 +62,8 @@ final class ClaudioLocal: NSObject {
         saludoAudio = ClaudioLocalReglas.audio(ficha["voz_local"] as? [String: Any])
         hz = ClaudioLocalReglas.hzSalida(ficha["voz_local"] as? [String: Any])
         voz = ClaudioLocal.elegirVoz(ajustes)
-        formatoVoz = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(hz), channels: 1, interleaved: true)!
+        let vl = ClaudioLocal.voces(.claudio, voz: voz, ajustes: ajustes, hz: hz)
+        habla = vl.0; vozLocal = vl.1
         super.init()
     }
 
@@ -74,7 +77,8 @@ final class ClaudioLocal: NSObject {
         var a = ClaudioLocalReglas.Ajustes(); a.hombre = false; a.tono = 1
         ajustes = a
         voz = VozIphone.elegida ?? ClaudioLocal.elegirVoz(a)
-        formatoVoz = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(hz), channels: 1, interleaved: true)!
+        let vl = ClaudioLocal.voces(nil, voz: voz, ajustes: a, hz: hz)
+        habla = vl.0; vozLocal = vl.1
         super.init()
     }
 
@@ -91,8 +95,18 @@ final class ClaudioLocal: NSObject {
         ajustes = a
         let e = ClaudioLocal.elegirVoz(a)
         voz = e?.gender == .female ? e : (VozIphone.elegida ?? e)   // nunca una voz de hombre: si no hay de mujer en español, la elegida de Alma
-        formatoVoz = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(hz), channels: 1, interleaved: true)!
+        let vl = ClaudioLocal.voces(.maricarmen, voz: voz, ajustes: a, hz: hz)
+        habla = vl.0; vozLocal = vl.1
         super.init()
+    }
+
+    /// Kokoro del personaje (si lo tiene elegido y ya está en el teléfono) con la voz del iPhone de respaldo. La voz de
+    /// respaldo de Alma (sin personaje) habla solo con la del iPhone.
+    private static func voces(_ p: VozKokoroReglas.Personaje?, voz: AVSpeechSynthesisVoice?, ajustes: ClaudioLocalReglas.Ajustes, hz: Int) -> (HablaPorFrases, String) {
+        let iphone = MotorIphone(voz: voz, ajustes: ajustes)
+        guard let p else { return (HablaPorFrases(principal: nil, respaldo: iphone, hz: hz), "") }
+        let k = VocesLocales.shared.motor(para: p)
+        return (HablaPorFrases(principal: k, respaldo: iphone, hz: hz), VozKokoroReglas.descripcion(VocesLocales.shared.ajustes(p), usa: k != nil))
     }
 
     /// Callado: ni piensa, ni habla, ni Juan está a media frase (la voz de respaldo solo cambia en un silencio así).
@@ -108,9 +122,10 @@ final class ClaudioLocal: NSObject {
             switch v.quality { case .premium: calidad = "premium"; case .enhanced: calidad = "mejorada"; default: calidad = "normal" }
             return v.name + " · " + v.language + " · " + (v.gender == .male ? "hombre" : v.gender == .female ? "mujer" : "sin género") + " · " + calidad
         } ?? "la de por defecto"
-        if modo == .maricarmen { return "Maricarmen · " + v + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple") }
+        let lv = vozLocal.isEmpty || vozLocal == "voz del iPhone" ? v : vozLocal + " (respaldo: " + v + ")"
+        if modo == .maricarmen { return "Maricarmen · " + lv + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple") }
         if modo == .respaldo { return "voz de respaldo de Alma · " + v + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple") }
-        return (saludoAudio != nil ? "voz de ElevenLabs (respaldo: " + v + ")" : v) + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple")
+        return (saludoAudio != nil ? "voz de ElevenLabs (respaldo: " + lv + ")" : lv) + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple")
     }
 
     private static func elegirVoz(_ a: ClaudioLocalReglas.Ajustes) -> AVSpeechSynthesisVoice? {
@@ -133,6 +148,7 @@ final class ClaudioLocal: NSObject {
                 "conversation_initiation_metadata_event": ["conversation_id": conv, "agent_output_audio_format": "pcm_\(hz)"]])
         paso?(modo == .respaldo ? "Alma con la voz de respaldo · " + descripcion : modo == .maricarmen ? "Con " + descripcion : "Claudio local · " + descripcion)
         historial = ClaudioLocalReglas.sumar(historial, .init(deClaudio: true, texto: saludo))
+        habla.paso = { [weak self] t in self?.paso?(t) }
         decir(saludo, audio: saludoAudio)
         reloj = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.revisar() }
     }
@@ -153,7 +169,7 @@ final class ClaudioLocal: NSObject {
         reloj?.invalidate(); reloj = nil
         pararTecleo()
         soltarPedido()
-        sintetizador.stopSpeaking(at: .immediate)
+        habla.cancelar()
     }
 
     // MARK: - Oír
@@ -329,7 +345,7 @@ final class ClaudioLocal: NSObject {
 
     private func pararTecleo() { relojTecleo?.invalidate(); relojTecleo = nil }
 
-    // MARK: - Hablar (su voz de ElevenLabs; si no llegó, la del iPhone)
+    // MARK: - Hablar (su voz de ElevenLabs del Hub; si no llegó, Kokoro o la del iPhone)
 
     /// Dice la frase. Con el audio del Hub (su voz de ElevenLabs, PCM 16 kHz) lo suena tal cual; si no, con la voz del iPhone.
     /// El audio sale en trozos de `hz` (24 kHz con la voz del iPhone), como el del socket de ElevenLabs, y VozNativa lo suena en su reproductor (el
@@ -349,48 +365,21 @@ final class ClaudioLocal: NSObject {
             }
             return
         }
-        let u = AVSpeechUtterance(string: ClaudioLocalReglas.paraDecir(t))
-        u.voice = voz; u.rate = ajustes.velocidad; u.pitchMultiplier = ajustes.tono; u.volume = ajustes.volumen
-        u.preUtteranceDelay = 0; u.postUtteranceDelay = 0
-        let e = Escritura()
-        sintetizador.write(u) { [weak self] b in
-            guard let pcm = b as? AVAudioPCMBuffer else { return }
-            let datos = pcm.frameLength > 0 ? self?.a16k(pcm) : nil
-            DispatchQueue.main.async {
-                guard let self, self.vivo, !e.listo else { return }
-                if let d = datos, !d.isEmpty {
-                    if e.inicio == nil { e.inicio = Date() }
-                    e.total += Double(d.count / 2) / Double(self.hz)
-                    self.emitir(["type": "audio", "audio_event": ["audio_base_64": d.base64EncodedString()]])
-                    return
-                }
-                guard pcm.frameLength == 0 else { return }
-                // Terminó de escribir: suena hasta inicio + total (VozNativa la pone en cola). Un respiro y vuelve a escuchar.
-                e.listo = true
-                let fin = (e.inicio ?? Date()).addingTimeInterval(e.total + 0.45)
-                self.ocupadoHasta = fin
-                DispatchQueue.main.asyncAfter(deadline: .now() + max(0, fin.timeIntervalSinceNow)) { [weak self] in
-                    guard let self, self.vivo else { return }
-                    luego?()
-                    if !self.pensando, self.pedido == nil { self.nuevoPedido() }
-                }
+        // Kokoro o la voz del iPhone, por frases (HablaPorFrases): sale en trozos de `hz` y VozNativa los pone en cola.
+        // Al terminar de entregar, suena hasta el fin de la cola; un respiro y vuelve a escuchar.
+        habla.decir(ClaudioLocalReglas.paraDecir(t), trozo: { [weak self] d in
+            guard let self, self.vivo else { return }
+            self.emitir(["type": "audio", "audio_event": ["audio_base_64": d.base64EncodedString()]])
+        }, fin: { [weak self] in
+            guard let self, self.vivo else { return }
+            let fin = max(self.habla.finCola ?? Date(), Date()).addingTimeInterval(0.45)
+            self.ocupadoHasta = fin
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, fin.timeIntervalSinceNow)) { [weak self] in
+                guard let self, self.vivo else { return }
+                luego?()
+                if !self.pensando, self.pedido == nil { self.nuevoPedido() }
             }
-        }
-    }
-
-    /// Un trozo de la voz del iPhone (22 kHz o lo que traiga) a PCM de 16 bits en `hz` (24 kHz; Hub #687).
-    private func a16k(_ b: AVAudioPCMBuffer) -> Data? {
-        if convertidor == nil || convertidor?.inputFormat != b.format { convertidor = AVAudioConverter(from: b.format, to: formatoVoz) }
-        guard let c = convertidor else { return nil }
-        let cap = AVAudioFrameCount(Double(b.frameLength) * Double(hz) / b.format.sampleRate) + 64
-        guard let out = AVAudioPCMBuffer(pcmFormat: formatoVoz, frameCapacity: cap) else { return nil }
-        var dado = false
-        c.convert(to: out, error: nil) { _, st in
-            if dado { st.pointee = .noDataNow; return nil }
-            dado = true; st.pointee = .haveData; return b
-        }
-        guard out.frameLength > 0, let p = out.int16ChannelData else { return nil }
-        return Data(bytes: p[0], count: Int(out.frameLength) * 2)
+        })
     }
 
     /// Suelta el dictado de ahora; lo que llegue tarde de él ya no cuenta (otra vuelta).
@@ -401,6 +390,3 @@ final class ClaudioLocal: NSObject {
 
     private func emitir(_ e: [String: Any]) { alEvento?(e) }
 }
-
-/// Lo que va sonando de una frase (los trozos llegan de a poco desde la voz del iPhone).
-private final class Escritura { var inicio: Date?; var total = 0.0; var listo = false }
