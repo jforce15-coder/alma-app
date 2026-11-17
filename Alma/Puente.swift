@@ -17,6 +17,7 @@ import WebKit
 ///   { accion: "atajos", que, nombre, on }   → Atajos permitidos (AtajosIOS.swift) → AlmaAtajos.evento({ lista, todos })
 ///   { accion: "notif", que: "probarSiri" }  → «Probar con Siri» (NotifArmar.swift) → AlmaNotif.evento({ tipo: "prueba", ok, en, error })
 ///   { accion: "fotosContactos", numeros }   → la foto de los Contactos del iPhone solo de esos números (FotosContactosIOS.swift, Hub #567 T4) → AlmaFotosCt.evento({ permiso, fotos })
+///   { accion: "companero", on, viva, clave, sonido } → Modo compañero: la voz de la llamada del otro dispositivo suena aquí (Retransmision.swift)
 ///   { accion: "anilloBle" }                  → abre el Diagnóstico del anillo (Bluetooth) (DiagnosticoAnillo.swift)
 ///   { accion: "dispositivos" }               → abre Dispositivos: el anillo y los lentes (Dispositivos.swift)
 ///   { accion: "tarjetas" }                   → abre Tarjetas de clubes (TarjetasClub.swift)
@@ -49,6 +50,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             NotificationCenter.default.post(name: .abrirDispositivos, object: nil)
         case "tarjetas":   // Ajustes → «Tarjetas de clubes» (TarjetasClub.swift): pantalla nativa, guardadas solo en este iPhone
             NotificationCenter.default.post(name: .abrirTarjetasClub, object: nil)
+        case "companero":   // Modo compañero (Retransmision.swift, Hub #727): { on, viva, clave, sonido }: oír aquí la llamada del otro y no abrir otra
+            Retransmision.shared.companero(on: (d["on"] as? Bool) ?? false, viva: (d["viva"] as? Bool) ?? false, clave: d["clave"] as? String ?? "", sonido: (d["sonido"] as? Bool) ?? true)
         case "anilloBle":   // Ajustes → Alma con el anillo → «Diagnóstico del anillo (Bluetooth)» (DiagnosticoAnillo.swift): pantalla nativa
             NotificationCenter.default.post(name: .abrirDiagnosticoAnillo, object: nil)
         case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" } · { que: "mudo", on }

@@ -741,6 +741,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     // MARK: - Hablar
 
     private func hablar() {
+        // Una sola llamada (Juan, 17-nov-2026, Hub #727): en modo compañero, mientras la llamada del otro dispositivo sigue,
+        // aquí no se abre otra (ni con la roca, ni al oír «Alma», ni desde un aviso): se ve y se oye la de allá.
+        if Retransmision.shared.otraLlamadaViva {
+            paso("No abrí otra llamada: ya hay una en tu otro dispositivo (modo compañero)")
+            emitir(["tipo": "error", "mensaje": "Ya estás en una llamada con Alma en tu otro dispositivo: aquí la ves y la oyes. Una sola llamada a la vez."]); return
+        }
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else {
             emitir(["tipo": "error", "mensaje": "Abre Alma una vez con tu sesión para que pueda hablar con el teléfono bloqueado."]); return
         }
@@ -1122,6 +1128,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let tirada = max(0, finVozAlma.timeIntervalSinceNow); cortesVoz += 1
             if tirada > 0.3 { paso(String(format: "ElevenLabs cortó a Alma (oyó voz): %.1f s de su voz no sonaron (corte %d)", tirada, cortesVoz)) }
             player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+            Retransmision.shared.corte()   // en el compañero tampoco suena lo que faltaba
         case "ping":
             let ev = j["ping_event"] as? [String: Any] ?? [:]
             mandar(["type": "pong", "event_id": ev["event_id"] ?? 0])
@@ -1309,6 +1316,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
         player.scheduleBuffer(buf, completionHandler: nil)
         if !player.isPlaying { player.play() }
+        Retransmision.shared.voz(pcm16, hz: formatoSalida.sampleRate)   // modo compañero (Hub #727): la misma voz suena en el iPad
     }
 
     /// La voz de Alma tiene que oírse (Juan, 16-nov-2026: «todo el audio previo estaba en mute y el saludo no se escuchó»).

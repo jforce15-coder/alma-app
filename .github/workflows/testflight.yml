@@ -119,6 +119,13 @@ jobs:
           xcrun swiftc Alma/ColaVivo.swift Pruebas/Companero/main.swift -o /tmp/companero
           /tmp/companero
 
+      # Modo compañero con voz (Hub #727): las tramas de la voz que van al iPad y la regla de una sola llamada. Lógica pura.
+      - name: Probar la retransmisión del modo compañero
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/TramaVivo.swift Pruebas/Retransmision/main.swift -o /tmp/retransmision
+          /tmp/retransmision
+
       # El audio de la llamada (Juan, 17-nov-2026): con el Modo compañero, el micrófono del teléfono de fábrica; lo que elige
       # Juan manda y, si no está conectado, vale lo automático. Lógica pura.
       - name: Probar el audio de la llamada

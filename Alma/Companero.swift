@@ -20,6 +20,7 @@ final class Companero {
     private func mandar() {
         guard !enviando else { return }
         guard let b0 = cola.sacar(Date()) else { if cola.conv.isEmpty { reloj?.invalidate(); reloj = nil }; return }
+        if cola.conv.isEmpty { Retransmision.shared.fin() }   // con «fin», la voz al compañero también termina
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { return }
         var b = b0; b["hub"] = 1; b["action"] = "vivoPublicar"; b["token"] = token; b["session"] = sesion; b["dispositivo"] = dispositivo
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 10
@@ -30,7 +31,10 @@ final class Companero {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.enviando = false
-                if let m = j?["mirando"] as? Bool { self.cola.mirando = m; AudioLlamada.shared.companeroMira(m) }
+                if let m = j?["mirando"] as? Bool {
+                    self.cola.mirando = m; AudioLlamada.shared.companeroMira(m)
+                    Retransmision.shared.mirando(m && !self.cola.conv.isEmpty, clave: j?["clave"] as? String)   // la voz va directo al compañero (Hub #727)
+                }
             }
         }.resume()
     }
