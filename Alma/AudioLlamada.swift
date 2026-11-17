@@ -176,7 +176,7 @@ struct AudioLlamadaVista: View {
                     ElegirSalidaLlamada { a.elegirSalida(bocina: false) }.frame(width: 40, height: 40)
                 }
 
-                Text("El micrófono va en el dispositivo donde está la llamada; el Modo compañero la muestra y suena con la misma voz. Hay una sola llamada a la vez: para hablar por el iPad, termina la del iPhone y llama desde el iPad.")
+                Text("El micrófono y el sonido van en el dispositivo donde está la llamada; el Modo compañero solo la muestra. Para hablar por el iPad, llama desde el iPad.")
                     .font(Tipo.sans(11.5)).foregroundStyle(Tinta.suave).fixedSize(horizontal: false, vertical: true).padding(.top, 10)
             }
             .padding(.horizontal, 22).padding(.bottom, 30)

@@ -51,24 +51,6 @@ struct ReglasRetransmision {
     /// Y la voz que llega suena con el modo encendido y sin llamada propia (una vez conectado, sigue sonando bloqueado).
     var suena: Bool { companero && !llamadaAqui }
 
-    /// Una sola llamada (Juan, 17-nov-2026: «Importante que en modo Companion sólo haya una llamada»): la última vez que
-    /// este compañero supo que hay una llamada en el otro dispositivo (la página la ve en el Hub cada 1,5 s y la voz que
-    /// llega por la red también cuenta) y de qué dispositivo es.
-    var otraVista: Date?
-    var otroDispositivo = ""
-    static let vigenciaOtra: TimeInterval = 20
-    /// Con el Modo compañero encendido y una llamada viva en el otro dispositivo, aquí no se abre otra.
-    func llamadaEnOtro(_ ahora: Date) -> Bool {
-        guard companero, !llamadaAqui, let v = otraVista else { return false }
-        let hace = ahora.timeIntervalSince(v)
-        return hace >= -1 && hace < ReglasRetransmision.vigenciaOtra
-    }
-    /// Lo que se le dice a Juan si intenta llamar desde aquí.
-    static func avisoUnaLlamada(_ dispositivo: String) -> String {
-        let d = dispositivo.isEmpty ? "tu otro dispositivo" : "tu " + dispositivo
-        return "Ya estás en una llamada desde " + d + ". Con el Modo compañero hay una sola llamada: aquí la ves y la oyes. Para hablar desde aquí, termínala allá."
-    }
-
     /// Solo se juntan los dispositivos de la misma cuenta: los dos guardan la misma llave de la app (voz_token), y lo que
     /// se anuncia es una huella de ella (nunca la llave). Sin llave, nada.
     static func pareja(_ token: String?) -> String? {

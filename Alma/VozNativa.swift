@@ -741,12 +741,6 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     // MARK: - Hablar
 
     private func hablar() {
-        // Una sola llamada (Juan, 17-nov-2026: «Importante que en modo Companion sólo haya una llamada»): con el Modo compañero
-        // encendido aquí y la llamada viva en el otro dispositivo, no se abre otra (ni por la roca, el anillo o un aviso).
-        if Retransmision.shared.llamadaEnOtro {
-            paso("Modo compañero: ya hay una llamada en el otro dispositivo; no abro otra")
-            emitir(["tipo": "error", "mensaje": Retransmision.shared.avisoUnaLlamada]); return
-        }
         guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else {
             emitir(["tipo": "error", "mensaje": "Abre Alma una vez con tu sesión para que pueda hablar con el teléfono bloqueado."]); return
         }
