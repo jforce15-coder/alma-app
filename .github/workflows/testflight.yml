@@ -140,6 +140,12 @@ jobs:
         run: |
           xcrun swiftc Alma/RespaldoReglas.swift Pruebas/Respaldo/main.swift -o /tmp/respaldo
           /tmp/respaldo
+      # Maricarmen, el alter ego de Alma (Hub #666): cuándo entra y sale, qué se manda al Hub y su voz. Lógica pura.
+      - name: Probar Maricarmen
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/MaricarmenReglas.swift Alma/RespaldoReglas.swift Pruebas/Maricarmen/main.swift -o /tmp/maricarmen
+          /tmp/maricarmen
       # Notificaciones por tipo (Hub #551): cómo se arma cada una con los ajustes de su tipo (dónde se ve, sonido, urgente,
       # agrupar, vista previa) y Siri solo con la app cerrada o en segundo plano, fuera de conferencia y Modo calle. Lógica pura.
       - name: Probar las notificaciones por tipo

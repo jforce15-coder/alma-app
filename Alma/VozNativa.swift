@@ -71,7 +71,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var cortesRed: [Date] = []
     private var relojRespaldo: Timer?
     private var intentoVolver: Date?
-    private var enRespaldo: Bool { local?.modo == .respaldo }
+    /// Alma sin ElevenLabs por el Chat con Alma: la voz de respaldo o Maricarmen, su alter ego (Hub #666).
+    private var enRespaldo: Bool { local?.modo == .respaldo || local?.modo == .maricarmen }
     /// Solo en una llamada normal con Alma: el Modo calle y la conferencia tienen su propio camino sin ElevenLabs.
     private var puedeRespaldo: Bool { agente == .alma && !desdeCalle && conferencia == nil }
     private var sesionURL: URLSession?
@@ -1069,11 +1070,19 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let t = ev["user_transcript"] as? String {
                 ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t); Companero.shared.sub(alma: false, t)
                 if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { juanDijo = Date() }
+                // Maricarmen (Hub #666): «pásame con Maricarmen» con la voz de ElevenLabs. La app lo oye y cambia ya, sin esperar a Alma.
+                if local == nil, puedeRespaldo, !cambiando, MaricarmenReglas.pideIr(t) { pasarAMaricarmen(); return }
                 if tiemposCierre != nil, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     vozJuanCalle = Date()
                     if SuenoCalle.esCierre(t) { colgarCalle(.cierre) }
                 }
             }
+        case "maricarmen":   // Maricarmen (Hub #666): lo manda ClaudioLocal (Juan pidió ir con ella o volver con Alma)
+            guard estado == .hablando, !cambiando else { break }
+            if (j["hacer"] as? String) == "volver", local?.modo == .maricarmen {
+                paso("Juan pidió volver con Alma")
+                reabrir(por: "Juan pidió volver con Alma", frase: MaricarmenReglas.vuelta, porClaudio: false)
+            } else if (j["hacer"] as? String) == "ir", puedeRespaldo { pasarAMaricarmen() }
         case "vad_score":   // solo llega si el agente lo tiene encendido: «alguien habla» según ElevenLabs (mejor que el volumen)
             let v = ((j["vad_score_event"] as? [String: Any])?["vad_score"] as? NSNumber)?.doubleValue ?? 0
             if v >= 0.6 { sonidoCalle = Date() }
@@ -1893,6 +1902,40 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
         intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
         if !arrancarRespaldo(frase: conectada ? RespaldoReglas.fraseSeFue : RespaldoReglas.fraseAlEmpezar) { fallo(m) }
+    }
+
+    // MARK: - Maricarmen, el alter ego de Alma (Hub #666, MaricarmenReglas.swift)
+
+    /// «Pásame con Maricarmen»: se cierra ElevenLabs (o la voz de respaldo) y sigue Maricarmen con la voz del iPhone, sin colgar.
+    /// No vuelve sola con buena señal: Juan la pidió. Sin el permiso del dictado no se cambia y Alma lo dice.
+    private func pasarAMaricarmen() {
+        guard let l = ClaudioLocal(maricarmen: MaricarmenReglas.saludo) else {
+            paso("Maricarmen no está lista (falta el permiso del dictado o no está disponible)")
+            if ws != nil { mandar(["type": "contextual_update", "text": "Juan pidió pasar con Maricarmen, tu alter ego local, pero falta el permiso del dictado en el iPhone. Díselo en una frase: «" + MaricarmenReglas.noLista + "»"]) }
+            return
+        }
+        paso("Juan pidió a Maricarmen: sigue su alter ego, sin ElevenLabs")
+        relojLargo?.invalidate(); relojLargo = nil; vigiaLargo?.invalidate(); vigiaLargo = nil; aConferencia = false
+        relojEspera?.invalidate(); relojEspera = nil; herramienta = false
+        relojRespaldo?.invalidate(); relojRespaldo = nil
+        let viejo = ws, viejaSesion = sesionURL
+        ws = nil; sesionURL = nil
+        viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
+        local?.parar(); local = nil
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []
+        intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
+        local = l
+        l.paso = { [weak self] t in self?.paso(t) }
+        l.alEvento = { [weak self, weak l] ev in
+            guard let self, let l, self.local === l else { return }
+            self.mensaje(ev)
+        }
+        Senal.shared.alMandar = { [weak self, weak l] h in
+            guard let self, let l, self.local === l else { return }
+            l.avisar(RespaldoReglas.fraseMandado + " " + h)
+        }
+        inicioEnviado = true; saludoDesde = nil; colaVoz = []; antesDeFicha = []; cambiando = false
+        l.empezar()
     }
 
     /// Cada 2 s: con la señal estable 20 s y en un silencio, Alma vuelve a su voz de siempre (se reabre la conversación con

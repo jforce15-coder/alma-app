@@ -19,7 +19,7 @@ import Speech
 /// la misma forma de hablar con VozNativa, pero contesta el Hub por la acción calle (el Chat con Alma) y habla la voz de
 /// mujer del iPhone (VozIphone). Sin internet, lo que Juan pide se guarda (Senal) y se manda al volver la señal.
 final class ClaudioLocal: NSObject {
-    enum Modo { case claudio, respaldo }
+    enum Modo { case claudio, respaldo, maricarmen }   // maricarmen: el alter ego de Alma (Hub #666, MaricarmenReglas.swift)
     let modo: Modo
     /// Los eventos para VozNativa, siempre en el hilo principal.
     var alEvento: (([String: Any]) -> Void)?
@@ -73,6 +73,22 @@ final class ClaudioLocal: NSObject {
         super.init()
     }
 
+    /// Maricarmen, el alter ego de Alma (Hub #666, MaricarmenReglas.swift): como la voz de respaldo (el Chat con Alma, sin
+    /// ElevenLabs), con una voz de mujer de España si el iPhone la tiene y el alter «maricarmen» en cada pedido (Weebo 3).
+    init?(maricarmen saludo: String) {
+        guard SFSpeechRecognizer.authorizationStatus() == .authorized,
+              let r = SFSpeechRecognizer(locale: Locale(identifier: "es-MX")), r.isAvailable else { return nil }
+        conv = "conv_maricarmen_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(20).lowercased()
+        reconocedor = r; modo = .maricarmen
+        self.saludo = saludo; saludoAudio = nil
+        var a = ClaudioLocalReglas.Ajustes(); a.hombre = false; a.idiomas = MaricarmenReglas.idiomas
+        a.tono = MaricarmenReglas.tono; a.velocidad = MaricarmenReglas.velocidad
+        ajustes = a
+        let e = ClaudioLocal.elegirVoz(a)
+        voz = e?.gender == .female ? e : (VozIphone.elegida ?? e)   // nunca una voz de hombre: si no hay de mujer en español, la elegida de Alma
+        super.init()
+    }
+
     /// Callado: ni piensa, ni habla, ni Juan está a media frase (la voz de respaldo solo cambia en un silencio así).
     var quieto: Bool { vivo && !pensando && Date() >= ocupadoHasta && texto.isEmpty }
 
@@ -86,6 +102,7 @@ final class ClaudioLocal: NSObject {
             switch v.quality { case .premium: calidad = "premium"; case .enhanced: calidad = "mejorada"; default: calidad = "normal" }
             return v.name + " · " + v.language + " · " + (v.gender == .male ? "hombre" : v.gender == .female ? "mujer" : "sin género") + " · " + calidad
         } ?? "la de por defecto"
+        if modo == .maricarmen { return "Maricarmen · " + v + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple") }
         if modo == .respaldo { return "voz de respaldo de Alma · " + v + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple") }
         return (saludoAudio != nil ? "voz de ElevenLabs (respaldo: " + v + ")" : v) + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple")
     }
@@ -108,7 +125,7 @@ final class ClaudioLocal: NSObject {
     func empezar() {
         emitir(["type": "conversation_initiation_metadata",
                 "conversation_initiation_metadata_event": ["conversation_id": conv, "agent_output_audio_format": "pcm_16000"]])
-        paso?(modo == .respaldo ? "Alma con la voz de respaldo · " + descripcion : "Claudio local · " + descripcion)
+        paso?(modo == .respaldo ? "Alma con la voz de respaldo · " + descripcion : modo == .maricarmen ? "Con " + descripcion : "Claudio local · " + descripcion)
         historial = ClaudioLocalReglas.sumar(historial, .init(deClaudio: true, texto: saludo))
         decir(saludo, audio: saludoAudio)
         reloj = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.revisar() }
@@ -198,7 +215,7 @@ final class ClaudioLocal: NSObject {
 
     private func turno(_ t: String) {
         guard vivo, !pensando else { return }
-        if modo == .respaldo { turnoRespaldo(t); return }
+        if modo != .claudio { turnoRespaldo(t); return }   // la voz de respaldo y Maricarmen: el Chat con Alma
         pensando = true
         empezarTecleo()
         emitir(["type": "user_transcript", "user_transcription_event": ["user_transcript": t]])
@@ -243,6 +260,12 @@ final class ClaudioLocal: NSObject {
     /// Lo que Juan dijo va al Hub como en el Modo calle, sin audio. Sin internet se guarda y se manda al volver la señal.
     private func turnoRespaldo(_ t: String) {
         emitir(["type": "user_transcript", "user_transcription_event": ["user_transcript": t]])
+        // Maricarmen (Hub #666): «pásame con Alma» vuelve a la voz de siempre; «pásame con Maricarmen» desde la voz de respaldo
+        // la llama. Lo decide la app (VozNativa, evento «maricarmen»), sin ir al Hub.
+        if modo == .maricarmen, MaricarmenReglas.pideVolver(t) {
+            decir(MaricarmenReglas.despedida) { [weak self] in self?.emitir(["type": "maricarmen", "hacer": "volver"]) }; return
+        }
+        if modo == .respaldo, MaricarmenReglas.pideIr(t) { emitir(["type": "maricarmen", "hacer": "ir"]); return }
         let conNotas = notas.isEmpty ? t : t + "\n(Nota de la app: " + notas.joined(separator: " · ") + ")"
         notas = []
         guard Senal.shared.hayRed else { guardarSinRed(t); return }
@@ -253,7 +276,8 @@ final class ClaudioLocal: NSObject {
         empezarTecleo()
         emitir(["type": "agent_tool_request", "agent_tool_request": ["tool_name": "respaldo"]])   // trabaja: no se cuelga por silencio
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 30
-        r.httpBody = try? JSONSerialization.data(withJSONObject: RespaldoReglas.pedido(token: token, sesion: sesion, texto: conNotas))
+        r.httpBody = try? JSONSerialization.data(withJSONObject: RespaldoReglas.pedido(token: token, sesion: sesion, texto: conNotas,
+                                                                                alter: modo == .maricarmen ? MaricarmenReglas.alter : nil))
         llamadas += 1; let mia = llamadas, t0 = Date()
         URLSession.shared.dataTask(with: r) { [weak self] data, _, err in
             let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
