@@ -119,6 +119,13 @@ revisa(C.saludoSigue(desde: s0, ahora: s0.addingTimeInterval(2), sono: true, fin
 revisa(!C.saludoSigue(desde: s0, ahora: s0.addingTimeInterval(3.5), sono: true, finVoz: s0.addingTimeInterval(3)), "terminó de sonar: Juan ya puede hablar")
 revisa(!C.saludoSigue(desde: s0, ahora: s0.addingTimeInterval(8), sono: false, finVoz: .distantPast), "si la voz nunca llega, a los 8 s se suelta")
 
+// MARK: - La voz de Alma se oye (16-nov-2026: «todo el audio previo estaba en mute»)
+
+revisa(C.volumenVoz == 1, "la voz de Alma suena entera: el micrófono en pausa y el modo chat ya no la bajan a 0")
+revisa(C.aParlante(salida: "Receiver"), "si la voz sale por el auricular de oreja, se pasa al parlante")
+revisa(!C.aParlante(salida: "Speaker") && !C.aParlante(salida: "BluetoothA2DPOutput") && !C.aParlante(salida: "BluetoothHFP") && !C.aParlante(salida: "Headphones") && !C.aParlante(salida: "CarAudio"), "parlante, audífonos, Bluetooth y el carro no se tocan")
+revisa(C.volumenBajo(0) && C.volumenBajo(0.05) && !C.volumenBajo(0.1) && !C.volumenBajo(0.6), "volumen del teléfono casi en cero: se avisa")
+
 // MARK: - El registro de pasos
 
 var lista: [String] = []
