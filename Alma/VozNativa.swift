@@ -75,6 +75,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var enRespaldo: Bool { local?.modo == .respaldo || local?.modo == .maricarmen }
     /// Solo en una llamada normal con Alma: el Modo calle y la conferencia tienen su propio camino sin ElevenLabs.
     private var puedeRespaldo: Bool { agente == .alma && !desdeCalle && conferencia == nil }
+    /// Maricarmen (Hub #678): Juan la pide en cualquier llamada con Alma: la normal, la del anillo (Modo calle) y la del modo
+    /// conferencia. Antes usaba puedeRespaldo y con el anillo o en conferencia la app ignoraba «pásame con Maricarmen».
+    private var puedeMaricarmen: Bool { agente == .alma }
     private var sesionURL: URLSession?
     private var silencio: AVAudioPlayer?
     private var ultimoToque = Date.distantPast
@@ -1103,7 +1106,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t); Companero.shared.sub(alma: false, t)
                 if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { juanDijo = Date() }
                 // Maricarmen (Hub #666): «pásame con Maricarmen» con la voz de ElevenLabs. La app lo oye y cambia ya, sin esperar a Alma.
-                if local == nil, puedeRespaldo, !cambiando, MaricarmenReglas.pideIr(t) { pasarAMaricarmen(); return }
+                if local == nil, puedeMaricarmen, !cambiando, MaricarmenReglas.pideIr(t) { vozJuanCalle = Date(); pasarAMaricarmen(); return }
                 if tiemposCierre != nil, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     vozJuanCalle = Date()
                     if SuenoCalle.esCierre(t) { colgarCalle(.cierre) }
@@ -1114,7 +1117,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if (j["hacer"] as? String) == "volver", local?.modo == .maricarmen {
                 paso("Juan pidió volver con Alma")
                 reabrir(por: "Juan pidió volver con Alma", frase: MaricarmenReglas.vuelta, porClaudio: false)
-            } else if (j["hacer"] as? String) == "ir", puedeRespaldo { pasarAMaricarmen() }
+            } else if (j["hacer"] as? String) == "ir", puedeMaricarmen { pasarAMaricarmen() }
         case "vad_score":   // solo llega si el agente lo tiene encendido: «alguien habla» según ElevenLabs (mejor que el volumen)
             let v = ((j["vad_score_event"] as? [String: Any])?["vad_score"] as? NSNumber)?.doubleValue ?? 0
             if v >= 0.6 { sonidoCalle = Date() }

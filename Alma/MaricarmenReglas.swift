@@ -4,7 +4,8 @@ import Foundation
 /// de voz 100 % local (voz de respaldo, sin ElevenLabs) y con Modo Weebo al máximo (nivel tres)»). Lógica pura, con sus
 /// pruebas en Pruebas/Maricarmen. Lo que toca iOS: ClaudioLocal.swift (modo .maricarmen: la misma oreja y la misma forma de
 /// hablar que la voz de respaldo) y VozNativa.swift (cuándo entra y cuándo sale).
-/// · Entra: en una llamada normal con Alma (también con la voz de respaldo), Juan dice «pásame con Maricarmen». La app lo
+/// · Entra: en cualquier llamada con Alma (la normal, la del anillo en el Modo calle, la del modo conferencia y la voz de
+///   respaldo; Hub #678), Juan dice «pásame con Maricarmen» o solo su nombre. La app lo
 ///   oye en lo que Juan dijo, cierra ElevenLabs sin colgar y sigue con la voz de mujer del iPhone (de España si la hay).
 /// · Piensa: el Chat con Alma por la acción calle, sin audio y con alter «maricarmen»: el Hub le pone el Modo Weebo en 3
 ///   desde la primera respuesta (apps-script/maricarmen.js). Solo el administrador principal; con otro, contesta Alma.
@@ -16,17 +17,22 @@ enum MaricarmenReglas {
 
     /// «Pásame con Maricarmen», «¿me pasas con Maricarmen?», «quiero hablar con Maricarmen», «Maricarmen, ven». El verbo va pegado
     /// a su nombre: «pásale el recado a Maricarmen» o «llama a Maricarmen» (una persona de verdad) no la llaman. «No me pases…» no.
-    static let patronIr = #"(?:^|\s)(?:(?:pasame|pasas|ponme|pones|comunicame|conectame|cambiame)\s+(?:con|a)\s+maricarmen|(?:hablar|habla|hablo|hablemos|platicar|platica|conversar)\s+con\s+maricarmen|(?:ven|aparece)\s+maricarmen|maricarmen\s+(?:ven|aparece))(?:\s|$)"#
+    /// Hub #678: también «comunícame / quiero comunicarme con Maricarmen», «pasa con Maricarmen», «dame a Maricarmen» y llamarla
+    /// solo por su nombre («Maricarmen», «hola Maricarmen», «¿estás, Maricarmen?»), que antes no la llamaban.
+    static let patronIr = #"(?:^|\s)(?:(?:pasame|pasas|pasa|pasarme|ponme|pones|ponerme|dame|comunicame|comunicas|comunicarme|conectame|conectas|conectarme|cambiame|cambias|cambiarme)\s+(?:con|a)\s+maricarmen|(?:hablar|habla|hablo|hablemos|platicar|platica|platicame|conversar|comunicarme|comunicarnos|hablarle)\s+con\s+maricarmen|(?:ven|aparece|vente)\s+maricarmen|maricarmen\s+(?:ven|aparece|vente))(?:\s|$)"#
+    /// Llamarla solo por su nombre: toda la frase es «Maricarmen», «hola / oye Maricarmen» o «¿estás ahí, Maricarmen?».
+    static let patronNombre = #"^(?:(?:hola|oye|ey|hey|alo|bueno)\s+)?(?:(?:estas|estas ahi|estas por ahi)\s+)?maricarmen(?:\s+(?:estas|estas ahi|por favor))?$"#
     /// Volver con Alma: «pásame con Alma», «vuelve Alma», «regresa con Alma», «quiero hablar con Alma».
     static let patronVolver = #"(?:^|\s)(?:(?:pasame|pasas|ponme|pones|comunicame|conectame|cambiame|regresame|devuelveme|vuelveme)\s+(?:con|a)\s+alma|(?:hablar|habla|hablo|volver|vuelvo|regresar|regreso)\s+con\s+alma|(?:vuelve|regresa|ven)\s+alma)(?:\s|$)"#
-    static let patronNo = #"(?:^|\s)no\s+(?:quiero\s+|necesito\s+|me\s+)?(?:hablar|habla|pases|pasar|pasame|comuniques|conectes|cambies|volver|regresar|vuelvas|regreses)(?:\s|$)"#
+    static let patronNo = #"(?:^|\s)no\s+(?:quiero\s+|necesito\s+|me\s+)?(?:hablar|habla|pases|pasar|pasame|pasarme|comuniques|comunicarme|conectes|conectarme|cambies|volver|regresar|vuelvas|regreses)(?:\s|$)"#
 
     /// Minúsculas, sin acentos y sin signos: «¿Me pasas con Maricarmen?» → «me pasas con maricarmen». «Mari Carmen» cuenta igual.
     static func normal(_ t: String) -> String {
         let s = t.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "es")).lowercased()
         let solo = String(s.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : " " })
         return solo.split(separator: " ").joined(separator: " ").replacingOccurrences(of: "mari carmen", with: "maricarmen")
-            .replacingOccurrences(of: "mary carmen", with: "maricarmen")
+            .replacingOccurrences(of: "mary carmen", with: "maricarmen").replacingOccurrences(of: "marycarmen", with: "maricarmen")
+            .replacingOccurrences(of: "maria carmen", with: "maricarmen").replacingOccurrences(of: "maria del carmen", with: "maricarmen")
     }
     private static func hay(_ patron: String, _ t: String) -> Bool {
         guard let re = try? NSRegularExpression(pattern: patron) else { return false }
@@ -35,7 +41,7 @@ enum MaricarmenReglas {
     /// ¿Juan pide pasar con Maricarmen?
     static func pideIr(_ texto: String) -> Bool {
         let t = normal(texto)
-        return !t.isEmpty && hay(patronIr, t) && !hay(patronNo, t)
+        return !t.isEmpty && (hay(patronIr, t) || hay(patronNombre, t)) && !hay(patronNo, t)
     }
     /// ¿Juan pide volver con Alma (estando con Maricarmen)?
     static func pideVolver(_ texto: String) -> Bool {
