@@ -38,7 +38,7 @@ struct ContentView: View {
 
     // (dividido en partes: todo junto era demasiado para el compilador)
     var body: some View {
-        conRoca
+        conHojas
             // Alma se llevó hacia un lado en el inicio: el navegador, con la barra lista para buscar. "" = volvió al centro.
             .onReceive(NotificationCenter.default.publisher(for: .modoNavegador)) { n in
                 let pos = n.object as? String ?? ""
@@ -50,16 +50,6 @@ struct ContentView: View {
             .background { Color.clear.fullScreenCover(isPresented: llamada) { LlamadaVista(voz: voz) { llamadaOculta = true } } }
             .onChange(of: voz.estado) { _, e in if e == .apagada || e == .lista { llamadaOculta = false } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirSalud)) { _ in Portal.shared.pasar { salud = true } }
-            .background { Color.clear.sheet(isPresented: $diagAnillo) { DiagnosticoAnilloVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
-            .onReceive(NotificationCenter.default.publisher(for: .abrirDiagnosticoAnillo)) { _ in diagAnillo = true }
-            // Dispositivos (el anillo y los lentes): desde Ajustes o cuando Alma la abre (anillo_estado con mostrar); la llamada se baja.
-            .background { Color.clear.sheet(isPresented: $dispositivos) { DispositivosVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
-            .onReceive(NotificationCenter.default.publisher(for: .abrirDispositivos)) { _ in llamadaOculta = true; dispositivos = true }
-            // Guía de camino: el mapa con el camino y el próximo paso; la llamada se baja (sigue en la roca).
-            .background { Color.clear.sheet(isPresented: $mapaCamino) { MapaCaminoVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
-            .onReceive(NotificationCenter.default.publisher(for: .abrirGuiaCamino)) { _ in llamadaOculta = true; mapaCamino = true }
-            .background { Color.clear.sheet(isPresented: $tarjetasClub) { TarjetasClubVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
-            .onReceive(NotificationCenter.default.publisher(for: .abrirTarjetasClub)) { _ in llamadaOculta = true; tarjetasClub = true }
             // Manos de Alma (navegador): Alma lee o actúa en la página; la pantalla de la llamada se baja para que la veas.
             .onReceive(NotificationCenter.default.publisher(for: .manosAlma)) { _ in llamadaOculta = true }
             // Tarjeta de la llamada: «Abrir conversación» baja la pantalla de la llamada (sigue en la roca) y abre el Hub.
@@ -74,6 +64,22 @@ struct ContentView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
+    }
+
+    /// Las hojas que suben sobre la pantalla (anillo, dispositivos, Guía de camino, tarjetas de clubes), aparte del body
+    /// para que el compilador no se tarde de más.
+    private var conHojas: some View {
+        conRoca
+            .background { Color.clear.sheet(isPresented: $diagAnillo) { DiagnosticoAnilloVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirDiagnosticoAnillo)) { _ in diagAnillo = true }
+            // Dispositivos (el anillo y los lentes): desde Ajustes o cuando Alma la abre (anillo_estado con mostrar); la llamada se baja.
+            .background { Color.clear.sheet(isPresented: $dispositivos) { DispositivosVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirDispositivos)) { _ in llamadaOculta = true; dispositivos = true }
+            // Guía de camino: el mapa con el camino y el próximo paso; la llamada se baja (sigue en la roca).
+            .background { Color.clear.sheet(isPresented: $mapaCamino) { MapaCaminoVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirGuiaCamino)) { _ in llamadaOculta = true; mapaCamino = true }
+            .background { Color.clear.sheet(isPresented: $tarjetasClub) { TarjetasClubVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirTarjetasClub)) { _ in llamadaOculta = true; tarjetasClub = true }
     }
 
     /// La roca del navegador: se aparta de los cuadros de texto, brilla mientras escucha y cuenta los toques.
