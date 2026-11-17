@@ -750,7 +750,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         infoBloqueo("Te escucho…")
         cortesRed = []; intentoVolver = nil
         let conMaricarmen = abrirMaricarmen; abrirMaricarmen = false
-        if conMaricarmen && agente == .alma {   // Hub #680: directo con Maricarmen; si no está lista, conectar sigue con Alma
+        if conMaricarmen && agente == .alma {   // Hub #680: directo con Maricarmen (sin ficha ni ElevenLabs)
             paso("Juan pidió a Maricarmen desde el Modo calle"); conectar(agente: "", ficha: [:], maricarmen: true); return
         }
         if puedeRespaldo && !Senal.shared.hayRed {   // sin internet: ni se pide la ficha
