@@ -351,19 +351,28 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         switch estado {
         case .hablando: if cerrarTrasRespuesta { motivoFin = "un toque después de la pausa larga"; terminar() } else if pausada { reanudar() } else { pausar() }
         case .conectando: motivoFin = "un toque mientras conectaba"; terminar()
-        case .lista, .apagada: desdePantalla = false; hablar()
+        case .lista, .apagada: guard companeroDeja(porVoz: false) else { return }; desdePantalla = false; hablar()
         }
+    }
+    /// Una sola llamada (Juan, 17-nov-2026; UnaLlamada en ColaVivo.swift): con el Modo compañero encendido aquí, por voz no
+    /// se abre nunca y a mano tampoco mientras la llamada siga en el otro dispositivo. false = aquí no se abre.
+    private func companeroDeja(porVoz: Bool) -> Bool {
+        guard let m = Companero.shared.noDeja(porVoz: porVoz) else { return true }
+        paso(m)
+        if !porVoz { emitir(["tipo": "companero", "mensaje": m]); avisar() }   // la página sigue mostrando la del otro
+        return false
     }
 
     /// La roca del inicio (sa-nav en la página): la misma conversación que el anillo, abierta desde la pantalla.
     func hablarDesdePantalla() {
         guard estado == .lista || estado == .apagada else { avisar(); return }
+        guard companeroDeja(porVoz: false) else { return }
         desdePantalla = true; hablar()
     }
     /// «Inicio con escucha activa» (EscuchaInicio.swift): dijiste «Alma, …» en el inicio. Sin saludo: lo que pediste es el
     /// primer mensaje y Alma responde a eso.
     func hablarAlOir(_ texto: String) {
-        guard estado == .lista || estado == .apagada else { return }
+        guard estado == .lista || estado == .apagada, companeroDeja(porVoz: true) else { return }
         desdePantalla = true; alOir = true; textoInicial = texto; hablar()
     }
     /// Tres toques a la roca del navegador: Alma solo por voz (sin el chat), sobre lo que se ve. La página (título y dirección)
@@ -375,6 +384,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let captura { describir(captura, aviso: "Juan te muestra otra pantalla: " + donde + ".") }
             return
         }
+        guard companeroDeja(porVoz: false) else { return }
         // Sin el permiso del micrófono (nunca se preguntó), se pide ahora con la app abierta y después se llama.
         if AVAudioSession.sharedInstance().recordPermission == .undetermined {
             AVAudioSession.sharedInstance().requestRecordPermission { [weak self] ok in
@@ -390,14 +400,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// ¿Ya tiene cómo pedir la ficha al Hub? (la guarda el inicio la primera vez que se abre la app con sesión)
     var puedeHablar: Bool { Llave.leer("voz_url") != nil && Llave.leer("voz_token") != nil && Llave.leer("voz_sesion") != nil }
     func hablarDesdeConferencia(contexto: String, texto: String) {
-        guard estado == .lista || estado == .apagada else { return }
+        guard estado == .lista || estado == .apagada, companeroDeja(porVoz: true) else { return }
         desdePantalla = true; conferencia = contexto; textoInicial = texto; hablar()
     }
     /// Alma abre la conversación por un aviso (Modo calle o conferencia; Hub #509 T4). `conferencia`: lo último que se dijo,
     /// si la abre el modo conferencia. false si no pudo empezar (ya hay una llamada o falta la sesión).
     @discardableResult
     func hablarPorAviso(_ d: AlmaAbre.Datos, id: String, conferencia ctx: String?) -> Bool {
-        guard estado == .lista || estado == .apagada else { return false }
+        guard estado == .lista || estado == .apagada, companeroDeja(porVoz: true) else { return false }
         desdePantalla = true; conferencia = ctx; textoInicial = nil; porAviso = (d, id)
         paso("Alma abre la conversación por un aviso")
         hablar()
@@ -409,7 +419,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// y el halo naranja. Al colgar vuelve Alma (terminar). false si no pudo empezar (ya hay una llamada o falta la sesión).
     @discardableResult
     func hablarConClaudio(ficha: [String: Any]) -> Bool {
-        guard estado == .lista || estado == .apagada, ficha["signed_url"] is String else { return false }
+        guard estado == .lista || estado == .apagada, ficha["signed_url"] is String, companeroDeja(porVoz: true) else { return false }
         desdePantalla = true; textoInicial = nil; conferencia = nil; porAviso = nil
         agente = .claudio
         fichaLista = (ficha, Date())   // hablar() la usa en vez de pedir la de Alma

@@ -41,3 +41,22 @@ struct ColaVivo {
         return b
     }
 }
+
+/// Una sola llamada (Juan, 17-nov-2026: «importante que en modo Companion sólo haya una llamada»). El dispositivo con el
+/// Modo compañero encendido (normalmente el iPad) muestra la llamada del otro; no abre otra por su cuenta:
+///   · Por voz o sola («Alma» en el inicio, el Modo calle, la conferencia, un aviso): nunca. Los dos oyen lo mismo y, si
+///     los dos abrieran, habría dos llamadas con dos Almas hablando a la vez.
+///   · A mano (la roca, el anillo): sí, salvo que la página haya visto hace poco la llamada abierta en el otro.
+///   · Sin Modo compañero, todo como antes.
+/// La página (alma/inicio.html, que pregunta al Hub con vivoLeer) le cuenta a la app si está encendido y si el otro
+/// está en una llamada; lo que dijo vale `vigencia` segundos (la página lo repite cada 10 s mientras sigue).
+enum UnaLlamada {
+    static let vigencia: TimeInterval = 30
+    /// nil = puede abrir la llamada aquí; si no, la frase de por qué no (va al registro de la voz).
+    static func motivo(companero: Bool, porVoz: Bool, otra: String, visto: Date?, ahora: Date) -> String? {
+        guard companero else { return nil }
+        if porVoz { return "Modo compañero: aquí no se abre una llamada por voz; la llamada es en tu otro dispositivo" }
+        guard !otra.isEmpty, let v = visto, ahora.timeIntervalSince(v) < vigencia else { return nil }
+        return "Modo compañero: la llamada sigue en tu \(otra); aquí no se abre otra"
+    }
+}
