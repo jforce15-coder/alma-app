@@ -19,6 +19,8 @@ import UIKit
 ///     «Alma». También con la app abierta (inicio o conferencia), y ahí no se ve como Modo calle. Siempre con la voz de
 ///     Alma: el audio llega junto con el texto (vozAvisos). Los niveles están en NivelAvisos. Si el Hub marcó el aviso
 ///     (el resultado de un pedido reciente, Hub #509 T4), Alma abre ella misma la conversación con esa frase (AlmaAbre.swift).
+///     El ritmo (Juan, 17-nov-2026; RitmoAvisos.swift): uno a la vez, el más urgente; si no contestas, silencio; 2 min después
+///     el siguiente, y rotan los tres más urgentes (recordando el que sigue pendiente) hasta 3 veces cada uno o 2 h.
 ///   · Encendido (Juan, 6-nov-2026): arranca como Juan lo dejó (apagado de fábrica) y apagarlo apaga de verdad, también el
 ///     aviso que se está diciendo (EstadoCalle.swift, con sus pruebas en Pruebas/EstadoCalle).
 ///   · Se enciende con la app a la vista (iOS no deja abrir el micrófono con el teléfono bloqueado) y sigue bloqueado.
@@ -163,7 +165,11 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     // MARK: - Avisos hablados
 
-    private var colaAvisos: [AvisoHablado] = []
+    /// Los avisos por decir y su ritmo (RitmoAvisos, Juan 17-nov-2026): uno a la vez, el más urgente, 2 min de silencio
+    /// entre uno y otro, y rotan los tres más urgentes mientras sigan pendientes.
+    private var avisos: [String: AvisoHablado] = [:]
+    private var ritmo = RitmoAvisos()
+    private var procesarPronto = false           // los avisos de una misma vuelta llegan juntos: se elige después de todos
     /// Se está diciendo (o escuchando la respuesta de) un aviso sin el Modo calle: con la app abierta o en conferencia. La
     /// página no lo pinta como Modo calle (EstadoCalle.faseParaPagina) y apagar el Modo calle también lo calla.
     private var avisoEnCurso = false
@@ -503,8 +509,8 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         // como notificación y en Pendientes). Antes solo se apagaba el detector y el siguiente aviso volvía a abrir el
         // micrófono, así que se veía encendido otra vez.
         if que.aviso {
-            if !colaAvisos.isEmpty { anotar("Apagado: dejo \(colaAvisos.count) aviso(s) en Pendientes") }
-            colaAvisos = []; relojAvisos?.invalidate(); relojAvisos = nil
+            if !ritmo.vacio { anotar("Apagado: dejo \(ritmo.ids.count) aviso(s) en Pendientes") }
+            vaciarAvisos()
         }
         guard que.modo else {
             if que.temporal { anotar("Apagado: suelto el micrófono del aviso"); terminarTemporal() }
@@ -1063,7 +1069,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private func sinPedido() {
         cerrarEscucha()
         let boton = porBoton; porBoton = false
-        if avisoActual != nil { avisoActual = nil }   // el aviso queda en Pendientes
+        if avisoActual != nil { avisoActual = nil }   // el aviso queda en Pendientes y vuelve en la rotación (RitmoAvisos)
         else if boton { VozNativa.shared.sonar("alma-fin"); anotar("Botón: no oí un pedido") }   // no es un falso despertar
         else { uso.falsos += 1; VozNativa.shared.sonar("alma-fin"); anotar("Sonó la señal, pero no oí un pedido") }
         volverAEsperar()
@@ -1073,6 +1079,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private func listo(_ pide: String) {
         cerrarEscucha()
         let aviso = avisoActual; avisoActual = nil
+        if let aviso { avisoAtendido(aviso) }   // contestó el aviso: sale de la rotación
         let boton = porBoton; porBoton = false
         if encendido { uso.pedidos += 1 }
         anotar((boton ? "Pedido (botón): «" : "Pedido: «") + ModoCalle.corto(pide, palabras: 12) + "»")
@@ -1122,6 +1129,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// De vuelta a esperar «Alma» (o, si era un aviso con la app abierta, se suelta el micrófono).
     private func volverAEsperar() {
+        ritmo.termino()   // terminó lo del aviso (si había uno): empieza su silencio (RitmoAvisos)
         if temporal { terminarTemporal(); return }
         guard encendido else { return }
         if !micAbierto { guard abrirMicrofono() else { reintentar(); return } }
@@ -1490,42 +1498,72 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     /// `hablar` y `audio`: la frase y la voz de Alma que ya vinieron con el aviso (vozAvisos), así suena sin esperar al Hub;
     /// `vozMotivo`: por qué el Hub no mandó el audio (queda en el diagnóstico). `abre`: el Hub marcó el aviso para que Alma
     /// abra ella misma la conversación (Hub #509 T4, AlmaAbre.swift).
-    func avisoHablado(id: String, texto: String, resultado: Bool = false, hablar: String = "", audio: String? = nil, vozMotivo: String? = nil, abre: AlmaAbre.Datos? = nil) {
+    /// `nivel`: 1 urgente · 2 accion · 3 aviso (NivelAvisos.deAviso): el ritmo dice primero el más urgente (RitmoAvisos).
+    func avisoHablado(id: String, texto: String, nivel: Int = 2, resultado: Bool = false, hablar: String = "", audio: String? = nil, vozMotivo: String? = nil, abre: AlmaAbre.Datos? = nil) {
         let t = texto.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, puedeHablarAvisos else { return }
         let dichos = UserDefaults.standard.stringArray(forKey: "avisos_dichos") ?? []
-        guard AlmaAbre.nuevo(id, dichos: dichos, enFila: colaAvisos.map { $0.id }) else { return }
-        colaAvisos.append(AvisoHablado(id: id, texto: t, resultado: resultado, hablar: hablar.trimmingCharacters(in: .whitespacesAndNewlines), audio: audio, vozMotivo: vozMotivo, abre: abre))
-        procesarAvisos()
+        guard AlmaAbre.nuevo(id, dichos: dichos, enFila: ritmo.ids) else { return }
+        avisos[id] = AvisoHablado(id: id, texto: t, resultado: resultado, hablar: hablar.trimmingCharacters(in: .whitespacesAndNewlines), audio: audio, vozMotivo: vozMotivo, abre: abre)
+        ritmo.llegar(id: id, nivel: nivel)
+        // Uno a la vez y el más urgente: los de esta vuelta del Hub llegan seguidos; se elige cuando ya están todos.
+        guard !procesarPronto else { return }
+        procesarPronto = true
+        DispatchQueue.main.async { [weak self] in self?.procesarPronto = false; self?.procesarAvisos() }
+    }
+
+    /// Juan contestó el aviso (en el Modo calle, con la app abierta o en conferencia; también «luego»): sale de la rotación.
+    func avisoAtendido(_ id: String) {
+        ritmo.resuelto(id); avisos[id] = nil
+    }
+
+    /// Ya no se puede hablar (se apagó o la app se fue sin Modo calle): quedan en Pendientes y en la notificación.
+    private func vaciarAvisos() {
+        ritmo.vaciar(); avisos = [:]
+        relojAvisos?.invalidate(); relojAvisos = nil
     }
 
     private func procesarAvisos() {
-        guard let a = colaAvisos.first else { relojAvisos?.invalidate(); relojAvisos = nil; return }
+        relojAvisos?.invalidate(); relojAvisos = nil
+        guard !ritmo.vacio else { return }
         let app = UIApplication.shared.applicationState == .active, conf = Conferencia.shared.activa
-        if !encendido && !app && !temporal && !conf { colaAvisos = []; relojAvisos?.invalidate(); relojAvisos = nil; return }   // ya no: queda la notificación
+        if !encendido && !app && !temporal && !conf { vaciarAvisos(); return }   // ya no: queda la notificación
         let v = VozNativa.shared.estado
         let vozLibre = v == .lista || v == .apagada
         // En modo conferencia no hace falta la app abierta: la conferencia ya tiene el micrófono (también bloqueado).
         let puede = encendido ? (fase == .esperando && vozLibre) : (!temporal && fase == .quieta && (app || conf) && vozLibre && MejoraCampo.shared.estado == .apagada)
         guard puede else {
-            if relojAvisos == nil { relojAvisos = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.procesarAvisos() } }
+            if ritmo.enCurso == nil { relojAvisos = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in self?.procesarAvisos() } }
             return
         }
-        relojAvisos?.invalidate(); relojAvisos = nil
-        colaAvisos.removeFirst()
-        marcarDicho(a)
+        // El ritmo (Juan, 17-nov-2026): uno a la vez, el más urgente; silencio entre uno y otro; rotan los tres más urgentes.
+        let ahora = Date()
+        guard let id = ritmo.siguiente(ahora: ahora), let a = avisos[id] else {
+            avisos = avisos.filter { ritmo.ids.contains($0.key) }   // los que ya vencieron o se dijeron sus veces: solo en Pendientes
+            if let f = ritmo.falta(ahora: ahora), f > 0 {
+                relojAvisos = Timer.scheduledTimer(withTimeInterval: f + 0.5, repeats: false) { [weak self] _ in self?.procesarAvisos() }
+            }
+            return
+        }
+        ritmo.decir(id)
+        let vez = ritmo.items.first { $0.id == id }?.veces ?? 1
+        if vez > 1 { anotar("Te recuerdo un aviso pendiente (vez \(vez) de \(RitmoAvisos.maxVeces))") } else { marcarDicho(a) }
         // Alma abre la conversación (Hub #509 T4): el resultado de un pedido reciente de Juan, en Modo calle o conferencia.
         // Abre la llamada de ElevenLabs con la frase del aviso como primer mensaje (con el sueño, que cuelga si Juan no
         // contesta). Si no se puede (conferencia silenciada, esperó demasiado), va la notificación hablada de siempre.
-        if let ab = a.abre, AlmaAbre.decidir(ab, donde: AlmaAbre.donde(calle: encendido, conferencia: conf), espera: Date().timeIntervalSince(a.llego),
+        if vez == 1, let ab = a.abre, AlmaAbre.decidir(ab, donde: AlmaAbre.donde(calle: encendido, conferencia: conf), espera: Date().timeIntervalSince(a.llego),
                                                mudo: !encendido && Conferencia.shared.mudo) == .abrir {
             if encendido {
                 uso.avisos += 1
+                avisoAtendido(a.id)   // la conversación que abre ya es su respuesta: no se recuerda
                 anotar("Alma abre la conversación por un aviso")
                 abrirLlamada("", aviso: ab, avisoId: a.id)
                 return
             }
-            if Conferencia.shared.abrirPorAviso(ab, id: a.id) { anotar("Alma abre la conversación por un aviso (conferencia)"); procesarAvisos(); return }
+            if Conferencia.shared.abrirPorAviso(ab, id: a.id) {
+                avisoAtendido(a.id); ritmo.termino()
+                anotar("Alma abre la conversación por un aviso (conferencia)"); procesarAvisos(); return
+            }
             anotar("Alma no pudo abrir la conversación: va el aviso de siempre")
         } else if a.abre != nil { anotar("El aviso esperó demasiado o no se puede abrir aquí: va el aviso de siempre") }
         if encendido {
@@ -1538,17 +1576,19 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
             // El modo conferencia ya escucha: se dice y, durante unos segundos, lo que contestes («sí», «dime») abre la
             // llamada con el aviso de contexto, sin tener que decir «Alma».
             decirAviso(a) { [weak self] in
-                guard let self, self.avisoEnCurso else { return }
+                guard let self else { return }
+                self.ritmo.termino()   // la respuesta la escucha la conferencia (8 s) dentro del silencio
+                guard self.avisoEnCurso else { return }
                 self.avisoEnCurso = false
                 self.fase = .quieta
-                Conferencia.shared.esperarRespuesta(aviso: a.texto)
+                Conferencia.shared.esperarRespuesta(aviso: a.texto, id: a.id)
                 self.procesarAvisos()
             }
             return
         }
         temporal = true
         EscuchaInicio.shared.detener()
-        guard abrirMicrofono() else { temporal = false; avisoEnCurso = false; fase = .quieta; cerrarMicrofono(); VozNativa.soltarAudio(); return }
+        guard abrirMicrofono() else { ritmo.termino(); temporal = false; avisoEnCurso = false; fase = .quieta; cerrarMicrofono(); VozNativa.soltarAudio(); return }
         decirAviso(a) { [weak self] in
             guard let self, self.temporal else { return }
             self.escucharFrase(aviso: a.id)
@@ -1603,6 +1643,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
 
     /// El aviso con la app abierta terminó: se suelta el micrófono (y las otras apps vuelven a su volumen).
     private func terminarTemporal() {
+        ritmo.termino()
         soltarEspera(); porBoton = false
         cerrarEscucha(); callar(); cerrarMicrofono()
         temporal = false; avisoEnCurso = false; fase = .quieta

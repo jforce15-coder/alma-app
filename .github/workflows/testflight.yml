@@ -205,6 +205,14 @@ jobs:
           xcrun swiftc Alma/DiagnosticoAnilloPuro.swift Pruebas/DiagnosticoAnillo/main.swift -o /tmp/diagnostico-anillo
           /tmp/diagnostico-anillo
 
+      # El ritmo de los avisos hablados (Juan, 17-nov-2026, Hub #670): uno a la vez y el más urgente, silencio de 2 min entre
+      # uno y otro, y rotan los tres más urgentes recordando el que sigue pendiente (3 veces o 2 h como mucho). Lógica pura.
+      - name: Probar el ritmo de los avisos
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/RitmoAvisos.swift Pruebas/RitmoAvisos/main.swift -o /tmp/ritmo-avisos
+          /tmp/ritmo-avisos
+
       - name: Generar el proyecto (XcodeGen)
         run: |
           brew install xcodegen
