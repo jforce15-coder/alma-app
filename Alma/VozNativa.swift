@@ -305,6 +305,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     func ponerModoAnillo(_ on: Bool) {
+        VigiaMusica.tomo("al cambiar «Alma con el anillo»")
         UserDefaults.standard.set(on, forKey: "voz_modo_anillo")
         if on {
             // El permiso del micrófono se pide ahora, con la app abierta: con el teléfono bloqueado iOS no puede preguntar.
@@ -325,6 +326,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if !modoAnillo { try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: VozNativa.opcionesEscucha) }
         if modoAnillo { quedarLista() }
         empezarAvisos()
+        VigiaMusica.shared.empezar()   // La música vuelve (Hub #822): si Alma pausa Spotify, al terminar sigue sola
     }
 
     /// Para otras piezas de la llamada (AudioLlamada): un paso más en el mismo registro.
@@ -562,6 +564,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     static func sesionEscucha() {
         let s = AVAudioSession.sharedInstance()
         let v = VozNativa.shared
+        VigiaMusica.tomo("al abrir el audio para escuchar")
         // Con música sonando el anillo no tiene el audio: tomar el que no se mezcla pausaba Spotify al abrir la app (Hub #793).
         switch AnilloVuelve.sesionEscucha(enLlamada: v.estado == .hablando || v.estado == .conectando, anilloListo: v.anilloListo, otraSuena: otraAppSuena) {
         case .llamada:   // la llamada ya puso sus opciones (baja la música, no la pausa): no se cambian
@@ -597,6 +600,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             guard !v.anilloListo, v.estado == .apagada, !Conferencia.shared.activa, !EscuchaInicio.shared.escuchando,
                   !ModoCalle.shared.ocupaMicrofono, MejoraCampo.shared.estado == .apagada, !v.campanas.values.contains(where: { $0.isPlaying }) else { return }
             let s = AVAudioSession.sharedInstance()
+            VigiaMusica.tomo("al soltar el audio")
             try? s.setActive(false, options: .notifyOthersOnDeactivation)
             // Queda la sesión que se mezcla: un sonido suelto (la señal de la voz de las páginas) ya no pausa a las otras apps.
             try? s.setCategory(.playAndRecord, mode: .default, options: opcionesEscucha)
@@ -621,6 +625,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         var activo = true
         do {
             let s = AVAudioSession.sharedInstance()
+            VigiaMusica.tomo("al dejar lista a Alma para el anillo")
             // Desde que queda lista ya es «hablar y escuchar»: con la pantalla bloqueada iOS no deja cambiar a micrófono después.
             try s.setCategory(.playAndRecord, mode: .default, options: VozNativa.opciones)
             try s.setActive(true)
@@ -871,6 +876,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 let donde: AudioCalle.Donde = desdeCalle ? .calle : conferencia != nil ? .conferencia : .nada
                 let o = AudioCalle.opciones(.llamada, donde: donde, baja: AudioCalle.baja(donde, calle: AudioCalle.bajaCalleAhora, conferencia: AudioCalle.bajaConferenciaAhora),
                                             anillo: AudioCalle.llamadaConAnillo(anilloListo: anilloListo, otraSuena: VozNativa.otraAppSuena)).map(AudioCalle.ios) ?? VozNativa.opciones
+                VigiaMusica.tomo("al abrir la llamada")
                 paso("Abriendo el micrófono" + (o.contains(.duckOthers) ? " (la música baja, no se pausa)" : ""))
                 try s.setCategory(.playAndRecord, mode: .default, options: o)
                 try s.setActive(true)
@@ -1629,6 +1635,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// conversación continua) está en LlamadaContinua.regla; lo que queda trabajando se lo cuenta después Alma abre.
     private func terminar() {
         coro.permitido = false   // colgó: el coro se corta
+        VigiaMusica.tomo("al colgar")
         vigia?.invalidate(); vigia = nil
         relojRespaldo?.invalidate(); relojRespaldo = nil
         vigiaCalle?.invalidate(); vigiaCalle = nil

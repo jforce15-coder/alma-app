@@ -293,6 +293,14 @@ jobs:
           xcrun swiftc Alma/SaludosGrabadosReglas.swift Pruebas/SaludosGrabados/main.swift -o /tmp/saludos-grabados
           /tmp/saludos-grabados
 
+      # La música vuelve (Hub #822): si Alma pausa Spotify (al encender el Modo calle, al abrir la llamada…), al terminar le pide
+      # al Hub que siga; si Juan la pausó, no se toca. Lógica pura.
+      - name: Probar que la música vuelve
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/MusicaVuelve.swift Pruebas/MusicaVuelve/main.swift -o /tmp/musica-vuelve
+          /tmp/musica-vuelve
+
       - name: Probar el anillo que vuelve
         if: env.SUBIR != 'true'
         run: |
