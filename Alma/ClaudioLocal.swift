@@ -51,6 +51,8 @@ final class ClaudioLocal: NSObject {
     private var relojTecleo: Timer?, desdeTurno = Date(), teclas: UInt64 = 0
     private var vivo = true
     private var llamadas = 0
+    /// poner_voz (Hub #779; PonerVoz.swift): las voces o el audio del enlace, por el mismo camino que su voz.
+    private let poner = PonerVoz()
 
     init?(ficha: [String: Any]) {
         guard (ficha["local"] as? Bool) == true, let c = ficha["conv_id"] as? String, c.hasPrefix("conv_local_"),
@@ -170,6 +172,7 @@ final class ClaudioLocal: NSObject {
         pararTecleo()
         soltarPedido()
         habla.cancelar()
+        poner.cancelar()
     }
 
     // MARK: - Oír
@@ -271,10 +274,40 @@ final class ClaudioLocal: NSObject {
         historial = ClaudioLocalReglas.sumar(historial, .init(deClaudio: true, texto: r.hablar))
         pensando = false
         decir(r.hablar, audio: r.audio) { [weak self] in
-            guard let self, r.volver else { return }
+            guard let self else { return }
+            if let pv = r.poner, !r.volver { self.ponerVoz(pv); return }
+            guard r.volver else { return }
             // Ya dijo «Listo, te paso con Alma.»: la app vuelve con Alma, como con la herramienta de ElevenLabs.
             self.emitir(["type": "client_tool_call", "client_tool_call": ["tool_call_id": "local_volver", "tool_name": "volver_con_alma", "parameters": [String: Any]()]])
         }
+    }
+
+    /// Después de su frase suenan las voces (o el audio del enlace) que pidió poner_voz; mientras suenan, el micrófono no
+    /// cuenta. Lo que sonó va como nota de la app en el próximo turno, así Claudio sabe qué escuchó Juan.
+    private func ponerVoz(_ p: [String: String]) {
+        ocupadoHasta = .distantFuture
+        texto = ""; soltarPedido()
+        var finCola = Date()
+        poner.correr(p, hz: hz, trozo: { [weak self] d in
+            guard let self, self.vivo else { return }
+            finCola = VozKokoroReglas.finCola(finCola, ahora: Date(), dura: Double(d.count / 2) / Double(self.hz))
+            self.emitir(["type": "audio", "audio_event": ["audio_base_64": d.base64EncodedString()]])
+        }, fin: { [weak self] res, error in
+            guard let self, self.vivo else { return }
+            self.paso?("Claudio puso una voz" + (error ? " (no sonó)" : ""))
+            self.notas = Array((self.notas + [String(res.prefix(400))]).suffix(3))
+            let dice = self.poner.paraJuan
+            if !dice.isEmpty {   // no sonó nada (o pidió la lista): lo dice él, en simple
+                self.historial = ClaudioLocalReglas.sumar(self.historial, .init(deClaudio: true, texto: dice))
+                self.decir(dice); return
+            }
+            let fin = max(finCola, Date()).addingTimeInterval(0.45)
+            self.ocupadoHasta = fin
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, fin.timeIntervalSinceNow)) { [weak self] in
+                guard let self, self.vivo, !self.pensando else { return }
+                self.soltarPedido(); self.nuevoPedido()
+            }
+        })
     }
 
     // MARK: - Pensar con la voz de respaldo de Alma (el Chat con Alma, acción calle)

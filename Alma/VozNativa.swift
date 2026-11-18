@@ -66,6 +66,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Coro de espera (Juan, 17-nov-2026; CoroTrabajo.swift): si una herramienta pasa de 2,5 s, el tecleo de ElevenLabs se
     /// baja y suena el coro, en el mismo motor que su voz (la cancelación de eco lo resta del micrófono).
     private let coro = CoroTrabajo()
+    /// Poner una voz (Hub #779; PonerVoz.swift): las voces locales o un audio por enlace, en la misma salida que la voz.
+    private let ponerVoz = PonerVoz()
     private var vozJuanCoro = Date.distantPast   // la última vez que el micrófono oyó a Juan (el coro baja 6 dB)
     private var textoAlmaCoro = Date.distantPast  // la última vez que Alma dijo algo (texto): el coro baja 10 dB
     private var formatoSalida = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
@@ -1306,6 +1308,26 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if nombre == "correr_atajo" { AtajosPermitidos.correr(ManosAlma.texto(p["nombre"]), contestar) }
             else if nombre == "abrir_apple_pay" { ApplePay.abrir(contestar) }   // Hub #662: Wallet o su atajo de Apple Pay
             else { ManosAlma.shared.correr(nombre, p, contestar) }
+            return
+        }
+        // Poner una voz (Hub #779; Juan, 18-nov-2026: «que Claudio pueda poner las voces en la llamada»): las voces locales o
+        // un audio por enlace suenan por la misma salida que su voz (la cancelación de eco lo resta del micrófono). Contesta
+        // cuando terminó de sonar, así Claudio no habla encima.
+        if nombre == PonerVozReglas.herramienta {
+            herramienta = true; paso("Claudio pone una voz: " + String(((p["voz"] as? String) ?? (p["enlace"] as? String) ?? "la lista").prefix(60)))
+            let llamada = inicioLlamada
+            ponerVoz.correr(p, hz: Int(formatoSalida.sampleRate), trozo: { [weak self] d in
+                guard let self, self.inicioLlamada == llamada, self.estado == .hablando else { return }
+                self.ultimaActividad = Date(); self.sonar(d)
+            }, fin: { [weak self] res, error in
+                guard let self, self.inicioLlamada == llamada else { return }
+                let espera = max(0, self.finVozAlma.timeIntervalSinceNow) + 0.3
+                DispatchQueue.main.asyncAfter(deadline: .now() + espera) { [weak self] in
+                    guard let self, self.inicioLlamada == llamada else { return }
+                    self.herramienta = false; self.ultimaActividad = Date()
+                    self.mandar(["type": "client_tool_result", "tool_call_id": id, "result": res, "is_error": error])
+                }
+            })
             return
         }
         // Medidor de personalidad (#410): Alma cuenta en silencio su nivel de Modo Weebo. No espera respuesta (expects_response

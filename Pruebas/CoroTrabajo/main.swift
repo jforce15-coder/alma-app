@@ -54,7 +54,7 @@ do {
 // Las de fondo y las que no esperan respuesta no cuentan; tope de 75 s; cortar
 do {
     var r = CoroReglas()
-    for n in ["enviar_confirmado", "claudio_pedido", "nivel_weebo", "mostrar_gif", "mostrar_en_chat", "pasar_a_maricarmen", ""] {
+    for n in ["enviar_confirmado", "claudio_pedido", "poner_voz", "nivel_weebo", "mostrar_gif", "mostrar_en_chat", "pasar_a_maricarmen", ""] {
         revisa(!r.empieza("id-" + n, nombre: n, ahora: t0), "«" + n + "» nunca suena (de fondo o sin espera)")
     }
     revisa(!r.empieza("", nombre: "secretaria", ahora: t0), "sin tool_call_id no cuenta")

@@ -49,12 +49,20 @@ enum ClaudioLocalReglas {
 
     /// Lo que se hace con la respuesta del Hub. Sin respuesta (o sin frase), una frase para no quedarse en silencio.
     static let repite = "Perdón, no me llegó la respuesta. ¿Me lo repites?"
-    struct Respuesta: Equatable { let hablar: String; let volver: Bool; let herramientas: [String]; var audio: Data? = nil }
+    /// poner: lo que pidió poner_voz (Hub #779: voz, enlace, frase); suena después de su frase (PonerVoz.swift).
+    struct Respuesta: Equatable { let hablar: String; let volver: Bool; let herramientas: [String]; var audio: Data? = nil; var poner: [String: String]? = nil }
     static func respuesta(_ j: [String: Any]?) -> Respuesta {
         let h = (j?["hablar"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return Respuesta(hablar: h.isEmpty ? repite : h, volver: (j?["volver"] as? Bool) == true,
                          herramientas: (j?["herramientas"] as? [String] ?? []).filter { $0.hasPrefix("claudio_") },
-                         audio: h.isEmpty ? nil : audio(j))   // sin frase, «¿me lo repites?» va con la voz del iPhone
+                         audio: h.isEmpty ? nil : audio(j),   // sin frase, «¿me lo repites?» va con la voz del iPhone
+                         poner: poner(j?["poner"]))
+    }
+    static func poner(_ x: Any?) -> [String: String]? {
+        guard let d = x as? [String: Any] else { return nil }
+        var o: [String: String] = [:]
+        for k in ["voz", "enlace", "frase"] { if let v = d[k] as? String { o[k] = String(v.prefix(400)) } }
+        return o
     }
 
     // MARK: - La voz de ElevenLabs (del Hub)

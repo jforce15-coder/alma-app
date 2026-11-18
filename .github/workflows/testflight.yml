@@ -222,6 +222,12 @@ jobs:
         run: |
           xcrun swiftc Alma/FonemasES.swift Alma/VozKokoroReglas.swift Pruebas/VozKokoro/main.swift -o /tmp/voz-kokoro
           /tmp/voz-kokoro
+      # Poner una voz en la llamada (Hub #779): qué voz pidió Claudio, la lista, la frase de cada voz y lo que se le contesta.
+      - name: Probar poner una voz en la llamada
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/FonemasES.swift Alma/VozKokoroReglas.swift Alma/PonerVozReglas.swift Pruebas/PonerVoz/main.swift -o /tmp/poner-voz
+          /tmp/poner-voz
       # Notificaciones por tipo (Hub #551): cómo se arma cada una con los ajustes de su tipo (dónde se ve, sonido, urgente,
       # agrupar, vista previa) y Siri solo con la app cerrada o en segundo plano, fuera de conferencia y Modo calle. Lógica pura.
       - name: Probar las notificaciones por tipo
