@@ -76,6 +76,14 @@ jobs:
           xcrun swiftc Alma/GuiaCaminoReglas.swift Pruebas/GuiaCamino/main.swift -o /tmp/guia-camino
           /tmp/guia-camino
 
+      # El Navegador de Alma en sus modos (Hub #773): la pausa de privacidad (contraseña, código, tarjeta,
+      # captcha), la tarjeta de datos para copiar (nunca nada privado) y el ritmo humano con tope por sitio. Lógica pura.
+      - name: Probar el Navegador de Alma
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/NavegadorReglas.swift Pruebas/Navegador/main.swift -o /tmp/navegador
+          /tmp/navegador
+
       # La tarjeta de la llamada (#446 T2) y el tablero bento por estado (Hub #508): una a la vez, se queda hasta que llega
       # otra o se cuelga, también en conferencia con la pantalla encendida, y nada con el teléfono bloqueado. Lógica pura.
       - name: Probar la tarjeta de la llamada

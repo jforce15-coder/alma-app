@@ -24,6 +24,8 @@ struct ContentView: View {
     @State private var vocesLocales = false
     @ObservedObject private var voz = VozNativa.shared
     @ObservedObject private var mejora = MejoraCampo.shared
+    /// Modo guiado: la tarjeta de datos para copiar (GuiaNavegador.swift); sigue aunque la llamada termine.
+    @ObservedObject private var tarjeta = TarjetaDatos.shared
     /// La roca de Alma del navegador: la misma de las web apps, en una capa encima de la página.
     @StateObject private var roca = RocaNavegador()
     @State private var llamadaOculta = false
@@ -101,6 +103,8 @@ struct ContentView: View {
             .onChange(of: mejora.estado) { _, _ in brilloRoca() }
             .onChange(of: voz.estado) { _, _ in brilloRoca() }   // la roca brilla durante la llamada de los tres toques
             .onChange(of: voz.mostrado) { _, m in if let m { ponerEnChat(m) } }
+            // Pausa de privacidad: Alma sabe en la llamada que ya no ve (y cuándo vuelve a ver). Nunca va lo de la pantalla.
+            .onChange(of: nav.privada) { _, m in voz.avisarPrivacidad(m) }
             .onAppear {
                 roca.web.isHidden = nav.esSpacio
                 roca.alToques = { n in tocaron(n) }
@@ -213,6 +217,18 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .transition(.opacity)
                 }
+                // Pausa de privacidad («Te toca a ti»): arriba, debajo del ✕. La tarjeta de datos para copiar: abajo, encima de
+                // la roca (senalar deja lo que se marca al centro, así no lo tapa).
+                if !nav.enInicio, let m = nav.privada {
+                    AvisoTeToca(motivo: m) { nav.listoPrivada() }
+                        .padding(.top, 52)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+                if !nav.enInicio && !tarjeta.datos.isEmpty {
+                    TarjetaDatosVista()
+                        .padding(.bottom, conPestanita ? 150 : 110)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                }
                 if conPestanita {
                     Pestanita { nav.mostrarBarra() }
                         .offset(x: pestanitaCorrida ? -84 : 0)
@@ -223,6 +239,7 @@ struct ContentView: View {
                 Color.white.opacity(destello ? 0.55 : 0).allowsHitTesting(false).ignoresSafeArea()
             }
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: nav.esSpacio)
+            .animation(.spring(response: 0.38, dampingFraction: 0.86), value: nav.privada)
             if !limpio && !nav.barraOculta { BarraDireccion().transition(.move(edge: .bottom).combined(with: .opacity)) }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: limpio)
@@ -257,14 +274,14 @@ extension ContentView {
     /// tiene cómo llamar (nunca se abrió el inicio con sesión), se abre el chat con la captura, como antes.
     func capturar() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        let titulo = nav.titulo, direccion = nav.direccion
-        nav.captura { du in
+        let titulo = nav.titulo, direccion = nav.direccion, privada = nav.privada != nil
+        nav.captura { du in   // con la pausa de privacidad no hay captura (du = nil) y Alma lo sabe por la ficha
             DispatchQueue.main.async {
                 withAnimation(.easeOut(duration: 0.08)) { destello = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { withAnimation(.easeOut(duration: 0.35)) { destello = false } }
                 if voz.puedeHablar {
                     llamadaOculta = true
-                    voz.hablarSobrePantalla(captura: du, titulo: titulo, direccion: direccion)
+                    voz.hablarSobrePantalla(captura: du, titulo: titulo, direccion: direccion, privada: privada)
                 } else {
                     captura = du
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { almaAbierta = true }
