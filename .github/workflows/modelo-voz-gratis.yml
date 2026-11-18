@@ -1,0 +1,67 @@
+# La voz gratis (Pocket TTS español, temporal; Juan, 18-nov-2026): arma el modelo principal en 8 bits por bloques y lo deja
+# en la versión «voz-gratis-1» de este repo, de donde lo baja la app (VozPocketReglas.swift, con su suma de comprobación).
+#   · Parte del flow_lm_main.onnx en fp32 de KevinAHM/pocket-tts-onnx (versión fija y su suma) y solo cuantiza los pesos
+#     (MatMulNBits, 8 bits, bloques de 64): el de 8 bits que trae el repo cortaba frases (medido con Whisper: WER 0,33 contra
+#     0,12 con este, igual que fp32).
+#   · Licencia CC-BY 4.0: Kyutai (Pocket TTS) y KevinAHM (ONNX). Va en las notas de la versión.
+#   · Si la versión ya tiene el archivo, no hace nada.
+name: Modelo de la voz gratis
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/voz-gratis-pocket]
+    paths: [.github/workflows/modelo-voz-gratis.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  modelo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: voz-gratis-1
+      ARCHIVO: pocket_es_flow_lm_main_q8.onnx
+    steps:
+      - name: ¿Ya está?
+        id: ya
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$ARCHIVO"; then
+            echo "listo=1" >> "$GITHUB_OUTPUT"; echo "Ya está en la versión $TAG."
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.ya.outputs.listo != '1'
+        with:
+          python-version: "3.12"
+      - name: Bajar el modelo en fp32 y cuantizarlo
+        if: steps.ya.outputs.listo != '1'
+        run: |
+          pip install --quiet onnxruntime==1.32.0 onnx==1.23.2 onnx_ir==1.1.0 numpy==2.5.5
+          curl -sSfL --retry 3 -o fp32.onnx https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/spanish/flow_lm_main.onnx
+          echo "45c1a49d6c8b6ef89a90bcc3c7e0070e5c0249f56650b9e7241f7867f6336083  fp32.onnx" | sha256sum -c -
+          python - <<'EOF'
+          import onnx
+          from onnxruntime.quantization.matmul_nbits_quantizer import MatMulNBitsQuantizer
+          q = MatMulNBitsQuantizer(onnx.load("fp32.onnx"), bits=8, block_size=64, is_symmetric=True, accuracy_level=4)
+          q.process()
+          m = q.model.model if hasattr(q.model, "model") else q.model
+          onnx.save(m, "${{ env.ARCHIVO }}")
+          EOF
+          ls -l "$ARCHIVO"; sha256sum "$ARCHIVO" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Subirlo a la versión
+        if: steps.ya.outputs.listo != '1'
+        run: |
+          cat > notas.md <<'EOF'
+          Modelo para la voz gratis de Alma (Claudio local y Maricarmen, temporal).
+
+          flow_lm_main de Pocket TTS español (6 capas), cuantizado a 8 bits por bloques de 64 (MatMulNBits de onnxruntime)
+          desde el flow_lm_main.onnx en fp32 de KevinAHM/pocket-tts-onnx (revisión 58a6d00cf13d239b6748cb0769f35c580a8f606c).
+          Solo cambia la cuantización de los pesos.
+
+          Créditos: Pocket TTS de Kyutai; exportación ONNX de KevinAHM. Licencia CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/).
+          EOF
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target main --prerelease --title "Voz gratis (Pocket TTS español) · modelo" --notes-file notas.md
+          gh release upload "$TAG" "$ARCHIVO" -R "$GITHUB_REPOSITORY" --clobber
