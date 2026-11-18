@@ -358,6 +358,10 @@ jobs:
             || { echo "::error::NotifAlma.appex no es una extensión de notificaciones."; exit 1; }
           test -s "$EXT/alma-foto.png" || { echo "::error::NotifAlma.appex no trae la foto de Alma (alma-foto.png)."; exit 1; }
           test -d "$APP/Frameworks/OneSignalFramework.framework" || { echo "::error::Alma.app no trae OneSignalFramework."; exit 1; }
+          # Manifiesto de privacidad (ITMS-91053): sin él Apple manda el correo de «Missing API declaration» en cada subida.
+          for m in "$APP/PrivacyInfo.xcprivacy" "$EXT/PrivacyInfo.xcprivacy"; do
+            plutil -lint "$m" || { echo "::error::Falta o está mal $m (manifiesto de privacidad)."; exit 1; }
+          done
           # El mismo arreglo de la subida (ver abajo), para probarlo en cada PR.
           bash .github/quitar-frameworks-estaticos.sh build/dd/Build/Products/Release-iphoneos/Alma.app
 
@@ -412,10 +416,32 @@ jobs:
             codesign --force --sign - --entitlements NotifAlma/NotifAlma.entitlements "$x"
           done
           codesign --force --sign - --entitlements Alma/Alma.entitlements build/Alma.xcarchive/Products/Applications/Alma.app
+          # Guardia antes de subir (correos de Apple del 3-nov: ITMS-90035 SherpaOnnxC sin firma válida en la 123 e ITMS-90208
+          # MinimumOSVersion de onnxruntime en la 130 y la 131). Si algo de eso vuelve, el robot falla aquí en rojo y no sube.
+          bash .github/revisar-frameworks.sh build/Alma.xcarchive/Products/Applications/Alma.app
           xcodebuild -exportArchive -archivePath build/Alma.xcarchive -exportOptionsPlist ExportOptions.plist \
             -exportPath build/export $AUTH | tail -60
-          echo "Versión 1.0 (${{ github.run_number }}) enviada a TestFlight. Apple la procesa en 5–15 min." >> "$GITHUB_STEP_SUMMARY"
+          echo "Versión 1.0 (${{ github.run_number }}) enviada a TestFlight. Apple la procesa en 5–15 min (el paso «Apple la procesa» espera el resultado)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Borrar la llave
         if: always()
         run: rm -rf "$RUNNER_TEMP/asc"
+
+  # Apple revisa la versión DESPUÉS de subirla y, si la rechaza (ITMS-…), solo avisa por correo: aquí se espera su
+  # resultado y el robot queda en rojo si la marca INVALID o si la versión desaparece. En una Mac sale caro esperar,
+  # por eso va aparte en Linux.
+  procesado:
+    needs: app
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apple la procesa (VALID o INVALID)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          pip install --quiet pyjwt cryptography
+          python3 .github/estado-testflight.py --esperar ${{ github.run_number }}
