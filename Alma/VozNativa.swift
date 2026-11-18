@@ -52,6 +52,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var cambiando = false   // pidiendo la conversación del otro agente
     private var volviendo = false   // la conversación que conecta es Alma que vuelve de Claudio: cierra en una frase
     private var juanDijo: Date?      // la última vez que Juan dijo algo (para no colgar sobre él tras la vuelta de Claudio)
+    // Guardia 18-nov-2026: el último turno de Juan que llegó a ElevenLabs, cuántas palabras traía y la última respuesta de la
+    // voz. Con eso el paso del cierre dice si la llamada se cayó con Juan esperando (LlamadaContinua.notaCierre).
+    private var turnoJuan: Date?
+    private var palabrasTurnoJuan = 0
+    private var respuestaVoz: Date?
     struct Linea: Identifiable { let id: Int; let alma: Bool; let texto: String }
     @Published private(set) var lineas: [Linea] = []
     private var campanas: [String: AVAudioPlayer] = [:]
@@ -328,6 +333,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         empezarAvisos()
         VigiaMusica.shared.empezar()   // La música vuelve (Hub #822): si Alma pausa Spotify, al terminar sigue sola
     }
+
+    /// Lo que se suma al paso de un cierre: si el último turno de Juan quedó sin respuesta (guardia 18-nov-2026).
+    private func cierreNota() -> String { LlamadaContinua.notaCierre(juan: turnoJuan, voz: respuestaVoz, ahora: Date(), palabras: palabrasTurnoJuan) }
 
     /// Para otras piezas de la llamada (AudioLlamada): un paso más en el mismo registro.
     func anotar(_ t: String) { paso(t) }
@@ -1147,6 +1155,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             case .failure(let e):
                 DispatchQueue.main.async {
                     guard AgenteVoz.esSocketActual(tarea, self.ws) else { return }   // el socket viejo: no es la llamada de ahora
+                    // Guardia 18-nov-2026: el corte anormal (1006) llega por aquí: el código del error y si Juan esperaba.
+                    let ne = e as NSError
+                    self.paso("Socket caído: \(ne.domain) \(ne.code)" + (tarea.closeCode.rawValue != 0 ? " · cierre \(tarea.closeCode.rawValue)" : "") + self.cierreNota())
                     self.corte("La voz se cortó: \(e.localizedDescription)")
                 }
             }
@@ -1180,6 +1191,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                     }
                 }
             }
+            turnoJuan = nil; respuestaVoz = nil; palabrasTurnoJuan = 0   // conversación nueva: sin turnos pendientes
             paso("Alma conectada · te escucha" + (colaVoz.isEmpty ? "" : String(format: " (%.1f s dichos mientras conectaba)", Double(colaVoz.count) * 0.128)))
             if inicioEnviado { for c in colaVoz { mandar(["user_audio_chunk": c]) }; colaVoz = [] }   // si no, se mandan tras la ficha
             // Hub #679: «Alma, pásame con Maricarmen» dicho al Modo calle o al inicio con escucha llega aquí como el primer
@@ -1238,12 +1250,18 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let t = ev["agent_response"] as? String, sinSiguesAhi, LlamadaContinua.esPreguntaDeSilencio(t) { callarPregunta(); break }
             sinVozPregunta = false; textoAlmaCoro = Date()
             if let t = ev["agent_response"] as? String { emitir(["tipo": "alma", "texto": t]); linea(true, t); Companero.shared.sub(alma: true, t) }   // modo compañero (Hub #607)
+            if let j = turnoJuan, respuestaVoz.map({ $0 < j }) ?? true { paso(String(format: "%@ contestó en %.1f s", agente.nombre, Date().timeIntervalSince(j))) }
+            respuestaVoz = Date()
         case "user_transcript":
             let ev = j["user_transcription_event"] as? [String: Any] ?? [:]
             if let t = ev["user_transcript"] as? String {
                 if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { sinVozPregunta = false }
                 ultimaActividad = Date(); emitir(["tipo": "yo", "texto": t]); linea(false, t); Companero.shared.sub(alma: false, t)
-                if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { juanDijo = Date() }
+                if !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    juanDijo = Date(); turnoJuan = Date()
+                    palabrasTurnoJuan = t.split(whereSeparator: { $0.isWhitespace }).count
+                    paso("Turno de Juan: \(palabrasTurnoJuan) palabras (llegó a ElevenLabs)")   // sin el texto: solo cuánto habló
+                }
                 // Maricarmen (Hub #666): «pásame con Maricarmen» con la voz de ElevenLabs. La app lo oye y cambia ya, sin esperar a Alma.
                 if local == nil, puedeMaricarmen, !cambiando, MaricarmenReglas.pideIr(t) { pasarAMaricarmen(); return }
                 if tiemposCierre != nil, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -2058,6 +2076,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let por = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
         guard webSocketTask === ws else { return }   // el socket de antes de cambiar de agente (Hablar con Claudio) no corta la llamada
         guard estado == .conectando || estado == .hablando else { return }
+        // Guardia 18-nov-2026: por qué se cerró (código y motivo de ElevenLabs) y si Juan quedó esperando respuesta.
+        paso("Cierre del socket: \(code.rawValue)" + (por.isEmpty ? "" : " (" + String(por.prefix(60)) + ")") + cierreNota())
         // Sin créditos de voz: decirlo claro, no solo colgar.
         if por.range(of: "quota_exceeded|credits|quota", options: [.regularExpression, .caseInsensitive]) != nil {
             corte("Se acabaron los créditos de voz de Alma en ElevenLabs. Recárgalos y vuelve a llamarla; mientras, escríbele por el chat.", sinCreditos: true); return

@@ -172,7 +172,33 @@ enum LlamadaContinua {
     /// Cuántos pasos se guardan en el teléfono para el Hub. Antes la lista se borraba al empezar cada llamada: si la
     /// siguiente empezaba antes de la vuelta de avisos (45 s), los pasos de la que se cortó se perdían.
     static let pasosGuardados = 60
-    static func guardar(_ lista: [String], _ paso: String) -> [String] { Array((lista + [paso]).suffix(pasosGuardados)) }
+    /// Guardia del 18-nov-2026: los pasos del anillo (música que suena o para, toques, el audio del anillo) se repiten mucho y
+    /// empujaban fuera los de la voz: de dos llamadas cortadas ya no quedaba nada. Ahora los del anillo guardan como mucho
+    /// `anilloGuardados` (los más nuevos) y nunca sacan a los de la voz.
+    static let anilloGuardados = 15
+    static func esPasoAnillo(_ linea: String) -> Bool {
+        let n = linea.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "es"))
+        return n.contains("anillo") || n.contains("toque repetido") || n.contains("musica de otra app") || n.contains("spotify")
+    }
+    static func guardar(_ lista: [String], _ paso: String) -> [String] {
+        var l = lista + [paso]
+        var anillo = l.filter { esPasoAnillo($0) }.count
+        while anillo > anilloGuardados, let i = l.firstIndex(where: { esPasoAnillo($0) }) { l.remove(at: i); anillo -= 1 }
+        return Array(l.suffix(pasosGuardados))
+    }
+
+    /// El último turno de Juan quedó sin respuesta de la voz: cuántos segundos lleva esperando (nil si contestó o no habló).
+    /// Va en el paso del cierre: así se ve si la llamada se cayó con Juan esperando (guardia 18-nov: 40 s hablando y nada).
+    static func esperaSinRespuesta(juan: Date?, voz: Date?, ahora: Date) -> TimeInterval? {
+        guard let j = juan else { return nil }
+        if let v = voz, v >= j { return nil }
+        return max(0, ahora.timeIntervalSince(j))
+    }
+    /// El texto que se suma al paso del cierre (vacío si no hay nada que decir).
+    static func notaCierre(juan: Date?, voz: Date?, ahora: Date, palabras: Int) -> String {
+        guard let e = esperaSinRespuesta(juan: juan, voz: voz, ahora: ahora) else { return "" }
+        return String(format: " · el último turno de Juan (%d palabras) quedó sin respuesta hace %.0f s", palabras, e)
+    }
 
     // MARK: - Sin «¿sigues ahí?» (Juan, 17-nov-2026)
 
