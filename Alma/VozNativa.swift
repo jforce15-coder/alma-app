@@ -1331,6 +1331,18 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             mandar(["type": "client_tool_result", "tool_call_id": id, "result": r.texto, "is_error": r.error])
             return
         }
+        // Muestras de voz (Hub #781; MuestraVoz.swift): Claudio pone en la llamada cómo suena una voz. Contesta cuando terminó
+        // de sonar (o por qué no sonó), así Claudio no habla encima.
+        if nombre == MuestraVoz.herramienta {
+            herramienta = true; paso("Claudio pone una muestra de voz")
+            let llamada = inicioLlamada
+            ponerMuestra(p) { [weak self] res, error in
+                guard let self, self.inicioLlamada == llamada else { return }
+                self.herramienta = false; self.ultimaActividad = Date()
+                self.mandar(["type": "client_tool_result", "tool_call_id": id, "result": res, "is_error": error])
+            }
+            return
+        }
         var res = "Esta herramienta no existe en la app.", error = true
         if nombre == "mostrar_en_chat" {
             let titulo = (p["titulo"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1346,6 +1358,35 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
         }
         mandar(["type": "client_tool_result", "tool_call_id": id, "result": res, "is_error": error])
+    }
+
+    /// Pide la muestra de voz al Hub (vozMuestra) en el formato de esta llamada y la pone por la salida de la voz del agente
+    /// (sonar: la cancelación de eco la resta del micrófono). `contestar` va cuando terminó de sonar. Una respuesta de una
+    /// llamada anterior se ignora.
+    private func ponerMuestra(_ p: [String: Any], _ contestar: @escaping (String, Bool) -> Void) {
+        let vid = (p["voice_id"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines), nom = MuestraVoz.nombre(p["nombre"])
+        guard MuestraVoz.idValido(vid) else { contestar(MuestraVoz.noSono("falta el voice_id que devolvió claudio_voces"), true); return }
+        guard let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else {
+            contestar(MuestraVoz.noSono("la app no tiene la conexión con el Hub"), true); return
+        }
+        let hz = formatoSalida.sampleRate, llamada = inicioLlamada
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 30
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "vozMuestra", "voice_id": vid, "nombre": nom,
+            "frase": String((p["frase"] as? String ?? "").prefix(180)), "hz": Int(hz), "token": token, "session": sesion])
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+            let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            DispatchQueue.main.async {
+                guard let self, self.inicioLlamada == llamada else { return }
+                guard self.estado == .hablando else { contestar(MuestraVoz.noSono("la llamada ya no está abierta"), true); return }
+                let a = MuestraVoz.audio(j, hz: self.formatoSalida.sampleRate)
+                guard let pcm = a.pcm else { self.paso("La muestra de voz no sonó: " + a.error); contestar(MuestraVoz.noSono(a.error), true); return }
+                let seg = MuestraVoz.duracion(bytes: pcm.count, hz: self.formatoSalida.sampleRate)
+                self.paso("Suena la muestra de " + nom + String(format: " (%.1f s)", seg))
+                self.sonar(pcm, respiro: true)
+                let espera = max(seg, self.finVozAlma.timeIntervalSinceNow) + MuestraVoz.colita
+                DispatchQueue.main.asyncAfter(deadline: .now() + espera) { contestar(MuestraVoz.sono(nom, segundos: seg), false) }
+            }
+        }.resume()
     }
 
     /// La captura de la pantalla, leída por el Hub (almaFoto con captura, la misma lectura del chat; `voz` pide la versión
