@@ -416,6 +416,9 @@ jobs:
             codesign --force --sign - --entitlements NotifAlma/NotifAlma.entitlements "$x"
           done
           codesign --force --sign - --entitlements Alma/Alma.entitlements build/Alma.xcarchive/Products/Applications/Alma.app
+          # Guardia antes de subir (correos de Apple del 3-nov: ITMS-90035 SherpaOnnxC sin firma válida en la 123 e ITMS-90208
+          # MinimumOSVersion de onnxruntime en la 130 y la 131). Si algo de eso vuelve, el robot falla aquí en rojo y no sube.
+          bash .github/revisar-frameworks.sh build/Alma.xcarchive/Products/Applications/Alma.app
           xcodebuild -exportArchive -archivePath build/Alma.xcarchive -exportOptionsPlist ExportOptions.plist \
             -exportPath build/export $AUTH | tail -60
           echo "Versión 1.0 (${{ github.run_number }}) enviada a TestFlight. Apple la procesa en 5–15 min (el paso «Apple la procesa» espera el resultado)." >> "$GITHUB_STEP_SUMMARY"
