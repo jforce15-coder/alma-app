@@ -558,12 +558,19 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Abre el audio para solo escuchar, sin quitarle el sonido a las otras apps. Si quedó la sesión de la llamada (que no se
     /// mezcla), primero se suelta avisando a las otras apps, para que retomen solas lo que sonaba.
     /// Con «Alma con el anillo» (o lista «un rato») no se toca: esa sesión tiene que seguir para el anillo con el teléfono bloqueado.
+    /// Salvo con música sonando: ahí el anillo no tiene el audio y se mezcla (AnilloVuelve.sesionEscucha).
     static func sesionEscucha() {
         let s = AVAudioSession.sharedInstance()
         let v = VozNativa.shared
-        if v.anilloListo || v.estado == .hablando || v.estado == .conectando {
+        // Con música sonando el anillo no tiene el audio: tomar el que no se mezcla pausaba Spotify al abrir la app (Hub #793).
+        switch AnilloVuelve.sesionEscucha(enLlamada: v.estado == .hablando || v.estado == .conectando, anilloListo: v.anilloListo, otraSuena: otraAppSuena) {
+        case .llamada:   // la llamada ya puso sus opciones (baja la música, no la pausa): no se cambian
+            if s.category != .playAndRecord { try? s.setCategory(.playAndRecord, mode: .default, options: opciones) }
+            try? s.setActive(true); return
+        case .anillo:
             try? s.setCategory(.playAndRecord, mode: .default, options: opciones)
             try? s.setActive(true); return
+        case .mezclar: break
         }
         // También si quedó bajando la música (AudioCalle): soltar avisando es lo que les devuelve el volumen. Eso, solo con la
         // app a la vista: con el teléfono bloqueado iOS no deja volver a abrir el micrófono.
