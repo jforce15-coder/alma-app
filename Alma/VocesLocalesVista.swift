@@ -9,12 +9,13 @@ extension Notification.Name {
 /// Ajustes → Voz y modos → Voces locales (Juan, 17-nov-2026): con qué voz hablan Claudio local y Maricarmen. Por personaje:
 /// Kokoro (en el teléfono, más natural) o la voz del iPhone; la voz de Kokoro, el acento y la velocidad. El modelo se baja
 /// una vez (~92 MB) y queda guardado. Una voz nueva (de grabaciones propias) se agrega por enlace o llega por el catálogo,
-/// sin otra versión de la app.
+/// sin otra versión de la app. «Escuchar las voces» (Hub #780): cada voz del catálogo se oye aquí mismo, sin llamada.
 struct VocesLocalesVista: View {
     @ObservedObject private var v = VocesLocales.shared
     @ObservedObject private var llamada = VozNativa.shared
     @Environment(\.dismiss) private var cerrar
     @StateObject private var prueba = PruebaVoz()
+    @StateObject private var muestra = MuestraVoces()
     @State private var enlace = ""
     @State private var nombre = ""
     @State private var avisoEnlace: String?
@@ -43,6 +44,7 @@ struct VocesLocalesVista: View {
                 }
                 modelo
                 ForEach(VozKokoroReglas.Personaje.allCases, id: \.self) { p in personaje(p) }
+                EscucharVocesSeccion(muestra: muestra, antes: { prueba.parar() })   // cada voz con su botón, sin llamada (Hub #780, EscucharVoces.swift)
                 Section {
                     TextField("Enlace https a la voz (.bin o .npy)", text: $enlace)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL).font(Tipo.sans(14))
@@ -63,7 +65,7 @@ struct VocesLocalesVista: View {
             .foregroundStyle(Tinta.tinta)
             .toolbar(.hidden, for: .navigationBar)
             .onAppear { v.actualizarCatalogo() }
-            .onDisappear { prueba.parar() }
+            .onDisappear { prueba.parar(); muestra.parar() }
         }
         .tint(Tinta.peach)
     }
@@ -116,6 +118,7 @@ struct VocesLocalesVista: View {
                 }
             }
             Button {
+                muestra.parar()
                 prueba.probar(p)
             } label: {
                 Label(prueba.sonando == p ? "Sonando…" : "Probar", systemImage: "play.circle.fill").font(Tipo.sans(15, .medium))
