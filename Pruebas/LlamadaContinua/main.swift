@@ -164,11 +164,11 @@ revisa(mix.filter { C.esPasoAnillo($0) }.count == C.anilloGuardados, "del anillo
 revisa(mix.filter { $0.contains("Turno de Juan") }.count == 5 && mix.first == "16:16:00 Turno de Juan: 3 palabras", "los pasos de la voz siguen ahí aunque el anillo mande 100")
 revisa(mix.last == "16:17:99 Hay música sonando: no la pauso; el anillo vuelve cuando pare", "el último paso del anillo se guarda")
 revisa(C.esPasoAnillo("10:00 Toque repetido ignorado: la llamada acaba de empezar") && !C.esPasoAnillo("10:00 Alma conectada · te escucha") && !C.esPasoAnillo("10:00 ElevenLabs cerró la voz (1006)") && !C.esPasoAnillo("10:00 Abriendo el micrófono (la música baja, no se pausa)") && C.esPasoAnillo("10:00 La música de otra app paró (fin): vuelve cuando Alma termine"), "se reconoce qué paso es del anillo")
-let t0 = Date()
-revisa(C.esperaSinRespuesta(juan: t0, voz: nil, ahora: t0.addingTimeInterval(48)) == 48, "Juan habló y la voz nunca contestó: 48 s esperando")
-revisa(C.esperaSinRespuesta(juan: t0, voz: t0.addingTimeInterval(2), ahora: t0.addingTimeInterval(48)) == nil, "si la voz contestó después, no hay espera")
-revisa(C.esperaSinRespuesta(juan: nil, voz: nil, ahora: t0) == nil, "si Juan no habló, no hay espera")
-revisa(C.notaCierre(juan: t0, voz: nil, ahora: t0.addingTimeInterval(48), palabras: 90).contains("90 palabras") && C.notaCierre(juan: nil, voz: nil, ahora: t0, palabras: 0).isEmpty, "la nota del cierre dice las palabras y la espera, o nada")
+let tj = Date()
+revisa(C.esperaSinRespuesta(juan: tj, voz: nil, ahora: tj.addingTimeInterval(48)) == 48, "Juan habló y la voz nunca contestó: 48 s esperando")
+revisa(C.esperaSinRespuesta(juan: tj, voz: tj.addingTimeInterval(2), ahora: tj.addingTimeInterval(48)) == nil, "si la voz contestó después, no hay espera")
+revisa(C.esperaSinRespuesta(juan: nil, voz: nil, ahora: tj) == nil, "si Juan no habló, no hay espera")
+revisa(C.notaCierre(juan: tj, voz: nil, ahora: tj.addingTimeInterval(48), palabras: 90).contains("90 palabras") && C.notaCierre(juan: nil, voz: nil, ahora: tj, palabras: 0).isEmpty, "la nota del cierre dice las palabras y la espera, o nada")
 
 // MARK: - Sin «¿sigues ahí?» en calle ni conferencia (Juan, 17-nov-2026)
 
