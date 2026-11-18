@@ -71,6 +71,9 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     private var temporal = false
     /// ¿Ocupa el micrófono? Entonces el Modo Inicio no abre otro y el audio no se suelta.
     var ocupaMicrofono: Bool { encendido || temporal }
+    /// ¿Alma está atendiendo? (oye un pedido, piensa, contesta, está en la llamada o dice un aviso): si la música para ahora,
+    /// la paró Alma y vuelve al terminar (VigiaMusica, Hub #822).
+    var atendiendo: Bool { temporal || fase == .oyendo || fase == .pensando || fase == .hablando || fase == .llamada }
 
     // MARK: - El micrófono
 
@@ -314,6 +317,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
     /// Encender o apagar a pedido de Juan (Ajustes, Siri, un atajo) o de la conferencia: queda guardado, y al abrir la app
     /// vuelve como lo dejó (EstadoCalle). La prueba usa encender()/apagar() directo y no cambia lo guardado.
     func poner(_ on: Bool, por origen: EstadoCalle.Origen = .ajustes) {
+        VigiaMusica.tomo(on ? "al encender el Modo calle" : "al apagar el Modo calle")
         if let g = EstadoCalle.guardar(origen, on: on) { UserDefaults.standard.set(g, forKey: EstadoCalle.clave) }
         if on { encender() } else { apagar() }
     }
@@ -623,6 +627,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         }
         compartido = false
         let s = AVAudioSession.sharedInstance()
+        VigiaMusica.tomo("al abrir el micrófono del Modo calle")
         if temporal {
             // Aviso con la app abierta: las otras apps bajan el volumen mientras Alma habla y escucha; vuelven al soltar el audio.
             try? s.setCategory(.playAndRecord, mode: .default, options: AudioCalle.ios(AudioCalle.bajando))
@@ -673,6 +678,7 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         let puedeSoltar = UIApplication.shared.applicationState == .active && donde != .conferencia && !compartido
         let cambio = AudioCalle.cambio(de: antes, a: o, appActiva: puedeSoltar)
         guard cambio != .nada else { return }
+        VigiaMusica.tomo("en el Modo calle (" + fase.rawValue + ")")
         ajusteAudioHasta = Date().addingTimeInterval(1.5)
         let corriendo = cambio == .soltarYCambiar && micAbierto && motor.isRunning
         if cambio == .soltarYCambiar {
