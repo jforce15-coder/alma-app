@@ -22,6 +22,8 @@ struct ContentView: View {
     @State private var tarjetasClub = false
     /// Ajustes → Voz y modos → «Voces locales» (VocesLocalesVista.swift).
     @State private var vocesLocales = false
+    /// Modo Creator (Creator.swift, Hub #770): a pantalla completa cuando Claudio cambia el diseño; la llamada sigue abajo.
+    @State private var creator = false
     @ObservedObject private var voz = VozNativa.shared
     @ObservedObject private var mejora = MejoraCampo.shared
     /// Modo guiado: la tarjeta de datos para copiar (GuiaNavegador.swift); sigue aunque la llamada termine.
@@ -91,6 +93,11 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .abrirTarjetasClub)) { _ in llamadaOculta = true; tarjetasClub = true }
             .background { Color.clear.sheet(isPresented: $vocesLocales) { VocesLocalesVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirVocesLocales)) { _ in vocesLocales = true }
+            .background { Color.clear.fullScreenCover(isPresented: $creator) { CreatorVista() } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirCreator)) { _ in
+                guard !CreatorReglas.esCreator(nav.web.url) else { llamadaOculta = true; return }   // ya lo ve en el navegador
+                llamadaOculta = true; creator = true
+            }
     }
 
     /// La roca del navegador: se aparta de los cuadros de texto, brilla mientras escucha y cuenta los toques.
