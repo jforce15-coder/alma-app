@@ -4,6 +4,10 @@ name: Estado TestFlight
 
 on:
   workflow_dispatch:
+    inputs:
+      cuantas:
+        description: Cuántas versiones mostrar
+        default: "20"
   pull_request:
     paths:
       - .github/estado-testflight.py
@@ -22,4 +26,4 @@ jobs:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
           pip install --quiet pyjwt cryptography
-          python3 .github/estado-testflight.py | tee -a "$GITHUB_STEP_SUMMARY"
+          CUANTAS=${{ inputs.cuantas || 200 }} python3 .github/estado-testflight.py | tee -a "$GITHUB_STEP_SUMMARY"

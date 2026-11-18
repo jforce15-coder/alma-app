@@ -4,7 +4,7 @@
 #   python3 .github/estado-testflight.py                 -> tabla de las últimas 20 versiones
 #   python3 .github/estado-testflight.py --esperar 123   -> espera a que Apple procese la versión 123 (máx. 40 min);
 #                                                           sale con error si queda INVALID o FAILED.
-import json, os, sys, time, urllib.request, urllib.parse
+import datetime, json, os, sys, time, urllib.request, urllib.parse
 import jwt  # PyJWT
 
 API = "https://api.appstoreconnect.apple.com/v1"
@@ -36,6 +36,12 @@ def app_id():
     return d["data"][0]["id"]
 
 
+def utc(fecha):
+    if not fecha:
+        return ""
+    return datetime.datetime.fromisoformat(fecha).astimezone(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+
 def builds(app, limite=20, version=None):
     p = {"filter[app]": app, "sort": "-uploadedDate", "limit": str(limite),
          "fields[builds]": "version,uploadedDate,processingState,expired,minOsVersion,buildBetaDetail",
@@ -50,7 +56,7 @@ def builds(app, limite=20, version=None):
         a = b["attributes"]
         rel = (b.get("relationships", {}).get("buildBetaDetail", {}).get("data") or {}).get("id")
         bb = beta.get(rel, {})
-        filas.append({"build": a.get("version"), "fecha": (a.get("uploadedDate") or "")[:16].replace("T", " "),
+        filas.append({"build": a.get("version"), "fecha": utc(a.get("uploadedDate")),
                       "estado": a.get("processingState"), "testflight": bb.get("internalBuildState") or "",
                       "ios_min": a.get("minOsVersion") or "", "vencida": a.get("expired")})
     return filas
@@ -83,7 +89,7 @@ def main():
                 sys.exit(1)
             time.sleep(60)
         print(f"::warning::La build {n} sigue sin procesar tras 40 min."); return
-    filas = builds(app)
+    filas = builds(app, int(os.environ.get("CUANTAS", "20")))
     tabla(filas)
     malas = [f for f in filas if f["estado"] in ("INVALID", "FAILED")]
     if malas:
