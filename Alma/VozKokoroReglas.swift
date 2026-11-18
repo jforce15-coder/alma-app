@@ -25,7 +25,8 @@ enum VozKokoroReglas {
     // MARK: - Personajes y su voz
 
     enum Personaje: String, CaseIterable { case claudio, maricarmen }
-    enum Motor: String, CaseIterable { case kokoro, iphone }
+    /// pocket: la voz gratis (VozPocketReglas.swift, temporal), con Kokoro de respaldo.
+    enum Motor: String, CaseIterable { case pocket, kokoro, iphone }
 
     struct Ajustes: Equatable {
         var motor: Motor
@@ -36,12 +37,22 @@ enum VozKokoroReglas {
 
     static let velocidades: ClosedRange<Float> = 0.7...1.4
 
-    /// De fábrica: Kokoro con la voz provisional. Claudio en latino (seseo) y Maricarmen de España (Weebo 3).
+    /// De fábrica: la voz gratis (Juan, 18-nov-2026, temporal) y, de respaldo, Kokoro con la voz provisional. Claudio en
+    /// latino (seseo) y Maricarmen de España (Weebo 3).
     static func deFabrica(_ p: Personaje) -> Ajustes {
         switch p {
-        case .claudio: return Ajustes(motor: .kokoro, voz: "em_alex", velocidad: 1.05, acento: .latino)
-        case .maricarmen: return Ajustes(motor: .kokoro, voz: "ef_dora", velocidad: 1.0, acento: .espana)
+        case .claudio: return Ajustes(motor: .pocket, voz: "em_alex", velocidad: 1.05, acento: .latino)
+        case .maricarmen: return Ajustes(motor: .pocket, voz: "ef_dora", velocidad: 1.0, acento: .espana)
         }
+    }
+
+    /// Una sola vez al llegar la voz gratis: lo guardado con Kokoro pasa a la voz gratis (Kokoro queda de respaldo, con la
+    /// misma voz, acento y velocidad). Lo de la voz del iPhone se respeta.
+    static let claveGratis = "voz_local_gratis_v1"
+    static func aGratis(_ d: [String: Any]?) -> [String: Any]? {
+        guard var d, (d["motor"] as? String) == Motor.kokoro.rawValue else { return d }
+        d["motor"] = Motor.pocket.rawValue
+        return d
     }
 
     /// Lo guardado en el teléfono (UserDefaults), con límites; lo que falte o no sirva, de fábrica.
@@ -193,9 +204,10 @@ enum VozKokoroReglas {
 
     // MARK: - Cuándo se usa y cuándo cae a la voz del iPhone
 
-    /// Kokoro solo si el personaje lo tiene, el modelo y su voz ya están en el teléfono y no salió lento en esta llamada.
+    /// Kokoro solo si el personaje lo tiene (o tiene la voz gratis, que lo usa de respaldo), el modelo y su voz ya están en
+    /// el teléfono y no salió lento en esta llamada.
     static func usarKokoro(_ a: Ajustes, modeloListo: Bool, vozLista: Bool, lentas: Int) -> Bool {
-        a.motor == .kokoro && modeloListo && vozLista && lentas < maxLentas
+        (a.motor == .kokoro || a.motor == .pocket) && modeloListo && vozLista && lentas < maxLentas
     }
     /// Tras estas frases lentas seguidas en una conversación, el resto va con la voz del iPhone (que no se trabe).
     static let maxLentas = 2
@@ -252,6 +264,7 @@ enum VozKokoroReglas {
 
     /// Lo que se ve en el registro: «Kokoro · em_alex · latino».
     static func descripcion(_ a: Ajustes, usa: Bool) -> String {
+        if a.motor == .pocket { return usa ? "voz gratis (Pocket) · Kokoro de respaldo" : "la voz gratis aún no está lista" }
         guard a.motor == .kokoro else { return "voz del iPhone" }
         return usa ? "Kokoro · \(a.voz) · \(a.acento == .espana ? "España" : "latino")" : "Kokoro aún no está listo: voz del iPhone"
     }

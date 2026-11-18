@@ -37,11 +37,12 @@ struct VocesLocalesVista: View {
                             Text("Voces")
                             Text("locales").italic()
                         }.font(Tipo.serif(44)).lineSpacing(-4).accessibilityAddTraits(.isHeader)
-                        Text("Con qué voz hablan Claudio local y Maricarmen. Kokoro suena más natural y trabaja en tu iPhone, sin internet ni créditos. Si un día falla o tarda, sigue la voz del iPhone sin cortar la conversación.")
+                        Text("Con qué voz hablan Claudio local y Maricarmen. Por ahora, la voz gratis (de prueba, mientras se hacen las definitivas); Kokoro queda de respaldo. Las dos trabajan en tu iPhone, sin internet ni créditos. Si un día fallan o tardan, sigue la voz del iPhone sin cortar la conversación.")
                             .font(Tipo.sans(13)).foregroundStyle(Tinta.suave)
                     }
                     .listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 8, leading: 4, bottom: 8, trailing: 4))
                 }
+                gratisSeccion
                 modelo
                 ForEach(VozKokoroReglas.Personaje.allCases, id: \.self) { p in personaje(p) }
                 EscucharVocesSeccion(muestra: muestra, antes: { prueba.parar() })   // cada voz con su botón, sin llamada (Hub #780, EscucharVoces.swift)
@@ -68,6 +69,30 @@ struct VocesLocalesVista: View {
             .onDisappear { prueba.parar(); muestra.parar() }
         }
         .tint(Tinta.peach)
+    }
+
+    /// La voz gratis (Pocket, temporal): se baja una vez, como Kokoro.
+    private var gratisSeccion: some View {
+        Section {
+            switch v.gratis {
+            case .listo:
+                Label("La voz gratis está en tu iPhone", systemImage: "checkmark.circle.fill").font(Tipo.sans(15, .medium))
+                Button("Borrar la voz gratis (libera \(VozPocketReglas.megas) MB)", role: .destructive) { v.borrarGratis() }.font(Tipo.sans(14))
+            case .bajando(let f):
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Bajando la voz gratis… \(Int(f * 100)) %").font(Tipo.sans(14))
+                    ProgressView(value: f).tint(Tinta.peach)
+                }
+            case .falta, .error:
+                Button { v.descargarGratis(celular: true) } label: {
+                    Label("Bajar la voz gratis (\(VozPocketReglas.megas) MB)", systemImage: "arrow.down.circle.fill").font(Tipo.sans(15, .medium))
+                }.foregroundStyle(Tinta.peach)
+                if case .error(let e) = v.gratis { Text("No se pudo: " + e).font(Tipo.sans(12)).foregroundStyle(.red) }
+            }
+        } header: { Text("Voz gratis (de prueba)").font(Tipo.sans(12, .medium)) } footer: {
+            Text("Claudio (gratis) y Maricarmen (gratis). Se baja una sola vez; mientras no esté, habla Kokoro o la voz del iPhone. " + VozPocketReglas.credito)
+                .font(Tipo.sans(11))
+        }
     }
 
     private var modelo: some View {
@@ -98,10 +123,14 @@ struct VocesLocalesVista: View {
         let poner = { (cambio: (inout VozKokoroReglas.Ajustes) -> Void) in var b = a; cambio(&b); v.poner(b, para: p) }
         return Section {
             Picker("Motor", selection: Binding(get: { a.motor }, set: { m in poner { $0.motor = m } })) {
+                Text("Gratis").tag(VozKokoroReglas.Motor.pocket)
                 Text("Kokoro").tag(VozKokoroReglas.Motor.kokoro)
-                Text("Voz del iPhone").tag(VozKokoroReglas.Motor.iphone)
+                Text("iPhone").tag(VozKokoroReglas.Motor.iphone)
             }.pickerStyle(.segmented)
-            if a.motor == .kokoro {
+            if a.motor == .pocket {
+                Text("Habla con \(VozPocketReglas.voz(p).nombre). Si falla, sigue Kokoro con esta voz:").font(Tipo.sans(13)).foregroundStyle(Tinta.suave)
+            }
+            if a.motor == .kokoro || a.motor == .pocket {
                 Picker("Voz", selection: Binding(get: { a.voz }, set: { id in poner { $0.voz = id } })) {
                     ForEach(v.voces) { voz in
                         Text(voz.nombre + (v.bajandoVoz.contains(voz.id) ? " · bajando" : v.vozLista(voz.id) ? "" : " · sin bajar")).tag(voz.id)

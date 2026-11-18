@@ -225,7 +225,7 @@ final class HablaPorFrases {
     private let respaldo: MotorVoz
     private let hz: Int
     /// Lo que se anota (también cuánto tarda Kokoro por frase).
-    var paso: ((String) -> Void)? { didSet { (principal as? MotorKokoro)?.paso = paso } }
+    var paso: ((String) -> Void)? { didSet { (principal as? MotorKokoro)?.paso = paso; (principal as? MotorPocket)?.paso = paso } }
     /// Hasta cuándo suena lo que ya se entregó (para saber cuándo volver a escuchar).
     private(set) var finCola: Date?
 
@@ -241,6 +241,7 @@ final class HablaPorFrases {
     }
 
     var conKokoro: Bool { principal != nil && lentas < VozKokoroReglas.maxLentas }
+    private var nombrePrincipal: String { principal is MotorPocket ? "La voz gratis" : "Kokoro" }
 
     func decir(_ texto: String, trozo: @escaping (Data) -> Void, fin: @escaping () -> Void) {
         cancelar()
@@ -268,7 +269,8 @@ final class HablaPorFrases {
         inicioFrase = Date(); audioFrase = 0
         if esPrincipal {
             let enCola = max(0, (finCola ?? Date()).timeIntervalSinceNow)
-            let limite = VozKokoroReglas.limite(primeraFrase: indice == 0, enCola: enCola)
+            // La voz gratis la primera vez abre su modelo y arma la voz: unos segundos más de espera.
+            let limite = VozKokoroReglas.limite(primeraFrase: indice == 0, enCola: enCola) + ((motor as? MotorPocket)?.fria == true ? 6 : 0)
             reloj = Timer.scheduledTimer(withTimeInterval: limite, repeats: false) { [weak self] _ in self?.vencio(mio, limite) }
         }
         motor.sintetizar(frases[indice], hz: hz, trozo: { [weak self] d in self?.llego(d, mio) }, fin: { [weak self] ok in self?.termino(ok, mio) })
@@ -280,15 +282,21 @@ final class HablaPorFrases {
         audioFrase += dura
         finCola = VozKokoroReglas.finCola(finCola, ahora: Date(), dura: dura)
         alTrozo?(d)
+        // La voz gratis entrega el audio mientras lo arma: si sigue llegando a tiempo, la frase no se corta por el reloj.
+        if esPrincipal, principal is MotorPocket, let fin = finCola {
+            reloj?.invalidate()
+            let limite = max(0, fin.timeIntervalSinceNow) + VozKokoroReglas.respiro
+            reloj = Timer.scheduledTimer(withTimeInterval: limite, repeats: false) { [weak self] _ in self?.vencio(mio, limite) }
+        }
     }
 
     private func termino(_ ok: Bool, _ mio: Int) {
         guard mio == intento else { return }
         if esPrincipal {
-            if !ok { conPrincipal = false; paso?("Kokoro falló: sigue la voz del iPhone"); siguiente(); return }
+            if !ok { conPrincipal = false; paso?(nombrePrincipal + " falló: sigue la voz del iPhone"); siguiente(); return }
             if VozKokoroReglas.lenta(segundos: Date().timeIntervalSince(inicioFrase), audio: audioFrase) && indice > 0 {
                 lentas += 1
-                if lentas >= VozKokoroReglas.maxLentas { conPrincipal = false; paso?("Kokoro va lento en este teléfono: en esta conversación sigue la voz del iPhone") }
+                if lentas >= VozKokoroReglas.maxLentas { conPrincipal = false; paso?(nombrePrincipal + " va lento en este teléfono: en esta conversación sigue la voz del iPhone") }
             } else { lentas = 0 }
         }
         indice += 1
@@ -300,7 +308,7 @@ final class HablaPorFrases {
         principal?.cancelar()
         conPrincipal = false
         lentas += 1
-        paso?(String(format: "Kokoro tardó más de %.1f s: esta frase y las que siguen, con la voz del iPhone", limite))
+        paso?(nombrePrincipal + String(format: " tardó más de %.1f s: esta frase y las que siguen, con la voz del iPhone", limite))
         siguiente()
     }
 }
@@ -320,6 +328,9 @@ final class VocesLocales: ObservableObject {
     private var tablas: [String: [Float]] = [:]
     private var observaProgreso: NSKeyValueObservation?
     private var tareaModelo: URLSessionDownloadTask?
+    /// La voz gratis (Pocket, temporal; la descarga en VozPocket.swift).
+    @Published var gratis: Estado = .falta
+    var observaGratis: NSKeyValueObservation?
 
     let carpeta: URL
     var modeloURL: URL { carpeta.appendingPathComponent("model_quantized.onnx") }
@@ -334,13 +345,20 @@ final class VocesLocales: ObservableObject {
         var c = carpeta
         var v = URLResourceValues(); v.isExcludedFromBackup = true
         try? c.setResourceValues(v)
+        let u = UserDefaults.standard
+        let migrar = !u.bool(forKey: VozKokoroReglas.claveGratis)
         for p in VozKokoroReglas.Personaje.allCases {
-            porPersonaje[p] = VozKokoroReglas.leer(UserDefaults.standard.dictionary(forKey: "voz_local_" + p.rawValue), p)
+            var d = u.dictionary(forKey: "voz_local_" + p.rawValue)
+            if migrar, d != nil { d = VozKokoroReglas.aGratis(d); u.set(d, forKey: "voz_local_" + p.rawValue) }
+            porPersonaje[p] = VozKokoroReglas.leer(d, p)
         }
+        u.set(true, forKey: VozKokoroReglas.claveGratis)
         modelo = modeloListo ? .listo : .falta
+        gratis = gratisLista ? .listo : .falta
         cargarCatalogo(try? Data(contentsOf: catalogoLocal))
         NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { _ in
             KokoroOnnx.soltar()
+            PocketOnnx.soltar()
         }
     }
 
@@ -352,6 +370,7 @@ final class VocesLocales: ObservableObject {
         porPersonaje[p] = a
         UserDefaults.standard.set(VozKokoroReglas.guardar(a), forKey: "voz_local_" + p.rawValue)
         if a.motor == .kokoro && !vozLista(a.voz) { descargarVoz(a.voz, celular: true) }
+        if a.motor == .pocket && !gratisLista { descargarGratis(celular: true) }
     }
 
     // MARK: Lo que pide ClaudioLocal
@@ -361,15 +380,26 @@ final class VocesLocales: ObservableObject {
     }
     func vozLista(_ id: String) -> Bool { FileManager.default.fileExists(atPath: archivoVoz(id).path) }
 
-    /// El motor Kokoro del personaje, si lo tiene elegido y ya está todo en el teléfono; si no, nil (la voz del iPhone). Si
-    /// falta algo, se baja por Wi-Fi para la próxima vez.
-    func motor(para p: VozKokoroReglas.Personaje) -> MotorKokoro? {
+    /// El motor del personaje: la voz gratis (con Kokoro de respaldo) o Kokoro, si lo tiene elegido y ya está en el
+    /// teléfono; si no, nil (la voz del iPhone). Si falta algo, se baja por Wi-Fi para la próxima vez. Con la voz gratis aún
+    /// sin bajar, habla Kokoro si ya está.
+    func motor(para p: VozKokoroReglas.Personaje) -> MotorVoz? {
         let a = ajustes(p)
-        guard a.motor == .kokoro else { return nil }
+        if a.motor == .pocket {
+            let k = motorKokoro(a, bajar: false)
+            if let g = motorGratis(p, respaldo: k) { return g }
+            descargarGratis(celular: false)
+            return k
+        }
+        return motorKokoro(a, bajar: true)
+    }
+
+    private func motorKokoro(_ a: VozKokoroReglas.Ajustes, bajar: Bool) -> MotorKokoro? {
+        guard a.motor == .kokoro || a.motor == .pocket else { return nil }
         actualizarCatalogo()
         guard VozKokoroReglas.usarKokoro(a, modeloListo: modeloListo, vozLista: vozLista(a.voz), lentas: 0), let t = tabla(a.voz) else {
-            if !modeloListo { descargarModelo(celular: false) }
-            if !vozLista(a.voz) { descargarVoz(a.voz, celular: false) }
+            if bajar && !modeloListo { descargarModelo(celular: false) }
+            if bajar && !vozLista(a.voz) { descargarVoz(a.voz, celular: false) }
             return nil
         }
         return MotorKokoro(ajustes: a, tabla: t, excepciones: pronunciaciones)

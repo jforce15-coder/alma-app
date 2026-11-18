@@ -229,6 +229,19 @@ jobs:
         run: |
           xcrun swiftc Alma/FonemasES.swift Alma/VozKokoroReglas.swift Pruebas/VozKokoro/main.swift -o /tmp/voz-kokoro
           /tmp/voz-kokoro
+      # La voz gratis (Pocket TTS, temporal; Juan, 18-nov-2026): el tokenizador (los mismos números que sentencepiece), los
+      # estados del modelo (bundle.json), el texto y las voces que trae la app. Baja los dos archivos chicos con su suma.
+      - name: Probar la voz gratis
+        if: env.SUBIR != 'true'
+        run: |
+          mkdir -p /tmp/pocket
+          B=https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/spanish
+          curl -sSfL --retry 3 -o /tmp/pocket/tokenizer.model "$B/tokenizer.model"
+          curl -sSfL --retry 3 -o /tmp/pocket/bundle.json "$B/bundle.json"
+          echo "aac2b96478e3e3068712bd5c45dc196f84b7341ea72587c33a2094957f0c1b0c  /tmp/pocket/tokenizer.model" | shasum -a 256 -c -
+          echo "c9f18b5fc326c2a99f645588b79ef27ef3c9c6c3066f8df73bccb7f7c1f855b3  /tmp/pocket/bundle.json" | shasum -a 256 -c -
+          xcrun swiftc Alma/FonemasES.swift Alma/VozKokoroReglas.swift Alma/VozPocketReglas.swift Pruebas/VozPocket/main.swift -o /tmp/voz-pocket
+          /tmp/voz-pocket /tmp/pocket
       # Poner una voz en la llamada (Hub #779): qué voz pidió Claudio, la lista, la frase de cada voz y lo que se le contesta.
       - name: Probar poner una voz en la llamada
         if: env.SUBIR != 'true'
@@ -359,6 +372,10 @@ jobs:
             test -s "$APP/Calle/$n" || { echo "::error::Alma.app no trae Calle/$n (el modelo del Modo calle)."; exit 1; }
           done
           ls -l "$APP/Calle"
+          # Las voces gratis (Pocket): sus embeddings van dentro de la app; sin ellas, Claudio y Maricarmen caen a Kokoro.
+          for n in claudio_gratis.bin maricarmen_gratis.bin; do
+            test -s "$APP/$n" || { echo "::error::Alma.app no trae $n (la voz gratis)."; exit 1; }
+          done
           # Notificaciones push (Ticket #28): la extensión va dentro de la app y el SDK de OneSignal también.
           EXT="$APP/PlugIns/NotifAlma.appex"
           test -x "$EXT/NotifAlma" || { echo "::error::Alma.app no trae PlugIns/NotifAlma.appex (la extensión de las notificaciones push)."; exit 1; }
