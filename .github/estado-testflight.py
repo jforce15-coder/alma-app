@@ -69,6 +69,12 @@ def tabla(filas):
               + ("  (vencida)" if f["vencida"] else ""))
 
 
+def rechazo(n, que):
+    print(f"::error::{que}. Apple manda el motivo (ITMS-…) por correo al titular de la cuenta de App Store Connect; "
+          "también sale en App Store Connect → TestFlight.")
+    sys.exit(1)
+
+
 def main():
     for v in ("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8"):
         if not os.environ.get(v):
@@ -76,19 +82,26 @@ def main():
     app = app_id()
     if len(sys.argv) > 2 and sys.argv[1] == "--esperar":
         n = sys.argv[2]
-        fin = time.time() + 40 * 60
-        while time.time() < fin:
+        inicio = time.time()
+        visto = False
+        while time.time() - inicio < 40 * 60:
             f = builds(app, 1, n)
-            estado = f[0]["estado"] if f else "AÚN NO APARECE"
-            print(f"build {n}: {estado}", flush=True)
+            estado = f[0]["estado"] if f else None
+            print(f"build {n}: {estado or 'aún no aparece'}  ({int((time.time() - inicio) / 60)} min)", flush=True)
             if estado == "VALID":
+                print(f"Apple dejó la build {n} lista (VALID).")
                 return
             if estado in ("INVALID", "FAILED"):
-                print(f"::error::Apple marcó la build {n} como {estado}. El motivo (ITMS-…) llega por correo a la cuenta "
-                      "de App Store Connect y sale en App Store Connect → TestFlight.")
-                sys.exit(1)
+                rechazo(n, f"Apple marcó la build {n} como {estado}")
+            if estado:
+                visto = True
+            elif visto:
+                rechazo(n, f"La build {n} desapareció de App Store Connect mientras Apple la procesaba")
+            elif time.time() - inicio > 25 * 60:
+                rechazo(n, f"La build {n} se subió pero no aparece en App Store Connect tras 25 min")
             time.sleep(60)
-        print(f"::warning::La build {n} sigue sin procesar tras 40 min."); return
+        print(f"::warning::La build {n} sigue en proceso tras 40 min; revísala con el robot «Estado TestFlight».")
+        return
     filas = builds(app, int(os.environ.get("CUANTAS", "20")))
     tabla(filas)
     malas = [f for f in filas if f["estado"] in ("INVALID", "FAILED")]
