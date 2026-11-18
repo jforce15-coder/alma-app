@@ -1204,6 +1204,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             coro.termina(rt["tool_call_id"] as? String ?? "")
             if (rt["tool_name"] as? String ?? "") == "secretaria" { pedirTarjeta(intento: 0) }
             if agente == .claudio, (rt["tool_name"] as? String ?? "").hasPrefix("claudio_") { pedirPanelClaudio(intento: 0) }   // lo que dejó la herramienta de Claudio
+            // Modo Creator (Hub #770): Claudio cambió el diseño; el Modo Creator sube a pantalla completa y la llamada sigue abajo.
+            if CreatorReglas.abre(herramienta: rt["tool_name"] as? String ?? "", conClaudio: agente == .claudio, error: rt["is_error"] as? Bool ?? false) {
+                NotificationCenter.default.post(name: .abrirCreator, object: nil)
+            }
         case "interruption":
             if let d = saludoDesde, Date().timeIntervalSince(d) < LlamadaContinua.topeSaludo { paso("ElevenLabs cortó el saludo (oyó voz)") }
             // Cuánta voz de Alma se tiró (lo que faltaba por sonar): si se repite, se ve en el registro por qué no se oyó.
