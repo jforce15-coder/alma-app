@@ -417,8 +417,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Tres toques a la roca del navegador: Alma solo por voz (sin el chat), sobre lo que se ve. La página (título y dirección)
     /// va en la ficha de la llamada; la captura la lee el Hub (almaFoto, la misma del chat) y llega como contexto en unos
     /// segundos. Con la llamada ya abierta, la captura nueva va como contexto («mira esto ahora»).
-    func hablarSobrePantalla(captura: String?, titulo: String, direccion: String) {
-        let donde = titulo.isEmpty ? direccion : "«" + titulo + "»" + (direccion.isEmpty ? "" : " (" + direccion + ")")
+    /// Con `privada` (pausa de privacidad del navegador) no hay captura y Alma sabe que esa pantalla es solo de Juan.
+    func hablarSobrePantalla(captura: String?, titulo: String, direccion: String, privada: Bool = false) {
+        var donde = titulo.isEmpty ? direccion : "«" + titulo + "»" + (direccion.isEmpty ? "" : " (" + direccion + ")")
+        if privada { donde += " — PANTALLA PRIVADA (contraseña, código, tarjeta o «soy humano»): no te llega captura y no la pidas; dile «te toca a ti» si pregunta por eso" }
         if estado == .hablando || estado == .conectando {
             if let captura { describir(captura, aviso: "Juan te muestra otra pantalla: " + donde + ".") }
             return
@@ -427,7 +429,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         // Sin el permiso del micrófono (nunca se preguntó), se pide ahora con la app abierta y después se llama.
         if AVAudioSession.sharedInstance().recordPermission == .undetermined {
             AVAudioSession.sharedInstance().requestRecordPermission { [weak self] ok in
-                DispatchQueue.main.async { if ok { self?.hablarSobrePantalla(captura: captura, titulo: titulo, direccion: direccion) } }
+                DispatchQueue.main.async { if ok { self?.hablarSobrePantalla(captura: captura, titulo: titulo, direccion: direccion, privada: privada) } }
             }
             return
         }
@@ -435,6 +437,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         hablar()
         guard estado == .conectando else { pantalla = nil; return }
         if let captura { describir(captura, aviso: nil) }
+    }
+    /// Pausa de privacidad del navegador (NavegadorReglas): con la llamada abierta, Alma sabe que ya no ve esa página y cuándo
+    /// vuelve a verla. Solo el motivo, nunca nada de la pantalla.
+    func avisarPrivacidad(_ m: NavegadorReglas.Motivo?) {
+        guard estado == .hablando else { return }
+        mandar(["type": "contextual_update", "text": m?.paraAlma
+            ?? "FIN DE LA PAUSA DE PRIVACIDAD: Juan terminó lo privado; puedes volver a leer la página si hace falta."])
     }
     /// ¿Ya tiene cómo pedir la ficha al Hub? (la guarda el inicio la primera vez que se abre la app con sesión)
     var puedeHablar: Bool { Llave.leer("voz_url") != nil && Llave.leer("voz_token") != nil && Llave.leer("voz_sesion") != nil }
