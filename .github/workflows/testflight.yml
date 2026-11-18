@@ -158,6 +158,14 @@ jobs:
           xcrun swiftc Alma/InicioVoz.swift Pruebas/InicioVoz/main.swift -o /tmp/inicio-voz
           /tmp/inicio-voz
 
+      # Archivos para Alma (Hub, Juan 18-nov-2026): «Compartir» o «Abrir en Alma» deja el archivo cargado en el chat del
+      # inicio; solo los tipos que el Hub lee y hasta 8 MB; lo que no sirve se dice. Lógica pura.
+      - name: Probar los archivos para Alma
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/ArchivosEntrada.swift Pruebas/ArchivosEntrada/main.swift -o /tmp/archivos-entrada
+          /tmp/archivos-entrada
+
       # Alma abre la conversación (Hub #509 T4): solo con el aviso que el Hub marcó, en Modo calle o conferencia, una vez,
       # con la frase del aviso como primer mensaje y el sueño que cuelga si Juan no contesta. Lógica pura.
       - name: Probar Alma abre
