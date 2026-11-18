@@ -108,6 +108,13 @@ jobs:
           xcrun swiftc Alma/CoroTrabajoReglas.swift Pruebas/CoroTrabajo/main.swift -o /tmp/coro-trabajo
           /tmp/coro-trabajo
 
+      # Muestras de voz (Hub #781): Claudio pone en la llamada cómo suena una voz. El voice_id, el formato y qué se le contesta.
+      - name: Probar las muestras de voz
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/MuestraVoz.swift Pruebas/MuestraVoz/main.swift -o /tmp/muestra-voz
+          /tmp/muestra-voz
+
       # Tarjetas de clubes (Juan, 17-nov-2026): los códigos EAN y Code 39, el formato sugerido, encontrar la que pidió por
       # voz y qué se le contesta a Alma. Lógica pura.
       - name: Probar las tarjetas de clubes

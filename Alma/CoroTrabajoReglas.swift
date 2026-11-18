@@ -29,7 +29,7 @@ struct CoroReglas {
     /// Las de fondo (enviar_confirmado, claudio_pedido: async, la conversación sigue) tampoco: no hay espera.
     static let sinEspera: Set<String> = ["nivel_weebo", "mostrar_gif", "pasar_a_maricarmen", "mostrar_tarjeta_club",
                                          "mostrar_en_chat", "skip_turn", "end_call", "enviar_confirmado", "claudio_pedido",
-                                         "poner_voz"]   // poner_voz (Hub #779): lo que suena es la voz misma, sin coro encima
+                                         "poner_voz", "reproducir_voz"]   // poner_voz (Hub #779) y la muestra de voz (Hub #781): lo que suena es la voz misma, sin coro encima
 
     /// id → desde cuándo puede sonar (inicio + su umbral)
     private(set) var activas: [String: Date] = [:]
