@@ -157,7 +157,7 @@ let propia = K.Voz(id: "claudio_propio", nombre: "", url: "https://x", sha256: n
 igual(K.nombreCorto(propia), "claudio_propio", "sin nombre: el id")
 for v in K.incluidas {
     let f = K.muestra(v)
-    revisa(f.contains(K.nombreCorto(v)) && K.frases(f).count <= 2, "la muestra de \(v.id) dice su nombre y es corta")
+    revisa(f.contains(K.nombreCorto(v)) && f.count <= 180 && K.frases(f).count <= 3, "la muestra de \(v.id) dice su nombre y es corta")
 }
 revisa(K.ajustesMuestra(propia) == K.Ajustes(motor: .kokoro, voz: "claudio_propio", velocidad: 1.0, acento: .espana), "la muestra usa la voz y su acento")
 igual(K.detalleMuestra(K.incluidas[1], lista: false, bajando: false), "Latino · mujer · se baja al tocar", "detalle sin bajar")
