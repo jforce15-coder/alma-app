@@ -1827,6 +1827,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     // MARK: - Más rápido: la ficha pedida de antemano
 
+    /// La ficha guardada ya no sirve (entró un archivo en órbita): se pide otra, así la próxima llamada lo lleva.
+    func fichaVieja() { DispatchQueue.main.async { self.fichaLista = nil; self.precargarSiToca() } }
+
     /// También mientras escucha el Modo Inicio o la conferencia, y con la app abierta: así, al despertarla, no espera al Hub.
     func precargarSiToca() {
         let escucha = Conferencia.shared.activa || EscuchaInicio.shared.escuchando || UIApplication.shared.applicationState == .active
