@@ -62,9 +62,10 @@ for v in [G.claudio, G.maricarmen] {
 }
 revisa(G.voz(.claudio) == G.claudio && G.voz(.maricarmen).nombre == "Maricarmen (gratis)", "cada personaje con su voz gratis")
 revisa(G.embeddings(Data(count: 1000)) == nil, "un archivo de otro tamaño no es una voz")
-revisa(G.archivos.count == 6 && G.archivos.allSatisfy { $0.sha256.count == 64 && $0.url.hasPrefix("https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/\(G.revision)/") },
+revisa(G.archivos.count == 6 && G.archivos.allSatisfy { $0.sha256.count == 64 && ($0.url.hasPrefix("https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/\(G.revision)/") || $0.url.hasPrefix(G.version)) },
        "lo que se baja: versión fija y suma de cada archivo")
-revisa(G.megas >= 120 && G.megas <= 130, "pesa unos 125 MB (\(G.megas))")
+revisa(G.archivos.first?.url == G.version + "pocket_es_flow_lm_main_q8.onnx", "el modelo principal, recuantizado, de la versión voz-gratis-1")
+revisa(G.megas >= 120 && G.megas <= 135, "pesa unos 130 MB (\(G.megas))")
 revisa(G.credito.contains("Kyutai") && G.credito.contains("KevinAHM") && G.credito.contains("CC-BY"), "el crédito de la licencia")
 
 // MARK: - El ruido

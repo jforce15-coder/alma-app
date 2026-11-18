@@ -147,7 +147,7 @@ final class PocketOnnx {
             return s
         }
         texto = try sesion("text_conditioner.onnx")
-        principal = try sesion("flow_lm_main_int8.onnx")
+        principal = try sesion(VozPocketReglas.principal)
         flujo = try sesion("flow_lm_flow_int8.onnx")
         decodificador = try sesion("mimi_decoder_int8.onnx")
         try revisar(api.pointee.GetAllocatorWithDefaultOptions!(&asignador))

@@ -4,7 +4,8 @@ import Foundation
 /// implementémosla mientras desarrollamos la voz de Claudio más conversacional. La de Maricarmen, implementemos también
 /// temporalmente la que tú me diste»). TEMPORAL, para probar en vivo mientras se hace la voz definitiva.
 /// · El modelo: Pocket TTS de Kyutai en español (6 capas), en la versión ONNX de KevinAHM (CC-BY-4.0). Se baja la primera
-///   vez desde Hugging Face, en una versión fija y con la suma de comprobación de cada archivo (como Kokoro).
+///   vez desde Hugging Face (y el modelo principal, recuantizado, desde una versión de alma-app), en una versión fija y con
+///   la suma de comprobación de cada archivo (como Kokoro).
 /// · Las voces: «Claudio (gratis)» y «Maricarmen (gratis)» son clones de las voces diseñadas para cada uno (claudio_A y
 ///   maricarmen_A). Lo que sale de clonarlas (las embeddings del codificador de Pocket, con el BOS delante) va dentro de la
 ///   app (Recursos/Voces): el teléfono no clona nada.
@@ -23,13 +24,19 @@ enum VozPocketReglas {
         let nombre: String
         let bytes: Int
         let sha256: String
-        var url: String { VozPocketReglas.base + nombre }
+        /// De dónde se baja: Hugging Face (KevinAHM, versión fija) o, el modelo principal, la versión «voz-gratis-1» de
+        /// alma-app (la arma el robot modelo-voz-gratis.yml desde el fp32 de KevinAHM).
+        var desde: String? = nil
+        var url: String { desde ?? (VozPocketReglas.base + nombre) }
     }
+    static let version = "https://github.com/jforce15-coder/alma-app/releases/download/voz-gratis-1/"
 
-    /// Lo que se baja (~125 MB): el modelo principal y el del flujo en 8 bits, el decodificador de audio en 8 bits, la tabla
-    /// del texto, el tokenizador y bundle.json (los estados del modelo). El codificador de voz no hace falta.
+    /// Lo que se baja (~130 MB): el modelo principal en 8 bits por bloques (el de 8 bits de KevinAHM cortaba frases), el del
+    /// flujo y el decodificador de audio en 8 bits, la tabla del texto, el tokenizador y bundle.json (los estados del
+    /// modelo). El codificador de voz no hace falta.
+    static let principal = "pocket_es_flow_lm_main_q8.onnx"
     static let archivos: [Archivo] = [
-        Archivo(nombre: "flow_lm_main_int8.onnx", bytes: 76_341_079, sha256: "9b020318976e0437bcc78ad0f4a49bf1de6e6e2193c6b0380398038601f9a270"),
+        Archivo(nombre: principal, bytes: 80_911_240, sha256: "590bcb3eaa52c546ecf7e3411cde9756504cd6d3a0b3d10b8fc3d81c50776915", desde: version + principal),
         Archivo(nombre: "flow_lm_flow_int8.onnx", bytes: 9_962_530, sha256: "4cc630a8fc1d28e3b432349e492f5f81696aab88b1067b5282b15427fde19efe"),
         Archivo(nombre: "mimi_decoder_int8.onnx", bytes: 22_684_077, sha256: "309efd11b65c58cd176e554d09241f3e2c9aaabd8cbf74b8f01bdd3ec8f7d8e5"),
         Archivo(nombre: "text_conditioner.onnx", bytes: 16_388_344, sha256: "836ad5231fffe6d8fd23c8340d6d91676f466cd35057afd06b7db6ab69baae11"),
@@ -37,7 +44,7 @@ enum VozPocketReglas {
         Archivo(nombre: "bundle.json", bytes: 24_365, sha256: "c9f18b5fc326c2a99f645588b79ef27ef3c9c6c3066f8df73bccb7f7c1f855b3"),
     ]
     static var bytesTotales: Int { archivos.reduce(0) { $0 + $1.bytes } }
-    /// «125 MB», para la pantalla.
+    /// «130 MB», para la pantalla.
     static var megas: Int { Int((Double(bytesTotales) / 1_000_000).rounded()) }
 
     static let hz = 24000
