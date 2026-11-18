@@ -22,6 +22,7 @@ import WebKit
 ///   { accion: "tarjetas" }                   → abre Tarjetas de clubes (TarjetasClub.swift)
 ///   { accion: "vocesLocales" }               → abre Voces locales: Kokoro o la voz del iPhone para Claudio y Maricarmen (VocesLocalesVista.swift)
 ///   { accion: "companero", on, otra }        → Modo compañero de este dispositivo y si la llamada está en el otro (Companero.swift)
+///   { accion: "archivos", que: "nuevo" }      → entró un archivo en órbita: la ficha de la voz se pide otra vez (Alma ya lo sabe)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
     static let nombre = "alma"
@@ -95,6 +96,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             Companero.shared.pagina(on: (d["on"] as? Bool) ?? false, otra: d["otra"] as? String ?? "")
         case "voz":
             voz(d)
+        case "archivos":   // un archivo nuevo en órbita (Hub archivosorbita.js): la próxima llamada lleva la ficha con él
+            if d["que"] as? String == "nuevo" { VozNativa.shared.fichaVieja() }
         case "navegador":   // llevaste a Alma hacia un lado en el inicio: se abre el navegador con la búsqueda lista
             NotificationCenter.default.post(name: .modoNavegador, object: d["pos"] as? String ?? "")
         case "atajos":   // Ajustes → «Atajos permitidos» (AtajosIOS.swift): { que: "estado" | "agregar" | "quitar" | "todos", nombre, on }
