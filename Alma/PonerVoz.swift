@@ -19,7 +19,7 @@ final class PonerVoz {
         let v = VocesLocales.shared
         v.actualizarCatalogo()
         var personajes: [String: String] = [:]
-        for pj in VozKokoroReglas.Personaje.allCases { let a = v.ajustes(pj); personajes[pj.rawValue] = a.motor == .kokoro ? a.voz : "iphone" }
+        for pj in VozKokoroReglas.Personaje.allCases { let a = v.ajustes(pj); personajes[pj.rawValue] = a.motor == .pocket ? VozPocketReglas.voz(pj).id : a.motor == .kokoro ? a.voz : "iphone" }
         let texto = { (k: String) in (p[k] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
         let enlace = texto("enlace")
         switch PonerVozReglas.pedido(voz: texto("voz"), enlace: enlace, voces: v.voces, personajes: personajes) {
@@ -49,7 +49,11 @@ final class PonerVoz {
             }
             let m = ms[i]; i += 1
             let motor: MotorVoz
-            if m.kokoro {
+            if m.pocket {
+                let p: VozKokoroReglas.Personaje = m.id == VozPocketReglas.claudio.id ? .claudio : .maricarmen
+                guard let g = v.motorGratis(p, respaldo: nil) else { faltan.append(m.nombre); v.descargarGratis(celular: true); siguiente(); return }
+                motor = g
+            } else if m.kokoro {
                 guard v.modeloListo else { sinModelo = true; faltan.append(m.nombre); v.descargarModelo(celular: false); siguiente(); return }
                 guard v.vozLista(m.id), let t = v.tabla(m.id) else { faltan.append(m.nombre); v.descargarVoz(m.id, celular: true); siguiente(); return }
                 let acento = v.voces.first { $0.id == m.id }?.acento ?? .latino

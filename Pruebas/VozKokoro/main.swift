@@ -115,7 +115,11 @@ revisa(K.incluidas.allSatisfy { $0.url.contains(K.revision) && $0.sha256?.count 
 
 revisa(K.deFabrica(.claudio).voz == "em_alex" && K.deFabrica(.claudio).acento == .latino, "Claudio: em_alex, latino (provisional)")
 revisa(K.deFabrica(.maricarmen).voz == "ef_dora" && K.deFabrica(.maricarmen).acento == .espana, "Maricarmen: ef_dora, de España")
-revisa(K.deFabrica(.claudio).motor == .kokoro && K.deFabrica(.maricarmen).motor == .kokoro, "de fábrica, Kokoro")
+revisa(K.deFabrica(.claudio).motor == .pocket && K.deFabrica(.maricarmen).motor == .pocket, "de fábrica, la voz gratis (Juan, 18-nov-2026)")
+revisa(K.aGratis(["motor": "kokoro", "voz": "em_santa"])?["motor"] as? String == "pocket" && K.aGratis(["motor": "kokoro", "voz": "em_santa"])?["voz"] as? String == "em_santa",
+       "lo guardado con Kokoro pasa a la voz gratis y Kokoro queda con su voz de respaldo")
+revisa(K.aGratis(["motor": "iphone"])?["motor"] as? String == "iphone" && K.aGratis(nil) == nil, "lo de la voz del iPhone se respeta")
+revisa(K.leer(["motor": "pocket"], .maricarmen).motor == .pocket, "la voz gratis se lee")
 let leido = K.leer(["motor": "iphone", "voz": "propia_1", "velocidad": 9, "acento": "es"], .claudio)
 revisa(leido.motor == .iphone && leido.voz == "propia_1" && leido.velocidad == 1.4 && leido.acento == .espana, "se leen y la velocidad tiene tope")
 revisa(K.leer(["voz": "../../etc", "motor": "otro"], .maricarmen) == K.deFabrica(.maricarmen), "lo que no sirve, de fábrica")
@@ -123,7 +127,9 @@ revisa(K.leer(K.guardar(leido), .claudio) == leido, "guardar y leer da lo mismo"
 
 // MARK: - Cuándo cae a la voz del iPhone
 
-let ak = K.deFabrica(.claudio)
+var ak = K.deFabrica(.claudio); ak.motor = .kokoro
+var ag = ak; ag.motor = .pocket
+revisa(K.usarKokoro(ag, modeloListo: true, vozLista: true, lentas: 0), "con la voz gratis, Kokoro listo de respaldo")
 revisa(K.usarKokoro(ak, modeloListo: true, vozLista: true, lentas: 0), "todo listo: Kokoro")
 revisa(!K.usarKokoro(ak, modeloListo: false, vozLista: true, lentas: 0), "sin modelo: iPhone")
 revisa(!K.usarKokoro(ak, modeloListo: true, vozLista: false, lentas: 0), "sin la voz: iPhone")
@@ -148,6 +154,7 @@ revisa(K.trozos(Data(count: 30000), hz: 24000).map { $0.count } == [12000, 12000
 let w = K.wav(Data(count: 100), hz: 24000)
 revisa(w.count == 144 && w.prefix(4) == Data("RIFF".utf8), "el WAV de la prueba: 44 de cabecera")
 revisa(K.descripcion(ak, usa: true) == "Kokoro · em_alex · latino" && K.descripcion(ai, usa: true) == "voz del iPhone", "lo que se anota")
+revisa(K.descripcion(ag, usa: true) == "voz gratis (Pocket) · Kokoro de respaldo" && K.descripcion(ag, usa: false) == "la voz gratis aún no está lista", "lo que se anota con la voz gratis")
 
 // MARK: - Escuchar las voces (Hub #780)
 

@@ -4,13 +4,13 @@ import Foundation
 /// voces cuando se lo pida, por ejemplo las voces que se han desarrollado»). Lógica pura, con sus pruebas en
 /// Pruebas/PonerVoz. Lo que suena está en PonerVoz.swift.
 /// · La herramienta poner_voz es de Claudio y la atiende la app (con su agente de ElevenLabs y con Claudio local).
-/// · «voz»: el nombre de una voz (Alex, Dora, Santa o una propia del catálogo), «la del iPhone», «la de Maricarmen» o
+/// · «voz»: el nombre de una voz (Alex, Dora, Santa, una propia del catálogo, Claudio gratis o Maricarmen gratis), «la del iPhone», «la de Maricarmen» o
 ///   «la tuya» (la que tiene elegida cada personaje), «todas», o vacío para saber cuáles hay.
 /// · «enlace»: un audio https (mp3, m4a, wav o aiff) que suena tal cual, hasta minuto y medio.
 /// · Cada voz dice una frase corta con su nombre (o la que Juan pidió), por la misma salida de la llamada.
 enum PonerVozReglas {
     static let herramienta = "poner_voz"
-    static let maxVoces = 6
+    static let maxVoces = 8
     static let maxSegundos = 90.0
     static let maxBytes = 20_000_000
     static let maxFrase = 220
@@ -20,10 +20,15 @@ enum PonerVozReglas {
         let id: String       // el id de Kokoro, o «iphone»
         let nombre: String   // como se dice: «Dora», «la voz del iPhone»
         let kokoro: Bool
+        /// La voz gratis (Pocket, temporal; Juan, 18-nov-2026): Claudio (gratis) y Maricarmen (gratis).
+        var pocket = false
     }
     enum Pedido: Equatable { case lista, voces([Muestra]), enlace(URL), nada(String) }
 
     static let iphone = Muestra(id: "iphone", nombre: "la voz del iPhone", kokoro: false)
+    /// Las voces gratis (mismos ids que VozPocketReglas).
+    static let gratis = [Muestra(id: "claudio_gratis", nombre: "Claudio gratis", kokoro: false, pocket: true),
+                         Muestra(id: "maricarmen_gratis", nombre: "Maricarmen gratis", kokoro: false, pocket: true)]
 
     /// Sin acentos, en minúsculas y solo letras y números separados por un espacio.
     static func normal(_ s: String) -> String {
@@ -36,7 +41,7 @@ enum PonerVozReglas {
         return n.isEmpty ? v.id : n
     }
     static func muestras(_ voces: [VozKokoroReglas.Voz]) -> [Muestra] {
-        voces.map { Muestra(id: $0.id, nombre: corto($0), kokoro: true) } + [iphone]
+        voces.map { Muestra(id: $0.id, nombre: corto($0), kokoro: true) } + gratis + [iphone]
     }
 
     /// Qué pidió Claudio. `personajes`: personaje → id de su voz de ahora («iphone» si habla con la voz del iPhone).
@@ -59,7 +64,7 @@ enum PonerVozReglas {
         if palabras.contains("maricarmen") { porPersonaje("maricarmen") }
         if palabras.contains("tuya") || palabras.contains("claudio") || v.contains("tu voz") { porPersonaje("claudio") }
         if palabras.contains("iphone") || palabras.contains("telefono") { poner(iphone) }
-        for m in todas where m.kokoro {
+        for m in todas where m.kokoro || m.pocket {
             let nombre = Set(normal(m.nombre).split(separator: " ").map(String.init)).subtracting(["claudio", "maricarmen", "voz", "la", "de", "el"])
             if !nombre.isDisjoint(with: palabras) || palabras.contains(normal(m.id)) || v.contains(normal(m.id)) { poner(m) }
         }
@@ -83,6 +88,7 @@ enum PonerVozReglas {
         let p = pedida.trimmingCharacters(in: .whitespacesAndNewlines)
         if !p.isEmpty { return String(p.prefix(maxFrase)) }
         if m.kokoro { return "Hola, Juan. Soy \(m.nombre), una de las voces de Spacio AM." }
+        if m.pocket { return "Hola, Juan. Soy \(m.nombre), la voz de prueba mientras se hace la definitiva." }
         return "Hola, Juan. Esta es la voz del iPhone, la de respaldo."
     }
 
