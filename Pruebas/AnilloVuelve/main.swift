@@ -39,6 +39,14 @@ revisa(!V.avisar(activo: false, silencio: false, microfono: false, appActiva: tr
 revisa(!V.avisar(activo: false, silencio: false, microfono: false, appActiva: false, yaAvisado: true), "una sola vez hasta que vuelva a funcionar")
 revisa(V.texto == "Abre Alma para que el anillo vuelva a funcionar.", "el texto que pidió Juan")
 
+// MARK: - El audio para escuchar con el anillo (Hub #793: Spotify se pausaba al abrir la app)
+
+revisa(V.sesionEscucha(enLlamada: false, anilloListo: true, otraSuena: true) == .mezclar, "anillo con Spotify sonando: se mezcla, Spotify no se pausa")
+revisa(V.sesionEscucha(enLlamada: false, anilloListo: true, otraSuena: false) == .anillo, "anillo sin música: el audio del anillo, como antes")
+revisa(V.sesionEscucha(enLlamada: false, anilloListo: false, otraSuena: true) == .mezclar, "sin anillo: se mezcla")
+revisa(V.sesionEscucha(enLlamada: true, anilloListo: true, otraSuena: true) == .llamada, "en plena llamada no se cambian las opciones (la música baja, no se pausa)")
+revisa(V.sesionEscucha(enLlamada: true, anilloListo: false, otraSuena: false) == .llamada, "en llamada sin anillo, igual")
+
 // MARK: - Los pasos que van al Hub
 
 let pasos = ["10:00:01 Micrófono listo para el anillo", "10:00:05 El anillo encendió el modo conferencia", "10:01:00 Aviso: Flor pagó el depósito de 1104"]

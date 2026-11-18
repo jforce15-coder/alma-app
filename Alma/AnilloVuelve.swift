@@ -57,6 +57,19 @@ enum AnilloVuelve {
         return microfonoOcupado ? .esperar : .dejarSonar
     }
 
+    /// El audio para solo escuchar (Modo Inicio, conferencia, Mejora) con el anillo encendido (Hub #793, 18-nov-2026: «tengo
+    /// Spotify abierto y se pausa en cuanto entro a la app de Alma»). Antes, con «Alma con el anillo» se tomaba siempre el audio
+    /// que no se mezcla, aunque el anillo no lo tuviera por haber música sonando: al abrir la app el Modo Inicio pausaba Spotify
+    /// y Alma ya no lo veía como dispositivo para poner música. Ahora:
+    ///   · llamada: en plena llamada no se cambian las opciones (la llamada ya baja la música, no la pausa: AudioCalle).
+    ///   · anillo: el anillo y sin música sonando: el audio que no se mezcla, como antes.
+    ///   · mezclar: con música sonando (o sin el anillo), el audio que se mezcla: Spotify sigue sonando.
+    enum Escucha: Equatable { case llamada, anillo, mezclar }
+    static func sesionEscucha(enLlamada: Bool, anilloListo: Bool, otraSuena: Bool) -> Escucha {
+        if enLlamada { return .llamada }
+        return anilloListo && !otraSuena ? .anillo : .mezclar
+    }
+
     static func avisar(activo: Bool, silencio: Bool, microfono: Bool, appActiva: Bool, yaAvisado: Bool) -> Bool {
         guard !appActiva, !yaAvisado else { return false }
         return !activo || !silencio || !microfono
