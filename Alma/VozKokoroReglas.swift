@@ -255,4 +255,23 @@ enum VozKokoroReglas {
         guard a.motor == .kokoro else { return "voz del iPhone" }
         return usa ? "Kokoro · \(a.voz) · \(a.acento == .espana ? "España" : "latino")" : "Kokoro aún no está listo: voz del iPhone"
     }
+
+    // MARK: - Escuchar las voces (Hub #780; Juan, 18-nov-2026: «no solo para escuchar los audios contigo»)
+
+    /// El nombre corto de una voz, sin lo que va entre paréntesis: «Alex (hombre)» → «Alex».
+    static func nombreCorto(_ v: Voz) -> String {
+        let n = v.nombre.components(separatedBy: " (").first?.trimmingCharacters(in: .whitespaces) ?? ""
+        return n.isEmpty ? v.id : n
+    }
+    /// La frase con la que se presenta cada voz en «Escuchar las voces»: corta (una sola frase de Kokoro) y con su nombre.
+    static func muestra(_ v: Voz) -> String {
+        "Hola, Juan. Soy \(nombreCorto(v)), una de las voces locales. Así sonaría Claudio o Maricarmen contigo."
+    }
+    /// Cómo suena en la muestra: Kokoro con esa voz, su acento y velocidad normal (no los ajustes de un personaje).
+    static func ajustesMuestra(_ v: Voz) -> Ajustes { Ajustes(motor: .kokoro, voz: v.id, velocidad: 1.0, acento: v.acento) }
+    /// Debajo del nombre: acento, hombre o mujer y si falta bajarla.
+    static func detalleMuestra(_ v: Voz, lista: Bool, bajando: Bool) -> String {
+        let base = (v.acento == .espana ? "España" : "Latino") + " · " + (v.mujer ? "mujer" : "hombre")
+        return base + (bajando ? " · bajando…" : lista ? "" : " · se baja al tocar")
+    }
 }

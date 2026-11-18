@@ -149,5 +149,20 @@ let w = K.wav(Data(count: 100), hz: 24000)
 revisa(w.count == 144 && w.prefix(4) == Data("RIFF".utf8), "el WAV de la prueba: 44 de cabecera")
 revisa(K.descripcion(ak, usa: true) == "Kokoro · em_alex · latino" && K.descripcion(ai, usa: true) == "voz del iPhone", "lo que se anota")
 
+// MARK: - Escuchar las voces (Hub #780)
+
+let alex = K.incluidas[0]
+igual(K.nombreCorto(alex), "Alex", "el nombre corto, sin el paréntesis")
+let propia = K.Voz(id: "claudio_propio", nombre: "", url: "https://x", sha256: nil, acento: .espana, mujer: false)
+igual(K.nombreCorto(propia), "claudio_propio", "sin nombre: el id")
+for v in K.incluidas {
+    let f = K.muestra(v)
+    revisa(f.contains(K.nombreCorto(v)) && K.frases(f).count <= 2, "la muestra de \(v.id) dice su nombre y es corta")
+}
+revisa(K.ajustesMuestra(propia) == K.Ajustes(motor: .kokoro, voz: "claudio_propio", velocidad: 1.0, acento: .espana), "la muestra usa la voz y su acento")
+igual(K.detalleMuestra(K.incluidas[1], lista: false, bajando: false), "Latino · mujer · se baja al tocar", "detalle sin bajar")
+igual(K.detalleMuestra(propia, lista: true, bajando: false), "España · hombre", "detalle lista")
+igual(K.detalleMuestra(alex, lista: false, bajando: true), "Latino · hombre · bajando…", "detalle bajando")
+
 print(fallos == 0 ? "\nTodo bien." : "\n\(fallos) fallos.")
 exit(fallos == 0 ? 0 : 1)
