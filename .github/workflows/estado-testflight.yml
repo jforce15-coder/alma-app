@@ -1,0 +1,25 @@
+# Estado de las versiones de Alma en TestFlight: número, fecha y si Apple la dejó VALID o la rechazó (INVALID).
+# Apple revisa la versión DESPUÉS de subirla; si la rechaza solo avisa por correo. Este robot lo muestra aquí.
+name: Estado TestFlight
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/estado-testflight.py
+      - .github/workflows/estado-testflight.yml
+
+jobs:
+  estado:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versiones en App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          pip install --quiet pyjwt cryptography
+          python3 .github/estado-testflight.py | tee -a "$GITHUB_STEP_SUMMARY"
