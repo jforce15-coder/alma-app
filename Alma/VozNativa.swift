@@ -57,6 +57,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var turnoJuan: Date?
     private var palabrasTurnoJuan = 0
     private var respuestaVoz: Date?
+    // Juan, 19-nov-2026: el último cambio de ruta del audio en la llamada (cuándo, motivo y el tipo de salida), para el paso del corte.
+    private var cambioRuta: (cuando: Date, motivo: UInt, salida: String)?
     struct Linea: Identifiable { let id: Int; let alma: Bool; let texto: String }
     @Published private(set) var lineas: [Linea] = []
     private var campanas: [String: AVAudioPlayer] = [:]
@@ -349,6 +351,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                                   salida: AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue ?? "",
                                   enFondo: UIApplication.shared.applicationState != .active,
                                   telefono: CXCallObserver().calls.contains { !$0.hasEnded })
+            + LlamadaContinua.notaRuta(cambio: cambioRuta?.cuando, motivo: cambioRuta?.motivo ?? 0, salida: cambioRuta?.salida ?? "", ahora: Date())
     }
 
     /// Para otras piezas de la llamada (AudioLlamada): un paso más en el mismo registro.
@@ -820,6 +823,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // El tipo de salida (no su nombre: «AirPods de …» lleva un nombre y estos pasos van al Hub).
             let salida = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue ?? "?"
             self.paso("Cambió la salida de audio (motivo \(r)) → \(salida)")
+            self.cambioRuta = (Date(), r, salida)
             if LlamadaContinua.aParlante(salida: salida) { self.asegurarSalida("Cambió la salida") }   // al auricular de oreja: de vuelta al parlante
             AudioLlamada.shared.rutaCambio()   // se conectaron o quitaron audífonos: vuelve lo que eligió Juan
             // Modo calle: se desconectaron los audífonos: cuelga sin reintentar y el Modo calle vuelve a esperar «Alma».
@@ -2168,15 +2172,19 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if usar { pasarARespaldo(por: m, conectada: conectada != nil); return }
         }
         let buscando = herramienta && agente == .alma   // Alma buscaba algo (la secretaria): se reabre y lo busca otra vez
+        // Juan pidió algo y Alma aún no le respondía (Juan, 19-nov-2026): se reabre y lo atiende, también en conferencia y calle.
+        let esperando = !buscando && agente == .alma && conectada != nil
+            && LlamadaContinua.juanEspera(juan: turnoJuan, voz: respuestaVoz, palabras: palabrasTurnoJuan, ahora: Date())
         switch LlamadaContinua.trasCorte(claudio: agente == .claudio, calle: desdeCalle, conferencia: conferencia != nil, conectada: conectada,
-                                         reabiertas: reabiertas, sinCreditos: sinCreditos, buscando: buscando) {
+                                         reabiertas: reabiertas, sinCreditos: sinCreditos, buscando: buscando, esperando: esperando) {
         case .fallar: fallo(m, conexion: true)
         case .colgar: paso("Se cortó la conexión (" + m + ")"); colgarCalle(.corte)
         case .volverConAlma: reabrir(por: m, frase: LlamadaContinua.fraseSinClaudio(conectado: conectada != nil), porClaudio: true)
         case .reabrir:
             // Se cortó buscando: sin frase fija (Alma se quedaría callada esperando); la app le pide que lo diga y lo busque otra vez.
             if buscando { textoInicial = LlamadaContinua.pedidoTrasCorteBuscando; paso("Se cortó mientras Alma usaba " + (herramientaNombre.isEmpty ? "una herramienta" : herramientaNombre) + ": la reabro y lo busca otra vez") }
-            reabrir(por: m, frase: buscando ? "" : LlamadaContinua.fraseTrasCorte, porClaudio: false)
+            if esperando { textoInicial = LlamadaContinua.pedidoTrasCorteEsperando; paso("Se cortó con Juan esperando respuesta: la reabro y Alma lo atiende") }
+            reabrir(por: m, frase: buscando || esperando ? "" : LlamadaContinua.fraseTrasCorte, porClaudio: false)
         }
     }
 

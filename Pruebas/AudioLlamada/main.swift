@@ -39,5 +39,13 @@ revisa(R.clase(propio, lentes: false) == .dispositivo, "el micrófono del teléf
 revisa(R.bocinaFija("telefono") && !R.bocinaFija(nil) && !R.bocinaFija("auto"), "la bocina fija solo si Juan la eligió")
 revisa(R.explicaAutomatico(companero: true, dispositivo: "iPhone").contains("este iPhone"), "en automático con compañero se dice que usa el teléfono")
 
+// MARK: - Sin cambiar el micrófono a media llamada con manos libres Bluetooth (Juan, 19-nov-2026)
+revisa(!R.cambiaMicrofono(preferencia: "auto", salida: "BluetoothHFP", aMedia: true), "conferencia por Bluetooth HFP: el Modo compañero no cambia el micrófono a media llamada")
+revisa(!R.cambiaMicrofono(preferencia: nil, salida: "BluetoothHFP", aMedia: true), "sin preferencia guardada cuenta como automático")
+revisa(R.cambiaMicrofono(preferencia: "auto", salida: "BluetoothHFP", aMedia: false), "al abrir el micrófono sí se elige")
+revisa(R.cambiaMicrofono(preferencia: "telefono", salida: "BluetoothHFP", aMedia: true), "si Juan eligió el micrófono, se respeta")
+revisa(R.cambiaMicrofono(preferencia: "auto", salida: "BluetoothA2DPOutput", aMedia: true), "audífonos en alta calidad (A2DP): se cambia como antes")
+revisa(R.cambiaMicrofono(preferencia: "auto", salida: "Speaker", aMedia: true), "con la bocina: se cambia como antes")
+
 print(fallos == 0 ? "Todo bien" : "\(fallos) fallos")
 exit(fallos == 0 ? 0 : 1)

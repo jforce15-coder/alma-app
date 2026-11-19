@@ -201,5 +201,22 @@ for f in ["Listo, ya agendé la limpieza del 1104 para mañana a las nueve.", "H
     revisa(!C.esPreguntaDeSilencio(f), "no se calla una respuesta de verdad: «\(f)»")
 }
 
+// MARK: - Se cortó con Juan esperando respuesta (Juan, 19-nov-2026: conferencia por Bluetooth, pidió algo y se cayó a los 11 s)
+let tJ = Date(timeIntervalSince1970: 2_000_000)
+revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 23, reabiertas: 0, sinCreditos: false, esperando: true) == .reabrir, "conferencia y Juan esperaba respuesta: se reabre sola y Alma lo atiende")
+revisa(C.trasCorte(claudio: false, calle: true, conferencia: false, conectada: 23, reabiertas: 0, sinCreditos: false, esperando: true) == .reabrir, "Modo calle y Juan esperaba: también se reabre")
+revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 23, reabiertas: 0, sinCreditos: false, esperando: false) == .colgar, "conferencia sin nada pendiente: se cierra como siempre")
+revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 23, reabiertas: 2, sinCreditos: false, esperando: true) == .fallar, "esperando, pero ya se reabrió dos veces: sin bucle")
+revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 1, reabiertas: 0, sinCreditos: false, esperando: true) == .fallar, "esperando y se cayó al segundo de conectar: no se reabre")
+revisa(C.juanEspera(juan: tJ, voz: nil, palabras: 8, ahora: tJ.addingTimeInterval(11)), "Juan pidió algo hace 11 s y Alma no respondió: espera")
+revisa(!C.juanEspera(juan: tJ, voz: tJ.addingTimeInterval(3), palabras: 8, ahora: tJ.addingTimeInterval(11)), "Alma ya le respondió: no espera")
+revisa(!C.juanEspera(juan: tJ, voz: nil, palabras: 1, ahora: tJ.addingTimeInterval(5)), "una sola palabra (un «mm») no cuenta como pedido")
+revisa(!C.juanEspera(juan: tJ, voz: nil, palabras: 8, ahora: tJ.addingTimeInterval(C.esperaMaxima + 1)), "lo dijo hace mucho: ya no es lo que acaba de pedir")
+revisa(!C.juanEspera(juan: nil, voz: nil, palabras: 0, ahora: tJ), "Juan no habló: no espera")
+revisa(C.pedidoTrasCorteEsperando.contains("sin preguntarme de nuevo") && C.pedidoTrasCorteEsperando.contains("no digas nada"), "al reabrir lo atiende sin que Juan repita; si no era para ella, calla")
+revisa(C.notaRuta(cambio: tJ, motivo: 4, salida: "Speaker", ahora: tJ.addingTimeInterval(11)).contains("cambió de ruta hace 11 s (motivo 4 → Speaker)"), "el corte dice si el audio cambió de ruta en los 15 s antes")
+revisa(C.notaRuta(cambio: tJ, motivo: 4, salida: "Speaker", ahora: tJ.addingTimeInterval(40)).isEmpty, "un cambio de ruta viejo no se anota")
+revisa(C.notaRuta(cambio: nil, motivo: 0, salida: "", ahora: tJ).isEmpty, "sin cambio de ruta: nada")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")
