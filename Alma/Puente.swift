@@ -21,7 +21,8 @@ import WebKit
 ///   { accion: "dispositivos", id? }          → abre Wearables: el anillo, los lentes y los audífonos (Wearables.swift); con id, ese
 ///   { accion: "tarjetas" }                   → abre Tarjetas de clubes (TarjetasClub.swift)
 ///   { accion: "vocesLocales" }               → abre Voces locales: Kokoro o la voz del iPhone para Claudio y Maricarmen (VocesLocalesVista.swift)
-///   { accion: "companero", on, otra }        → Modo compañero de este dispositivo y si la llamada está en el otro (Companero.swift)
+///   { accion: "companero", on, otra }        → Modo compañero de este dispositivo y si la llamada está en el otro (Companero.swift);
+///                                              con él encendido, la voz de la llamada del otro suena aquí (Retransmision.swift)
 ///   { accion: "archivos", que: "nuevo" }      → entró un archivo en órbita: la ficha de la voz se pide otra vez (Alma ya lo sabe)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
@@ -94,6 +95,7 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             responder("AlmaAvisos.evento", [NivelAvisos.resumen])
         case "companero":   // Modo compañero (alma/inicio.html): { on, otra } → una sola llamada (UnaLlamada, ColaVivo.swift)
             Companero.shared.pagina(on: (d["on"] as? Bool) ?? false, otra: d["otra"] as? String ?? "")
+            Retransmision.shared.poner(companero: (d["on"] as? Bool) ?? false)   // y con él encendido, la voz del otro suena aquí (Hub #727)
         case "voz":
             voz(d)
         case "archivos":   // un archivo nuevo en órbita (Hub archivosorbita.js): la próxima llamada lleva la ficha con él

@@ -142,6 +142,13 @@ jobs:
           xcrun swiftc Alma/ColaVivo.swift Pruebas/Companero/main.swift -o /tmp/companero
           /tmp/companero
 
+      # Modo compañero con sonido (Hub #727): el formato de la voz que va al otro dispositivo y cuándo busca, acepta y suena.
+      - name: Probar el sonido del modo compañero
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/RetransmisionReglas.swift Pruebas/Retransmision/main.swift -o /tmp/retransmision
+          /tmp/retransmision
+
       # El audio de la llamada (Juan, 17-nov-2026): con el Modo compañero, el micrófono del teléfono de fábrica; lo que elige
       # Juan manda y, si no está conectado, vale lo automático. Lógica pura.
       - name: Probar el audio de la llamada

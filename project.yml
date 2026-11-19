@@ -122,6 +122,11 @@ targets:
               - alma
         NSMicrophoneUsageDescription: Alma usa el micrófono para hablar contigo por voz y, en el Modo calle, para esperar en tu teléfono a que digas «Alma» (sin grabar ni enviar audio).
         NSSpeechRecognitionUsageDescription: Alma entiende en tu teléfono lo que le pides para escribirlo por ti, despierta en el inicio cuando dices «Alma», en el Modo calle escribe solo lo que le pides después de «Alma» y, en modo conferencia, transcribe la reunión sin enviar audio.
+        # Modo compañero con sonido (Hub #727, Retransmision.swift): la voz de la llamada pasa al otro dispositivo por la red de cerca.
+        NSLocalNetworkUsageDescription: En el Modo compañero, Alma pasa por tu red el sonido de la llamada de tu iPhone a tu iPad (o al revés), para que se oiga igual en los dos.
+        NSBonjourServices:
+          - _alma-vivo._tcp
+          - _alma-vivo._udp
         NSFaceIDUsageDescription: Para entrar a Alma con Face ID, sin escribir tu contraseña.
         NSHealthShareUsageDescription: Alma lee tus pasos, ritmo cardíaco, sueño y ejercicios de Apple Salud para mostrártelos en Health.
         NSHealthUpdateUsageDescription: Alma no escribe en Apple Salud; solo lee lo que tu reloj, tu anillo o tus apps ya guardaron.

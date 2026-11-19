@@ -24,8 +24,8 @@ final class Companero {
         return UnaLlamada.motivo(companero: UserDefaults.standard.bool(forKey: Companero.claveOn), porVoz: porVoz, otra: o, visto: v, ahora: Date())
     }
 
-    func empezo(_ conv: String) { DispatchQueue.main.async { self.cola.empezo(conv); self.revisar() } }
-    func estado(_ e: String) { DispatchQueue.main.async { self.cola.cambiar(e); self.revisar() } }
+    func empezo(_ conv: String) { DispatchQueue.main.async { self.cola.empezo(conv); self.revisar() }; Retransmision.shared.empezo() }   // y la voz, por la red de cerca (Hub #727)
+    func estado(_ e: String) { DispatchQueue.main.async { self.cola.cambiar(e); self.revisar() }; if e == "fin" { Retransmision.shared.termino() } }
     func sub(alma: Bool, _ t: String) { DispatchQueue.main.async { self.cola.sub(alma: alma, t); self.revisar() } }
 
     private func revisar() {

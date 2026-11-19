@@ -15,6 +15,8 @@ struct AlmaApp: App {
         VozNativa.shared.arrancarSiHaceFalta()
         // Voz de respaldo (Hub #657, Senal.swift): la señal de internet se vigila desde el inicio; lo guardado sin internet se manda.
         Senal.shared.empezar()
+        // Modo compañero con sonido (Hub #727, Retransmision.swift): si está encendido en este dispositivo, busca la llamada del otro.
+        Retransmision.shared.arrancar()
     }
 
     var body: some Scene {
