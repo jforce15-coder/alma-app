@@ -93,8 +93,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
                 NivelAvisos.poner(t, nivel: n.intValue, por: d["por"] as? String ?? "4h")
             }
             responder("AlmaAvisos.evento", [NivelAvisos.resumen])
-        case "companero":   // Modo compañero (alma/inicio.html): { on, otra } → una sola llamada (UnaLlamada, ColaVivo.swift)
-            Companero.shared.pagina(on: (d["on"] as? Bool) ?? false, otra: d["otra"] as? String ?? "")
+        case "companero":   // Modo compañero (alma/inicio.html): { on, otra, tel } → una sola llamada (UnaLlamada, ColaVivo.swift)
+            Companero.shared.pagina(on: (d["on"] as? Bool) ?? false, otra: d["otra"] as? String ?? "", tel: (d["tel"] as? Bool) ?? false)   // tel: el iPhone está activo (una voz a la vez)
             Retransmision.shared.poner(companero: (d["on"] as? Bool) ?? false)   // y con él encendido, la voz del otro suena aquí (Hub #727)
         case "voz":
             voz(d)

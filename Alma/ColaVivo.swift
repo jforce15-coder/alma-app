@@ -42,21 +42,29 @@ struct ColaVivo {
     }
 }
 
-/// Una sola llamada (Juan, 17-nov-2026: «importante que en modo Companion sólo haya una llamada»). El dispositivo con el
-/// Modo compañero encendido (normalmente el iPad) muestra la llamada del otro; no abre otra por su cuenta:
-///   · Por voz o sola («Alma» en el inicio, el Modo calle, la conferencia, un aviso): nunca. Los dos oyen lo mismo y, si
-///     los dos abrieran, habría dos llamadas con dos Almas hablando a la vez.
+/// Una sola llamada (Juan, 17-nov-2026: «importante que en modo Companion sólo haya una llamada») y una voz a la vez (Juan,
+/// 19-nov-2026: «solo debería haber un agente por voz activo; si está activado el teléfono, usar por default el agente del
+/// teléfono»). **El iPhone manda**: nunca se le bloquea. En otro dispositivo (el iPad, el «escritorio»):
+///   · Con el Modo compañero encendido, por voz o sola («Alma» en el inicio, el Modo calle, la conferencia, un aviso): nunca.
+///   · Sin él, por voz no mientras el iPhone esté activo (la app abierta o escuchando: el Hub lo sabe por vivoTelefono) o
+///     en una llamada. Los dos oyen lo mismo y, si los dos abrieran, habría dos Almas hablando a la vez.
 ///   · A mano (la roca, el anillo): sí, salvo que la página haya visto hace poco la llamada abierta en el otro.
-///   · Sin Modo compañero, todo como antes.
-/// La página (alma/inicio.html, que pregunta al Hub con vivoLeer) le cuenta a la app si está encendido y si el otro
-/// está en una llamada; lo que dijo vale `vigencia` segundos (la página lo repite cada 10 s mientras sigue).
+/// La página (alma/inicio.html, que pregunta al Hub con vivoLeer) le cuenta a la app si el compañero está encendido, si el
+/// otro está en una llamada y si el iPhone está activo; lo que dijo vale `vigencia` segundos (la página lo repite cada 10 s).
 enum UnaLlamada {
     static let vigencia: TimeInterval = 30
     /// nil = puede abrir la llamada aquí; si no, la frase de por qué no (va al registro de la voz).
-    static func motivo(companero: Bool, porVoz: Bool, otra: String, visto: Date?, ahora: Date) -> String? {
-        guard companero else { return nil }
-        if porVoz { return "Modo compañero: aquí no se abre una llamada por voz; la llamada es en tu otro dispositivo" }
-        guard !otra.isEmpty, let v = visto, ahora.timeIntervalSince(v) < vigencia else { return nil }
-        return "Modo compañero: la llamada sigue en tu \(otra); aquí no se abre otra"
+    /// `telefono`: este dispositivo es el iPhone. `telActivo`: la página dijo que el iPhone está activo.
+    static func motivo(companero: Bool, porVoz: Bool, otra: String, visto: Date?, ahora: Date, telefono: Bool = false, telActivo: Bool = false) -> String? {
+        if telefono { return nil }
+        let fresco = visto.map { ahora.timeIntervalSince($0) < vigencia } ?? false
+        if porVoz {
+            if companero { return "Modo compañero: aquí no se abre una llamada por voz; la llamada es en tu otro dispositivo" }
+            if fresco && !otra.isEmpty { return "Una voz a la vez: la llamada sigue en tu \(otra); aquí no se abre otra por voz" }
+            if fresco && telActivo { return "Una voz a la vez: tu iPhone está activo y contesta él; aquí no se abre una llamada por voz" }
+            return nil
+        }
+        guard fresco, !otra.isEmpty else { return nil }
+        return (companero ? "Modo compañero" : "Una voz a la vez") + ": la llamada sigue en tu \(otra); aquí no se abre otra"
     }
 }
