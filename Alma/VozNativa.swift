@@ -526,6 +526,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     /// «Terminar» en la pantalla: cierra la conversación (el doble toque, en cambio, pausa).
     func colgar() { if estado == .hablando || estado == .conectando { motivoFin = "tocaste Terminar"; terminar() } }
+    /// «Terminar» en el otro dispositivo (Modo compañero, Hub vivoColgar): la misma salida que tocar Terminar aquí.
+    func colgarDesdeCompanero() { if estado == .hablando || estado == .conectando { motivoFin = "la terminaste desde el Modo compañero"; terminar() } }
 
     var resumen: [String: Any] {
         var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",

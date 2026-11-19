@@ -6,6 +6,9 @@ import Foundation
 //   · Los subtítulos se juntan y salen en un solo envío: cada `cada` segundos si alguien está mirando, y cada `sinMirar`
 //     si el Hub dijo que no hay compañero (así no gasta en una llamada que nadie ve). El estado (empezó, terminó) sale ya.
 //   · Una llamada nueva empieza vacía; al terminar se manda «fin» y no queda nada pendiente.
+//   · Mientras alguien mira, aunque nadie hable, un envío cada `latido` segundos: así la app se entera a tiempo si Juan tocó
+//     «Terminar» en el compañero (el Hub responde «colgar»; Juan, 19-nov-2026: «si por error se activa, no puedo terminar
+//     la llamada»).
 struct ColaVivo {
     struct Sub: Equatable { let de: String; let t: String }
     private(set) var conv = ""
@@ -14,7 +17,7 @@ struct ColaVivo {
     private(set) var estadoNuevo = false
     var mirando = true                 // lo último que dijo el Hub (al principio, sí: el primer envío lo averigua)
     var ultimoEnvio: Date = .distantPast
-    static let cada: TimeInterval = 1.2, sinMirar: TimeInterval = 12, maxSubs = 8, largo = 280
+    static let cada: TimeInterval = 1.2, sinMirar: TimeInterval = 12, latido: TimeInterval = 3, maxSubs = 8, largo = 280
 
     mutating func empezo(_ id: String) { conv = id; subs = []; estado = "conectando"; estadoNuevo = true; mirando = true; ultimoEnvio = .distantPast }
     mutating func cambiar(_ e: String) { guard !conv.isEmpty, e != estado else { return }; estado = e; estadoNuevo = true }
@@ -28,7 +31,7 @@ struct ColaVivo {
     func toca(_ ahora: Date) -> Bool {
         guard !conv.isEmpty else { return false }
         if estadoNuevo { return true }
-        guard !subs.isEmpty else { return false }
+        guard !subs.isEmpty else { return mirando && ahora.timeIntervalSince(ultimoEnvio) >= ColaVivo.latido }
         return ahora.timeIntervalSince(ultimoEnvio) >= (mirando ? ColaVivo.cada : ColaVivo.sinMirar)
     }
     /// Lo que se manda (y se vacía la cola). Con «fin», la llamada queda cerrada aquí.
