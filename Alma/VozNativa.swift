@@ -179,8 +179,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let i = UserDefaults.standard.integer(forKey: "voz_despedida_i"); UserDefaults.standard.set(i + 1, forKey: "voz_despedida_i")
         return VozNativa.despedidas[i % VozNativa.despedidas.count]
     }
-    /// El saludo al abrirla con tres toques a la roca del navegador (hablarSobrePantalla), pedido de Juan: «Hola, ahora lo veo».
-    static let saludoPantalla = "Hola, ahora lo veo."
+    /// El saludo al abrirla con tres toques a la roca del navegador (hablarSobrePantalla). Antes «Hola, ahora lo veo»: Alma
+    /// lo decía sin tener la captura y después fingía verla (Hub #908). Ahora dice que va a mirar (PantallaVista).
+    static let saludoPantalla = PantallaVista.saludo
     /// Saludo variado (#410, decisión de Juan): una frase natural y completa que cambia cada vez, nunca la misma dos veces
     /// seguidas. Vienen en la ficha del Hub (`saludos`, con su nombre); si no, estas.
     static let saludosBase = ["Hola, cuéntame.", "Aquí estoy, ¿qué necesitas?", "Dime, ¿en qué te ayudo?", "Hola, ¿cómo vamos?",
@@ -453,6 +454,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         if privada { donde += " — PANTALLA PRIVADA (contraseña, código, tarjeta o «soy humano»): no te llega captura y no la pidas; dile «te toca a ti» si pregunta por eso" }
         if estado == .hablando || estado == .conectando {
             if let captura { describir(captura, aviso: "Juan te muestra otra pantalla: " + donde + ".") }
+            else if !privada { sinCaptura() }
             return
         }
         guard companeroDeja(porVoz: false) else { return }
@@ -466,7 +468,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         desdePantalla = true; pantalla = donde
         hablar()
         guard estado == .conectando else { pantalla = nil; return }
-        if let captura { describir(captura, aviso: nil) }
+        if let captura { describir(captura, aviso: nil) } else if !privada { sinCaptura() }
+    }
+    /// La app no pudo tomar la captura (sin pausa de privacidad): Alma lo sabe y no espera una lectura que nunca llega.
+    private func sinCaptura() { verPantalla(PantallaVista.sinLectura("la app no pudo tomar la captura"), paso: "No pude tomar la captura") }
+    /// Lo que Alma sabe de la pantalla: con la llamada abierta va como contexto; si todavía conecta, espera en vistaPendiente.
+    private func verPantalla(_ t: String, paso p: String) {
+        paso(p)
+        if estado == .hablando { mandar(["type": "contextual_update", "text": t]) } else { vistaPendiente = t }
     }
     /// Pausa de privacidad del navegador (NavegadorReglas): con la llamada abierta, Alma sabe que ya no ve esa página y cuándo
     /// vuelve a verla. Solo el motivo, nunca nada de la pantalla.
@@ -1010,10 +1019,10 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let reab = reabierta; reabierta = nil
         if esAlma, let r = reab { dv["quien_llama"] = LlamadaContinua.ficha((dv["quien_llama"] as? String) ?? "", frase: r.frase, charla: r.charla, porClaudio: r.porClaudio) }
         if esAlma, let pt = pantalla {
-            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\nMODO PANTALLA: Juan está en el navegador de la app de Alma viendo " + pt + " y tocó tres veces la roca para hablar contigo de lo que ve. Ya le dijiste «\(VozNativa.saludoPantalla)»: no saludes otra vez; escucha. En unos segundos te llega LO QUE SE VE EN LA PANTALLA (lo que muestra su captura): úsalo como contexto. Si pregunta antes de que llegue, dile que lo estás mirando."
+            dv["quien_llama"] = ((dv["quien_llama"] as? String) ?? "") + "\n\n" + PantallaVista.ficha(pt)   // sin lectura no ve nada (#908)
         }
         // Saludo variado (#410): sin tema por retomar, Alma abre con una frase natural y completa que cambia cada vez (antes
-        // «Dime, Juan», que sonaba cortado). Tres toques en el navegador (pantalla): «Hola, ahora lo veo».
+        // «Dime, Juan», que sonaba cortado). Tres toques en el navegador (pantalla): «Hola, déjame mirarlo».
         // Sin pisar a Juan: el primer mensaje se decide pasada la señal (ventanaSaludo); si para entonces Juan ya está
         // hablando, va vacío y Alma solo escucha (ElevenLabs espera a que hable). Si ya dijeron el pedido con «Alma», tampoco.
         let tema = (ficha["saludo_tema"] as? Bool) == true
@@ -1488,15 +1497,17 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 40
         r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "almaFoto", "foto": captura, "captura": true, "voz": true, "token": token, "session": sesion])
         paso("Leyendo la captura de la pantalla")
-        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+        let kb = captura.utf8.count / 1024
+        URLSession.shared.dataTask(with: r) { [weak self] data, resp, err in
             let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-            let texto = (j?["ok"] as? Bool) == true ? ((j?["texto"] as? String) ?? "") : ""
+            let texto = ((j?["ok"] as? Bool) == true ? ((j?["texto"] as? String) ?? "") : "").trimmingCharacters(in: .whitespacesAndNewlines)
+            // Por qué falló (#908): queda en el registro de la llamada y Alma lo sabe.
+            let red: String? = err.map { ($0 as? URLError)?.code == .timedOut ? "el Hub tardó más de 40 s" : "sin conexión con el Hub" }
+            let motivo = PantallaVista.motivo(respuesta: j, http: (resp as? HTTPURLResponse)?.statusCode, sinRed: red)
             DispatchQueue.main.async {
                 guard let self, self.inicioLlamada == llamada, self.estado == .conectando || self.estado == .hablando else { return }
-                self.paso(texto.isEmpty ? "No pude leer la captura" : "Captura leída")
-                let t = texto.isEmpty ? "LO QUE SE VE EN LA PANTALLA: no se pudo leer la captura. Si Juan pregunta por algo de la pantalla, pídele que te diga qué ve."
-                    : (aviso.map { $0 + " " } ?? "") + "LO QUE SE VE EN LA PANTALLA (la captura que te mandó Juan): " + texto
-                if self.estado == .hablando { self.mandar(["type": "contextual_update", "text": t]) } else { self.vistaPendiente = t }
+                if texto.isEmpty { self.verPantalla(PantallaVista.sinLectura(motivo), paso: "No pude leer la captura: " + motivo + " (\(kb) KB)") }
+                else { self.verPantalla(PantallaVista.leida(texto, aviso: aviso), paso: "Captura leída") }
             }
         }.resume()
     }

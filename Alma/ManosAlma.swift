@@ -47,6 +47,8 @@ final class ManosAlma {
         + "CONTROL si te pide hacerlo tú: tocar, escribir y bajar, una cosa a la vez, y narra en corto. "
         + "Si una herramienta responde te_toca (contraseña, código, tarjeta o «soy humano»), tú no ves esa pantalla: dile «te toca a ti» y espera su «listo». "
         + "Si responde pausa_sitio, la página no quiere prisa: dile que vas despacio para que no lo bloqueen."
+        // Hub #908: Alma decía «ahora lo veo» sin ninguna lectura de la pantalla (con Juan pagando en su banco).
+        + " Solo VES la página con lo que devuelve leer_pagina o con «LO QUE SE VE EN LA PANTALLA»: sin una de las dos, nunca digas que la ves ni lo que hay en ella."
 
     /// Corre una herramienta y siempre contesta (texto JSON, ¿es error?): Alma nunca se queda esperando.
     func correr(_ nombre: String, _ p: [String: Any], _ fin: @escaping (String, Bool) -> Void) {
