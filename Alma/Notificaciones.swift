@@ -40,6 +40,7 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
     /// `orbita` (Hub #583 T1.3): el id del anillo o del tema del que habla; al tocarla se abre el chat con ese id.
     func mostrar(id: String, texto: String, titulo: String = "", lineas: [String] = [], seDice: Bool = false, tipo: String? = nil, siNoEsta: Bool = false, orbita: String? = nil) {
         guard !texto.isEmpty else { return }
+        guard !Companero.shared.callaAvisos else { return }   // iPad con el Modo compañero (Juan, 19-nov-2026): llegan al teléfono
         let clase = AjustesNotif.tipo(tipo)
         let plan = clase.map { AjustesNotif.plan(tipo: $0, ajuste: AjustesNotif.leer()[$0] ?? .deFabrica($0), momento: momentoAhora(seDice: seDice), id: id) }
         if plan?.mostrar == false { return }   // los tres lugares apagados: este tipo no llega
@@ -92,6 +93,7 @@ final class Notificaciones: NSObject, UNUserNotificationCenterDelegate {
     /// ni banner ni sonido, así nada se encima a su voz.
     func userNotificationCenter(_ c: UNUserNotificationCenter, willPresent n: UNNotification,
                                 withCompletionHandler fin: @escaping (UNNotificationPresentationOptions) -> Void) {
+        if Companero.shared.callaAvisos { fin([]); return }   // iPad con el Modo compañero: ni banner ni sonido (Juan, 19-nov-2026)
         let u = n.request.content.userInfo
         if let banner = u["banner"] as? Bool {   // armada con los ajustes de su tipo (NotifArmar.swift)
             var o: UNNotificationPresentationOptions = []

@@ -420,11 +420,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
     }
     /// Una sola llamada (Juan, 17-nov-2026; UnaLlamada en ColaVivo.swift): con el Modo compañero encendido aquí, por voz no
-    /// se abre nunca y a mano tampoco mientras la llamada siga en el otro dispositivo. false = aquí no se abre.
+    /// se abre nunca y a mano tampoco mientras la llamada siga en el otro dispositivo; en el iPad, nunca (19-nov-2026).
+    /// false = aquí no se abre.
     private func companeroDeja(porVoz: Bool) -> Bool {
         guard let m = Companero.shared.noDeja(porVoz: porVoz) else { return true }
         paso(m)
-        if !porVoz { emitir(["tipo": "companero", "mensaje": m]); avisar() }   // la página sigue mostrando la del otro
+        if !porVoz { emitir(["tipo": "companero", "mensaje": m, "ipad": m == UnaLlamada.enIPad]); avisar() }   // la página sigue mostrando la del otro
         return false
     }
 
@@ -2019,6 +2020,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     private func buscarAvisos(duerme: Bool = false, listo: (() -> Void)? = nil) {
+        // iPad con el Modo compañero (Juan, 19-nov-2026: «muestra notificaciones cuando debería estar deshabilitado»): no
+        // pregunta por avisos. Así no se los lleva del Hub, no los muestra ni los dice, y le llegan al teléfono.
+        guard !Companero.shared.callaAvisos else { listo?(); return }
         guard estado == .lista || estado == .apagada,
               let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"), let u = URL(string: url) else { listo?(); return }
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = duerme ? 20 : 40

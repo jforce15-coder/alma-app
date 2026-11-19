@@ -36,6 +36,13 @@ revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: 
 revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: t0, ahora: t0.addingTimeInterval(31)) == nil, "lo que dijo la página vence a los 30 s")
 revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: nil, ahora: t0) == nil, "sin noticia de la página, a mano sí")
 
+// En el iPad (Juan, 19-nov-2026): con el Modo compañero encendido no se abren llamadas ni llegan notificaciones
+revisa(UnaLlamada.motivo(companero: true, ipad: true, porVoz: false, otra: "", visto: nil, ahora: t0) == UnaLlamada.enIPad, "iPad compañero: a mano tampoco, aunque no haya llamada en el otro")
+revisa(UnaLlamada.motivo(companero: true, ipad: true, porVoz: true, otra: "", visto: nil, ahora: t0) == UnaLlamada.enIPad, "iPad compañero: por voz tampoco")
+revisa(UnaLlamada.motivo(companero: false, ipad: true, porVoz: false, otra: "iPhone", visto: t0, ahora: t0) == nil, "iPad sin Modo compañero: llama como siempre")
+revisa(UnaLlamada.motivo(companero: true, ipad: false, porVoz: false, otra: "", visto: nil, ahora: t0) == nil, "teléfono con el modo encendido: a mano sí, como antes")
+revisa(UnaLlamada.callaAvisos(companero: true, ipad: true), "iPad compañero: sin notificaciones")
+revisa(!UnaLlamada.callaAvisos(companero: true, ipad: false) && !UnaLlamada.callaAvisos(companero: false, ipad: true), "el teléfono, o el iPad sin el modo: notificaciones como siempre")
 // Una sola voz (Juan, 19-nov-2026): el del teléfono manda
 revisa(UnaLlamada.motivo(companero: true, telefono: true, porVoz: true, otra: "", visto: nil, ahora: t0) == nil, "el iPhone con Modo compañero sí abre por voz")
 revisa(UnaLlamada.motivo(companero: true, telefono: true, porVoz: false, otra: "iPad", visto: t0, ahora: t0) == nil, "el iPhone abre aunque la llamada esté en el iPad (el iPad cede)")
