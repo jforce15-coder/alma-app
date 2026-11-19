@@ -42,6 +42,33 @@ enum ClaudioLocalReglas {
         return ahora.timeIntervalSince(ultimoCambio) >= pausa(para: texto)
     }
 
+    // MARK: - Fin de la frase por el sonido (Juan, 19-nov-2026: «estamos tardando mucho en la transcripción»)
+
+    /// El dictado escribe con atraso (medio segundo o más): contar la pausa desde el último cambio del texto sumaba ese
+    /// atraso a cada turno. Ahora la pausa se cuenta también desde la última vez que el micrófono oyó voz: callado
+    /// `pausaVoz` (o `pausaVozColgando` si la frase queda en «… y») y con el texto quieto `textoQuieto`, la frase va.
+    /// Solo si el micrófono sí oyó voz en esta frase; si no (micrófono muy bajito), manda la regla de antes.
+    static let pausaVoz = 0.7, pausaVozColgando = 1.5, textoQuieto = 0.3
+    /// Al cerrar, el dictado termina de escribir lo último que oyó (endAudio); se espera su texto final como mucho esto.
+    static let esperaFinal = 0.6
+
+    static func pausaVoz(para texto: String) -> Double { pausa(para: texto) == pausaColgando ? pausaVozColgando : pausaVoz }
+
+    /// ¿Ya terminó? Lo de antes (`termino`) o, con voz oída en esta frase, la pausa del sonido.
+    static func termino(texto: String, ultimoCambio: Date, empezo: Date, ultimaVoz: Date?, ahora: Date) -> Bool {
+        if termino(texto: texto, ultimoCambio: ultimoCambio, empezo: empezo, ahora: ahora) { return true }
+        // La voz tiene que ser de esta frase (de cuando empezó a escribirse, con su atraso), no un ruido de antes.
+        guard let v = ultimaVoz, v >= empezo.addingTimeInterval(-1), !texto.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return ahora.timeIntervalSince(v) >= pausaVoz(para: texto) && ahora.timeIntervalSince(ultimoCambio) >= textoQuieto
+    }
+
+    /// ¿Este trozo del micrófono es voz? Más fuerte que 3 veces el ruido de fondo (y nunca por debajo de 0,02; la limpieza
+    /// de voz lleva la voz a 0,08).
+    static let vozMinima: Float = 0.02, margenVoz: Float = 3
+    static func esVoz(rms: Float, piso: Float) -> Bool { rms > max(vozMinima, piso * margenVoz) }
+    /// El ruido de fondo: baja rápido a lo más callado y sube despacio (una voz larga no lo vuelve ruido).
+    static func piso(_ p: Float, rms: Float) -> Float { rms < p ? p * 0.9 + rms * 0.1 : p * 0.998 + rms * 0.002 }
+
     // MARK: - Lo que se manda al Hub
 
     struct Turno: Equatable { let deClaudio: Bool; let texto: String }

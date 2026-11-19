@@ -43,6 +43,8 @@ final class ClaudioLocal: NSObject {
     private var tarea: SFSpeechRecognitionTask?
     private var vuelta = 0
     private var texto = "", ultimoCambio = Date(), empezo = Date(), desdePedido = Date()
+    /// La última vez que el micrófono oyó voz en esta frase, el ruido de fondo y si ya se cerró (esperando el texto final).
+    private var ultimaVoz: Date?, piso: Float = 0.01, cerrando = false
     private var historial: [ClaudioLocalReglas.Turno] = []
     private var notas: [String] = []
     private var ocupadoHasta = Date.distantFuture   // piensa o habla: el micrófono no cuenta (hasta que termine el saludo)
@@ -185,15 +187,20 @@ final class ClaudioLocal: NSObject {
     // MARK: - Oír
 
     private func oir(_ d: Data) {
-        guard !pensando, Date() >= ocupadoHasta, let p = pedido else { return }
+        guard !pensando, !cerrando, Date() >= ocupadoHasta, let p = pedido else { return }
         let n = d.count / 2
         guard n > 0, let buf = AVAudioPCMBuffer(pcmFormat: formatoOido, frameCapacity: AVAudioFrameCount(n)), let ch = buf.floatChannelData else { return }
         buf.frameLength = AVAudioFrameCount(n)
+        var e: Float = 0
         d.withUnsafeBytes { (r: UnsafeRawBufferPointer) in
             let s = r.bindMemory(to: Int16.self)
-            for i in 0..<n { ch[0][i] = Float(Int16(littleEndian: s[i])) / 32768 }
+            for i in 0..<n { let x = Float(Int16(littleEndian: s[i])) / 32768; ch[0][i] = x; e += x * x }
         }
         p.append(buf)
+        // ¿Juan está hablando? Así la pausa se cuenta desde que calla, no desde que el dictado termina de escribir.
+        let rms = sqrt(e / Float(n))
+        if ClaudioLocalReglas.esVoz(rms: rms, piso: piso) { ultimaVoz = Date() }
+        piso = ClaudioLocalReglas.piso(piso, rms: rms)
     }
 
     /// Un dictado nuevo para la próxima frase de Juan.
@@ -205,7 +212,7 @@ final class ClaudioLocal: NSObject {
         p.contextualStrings = ["Claudio", "Alma", "une", "únelo", "súbelo", "Opus", "Sonnet", "Hub", "órbita", "Pendientes"]
         pedido = p
         vuelta += 1; let mia = vuelta
-        texto = ""; ultimoCambio = Date(); empezo = Date(); desdePedido = Date()
+        texto = ""; ultimoCambio = Date(); empezo = Date(); desdePedido = Date(); ultimaVoz = nil; cerrando = false
         tarea = reconocedor.recognitionTask(with: p) { [weak self] r, e in
             DispatchQueue.main.async {
                 guard let self, self.vivo, self.vuelta == mia, !self.pensando else { return }
@@ -231,12 +238,27 @@ final class ClaudioLocal: NSObject {
     private func revisar() {
         guard vivo, !pensando, Date() >= ocupadoHasta else { return }
         if pedido == nil { nuevoPedido(); return }
-        if ClaudioLocalReglas.termino(texto: texto, ultimoCambio: ultimoCambio, empezo: empezo, ahora: Date()) { cerrarFrase(); return }
+        guard !cerrando else { return }
+        if ClaudioLocalReglas.termino(texto: texto, ultimoCambio: ultimoCambio, empezo: empezo, ultimaVoz: ultimaVoz, ahora: Date()) { terminar(); return }
         // El dictado de Apple escucha como un minuto por pedido: callado, se renueva antes.
         if texto.isEmpty && Date().timeIntervalSince(desdePedido) > 50 { nuevoPedido() }
     }
 
+    /// Juan ya calló: el dictado deja de oír y termina de escribir lo último (su texto final llega en un momento); si
+    /// tarda más de `esperaFinal`, va lo que ya escribió.
+    private func terminar() {
+        cerrando = true
+        pedido?.endAudio()
+        let mia = vuelta
+        DispatchQueue.main.asyncAfter(deadline: .now() + ClaudioLocalReglas.esperaFinal) { [weak self] in
+            guard let self, self.vivo, self.vuelta == mia, self.cerrando else { return }
+            self.cerrarFrase()
+        }
+    }
+
     private func cerrarFrase() {
+        if let v = ultimaVoz { paso?(String(format: "Dictado: tu frase salió %.1f s después de que callaste", Date().timeIntervalSince(v))) }
+        cerrando = false
         let t = texto.trimmingCharacters(in: .whitespacesAndNewlines)
         texto = ""; soltarPedido()
         if t.isEmpty { nuevoPedido(); return }
