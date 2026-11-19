@@ -17,6 +17,8 @@ struct AlmaApp: App {
         Senal.shared.empezar()
         // Modo compañero con sonido (Hub #727, Retransmision.swift): si está encendido en este dispositivo, busca la llamada del otro.
         Retransmision.shared.arrancar()
+        // Una voz a la vez (Hub vivo.js, Companero.swift): el iPhone avisa al Hub que está activo; el iPad no abre otra por voz.
+        Companero.shared.arrancar()
     }
 
     var body: some Scene {
