@@ -158,6 +158,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var herramienta = false {
         didSet { if herramienta && !oldValue { herramientaDesde = Date() } else if !herramienta && oldValue { herramientaDesde = nil; finHerramienta = Date() } }
     }
+    /// Cuál herramienta corre (para el paso de un corte; guardia 19-nov-2026). Solo cuenta mientras `herramienta` es true.
+    private var herramientaNombre = ""
     private var herramientaDesde: Date?, finHerramienta = Date.distantPast
     /// Modo conferencia: la secretaria espera hasta 45 s (el Hub lo sabe por vozWebVincular). Si una herramienta pasa de
     /// `tras` segundos, la app dice una vez «Sigo en eso, ya casi» con la voz de Alma (el audio PCM llega del Hub al vincular,
@@ -325,6 +327,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let d = UserDefaults.standard
         if d.bool(forKey: "voz_abierta") {   // la app se cerró a media conversación (iOS la volvió a abrir por el anillo)
             d.set("Alma se cerró sola en el paso: " + (d.string(forKey: "voz_paso") ?? "?"), forKey: "voz_ultimo_error"); d.set(false, forKey: "voz_abierta")
+            // Guardia 19-nov-2026: también va al registro del Hub (antes solo quedaba en Ajustes y no se veía por qué se cortó).
+            paso(LlamadaContinua.pasoAppCerrada(ultimoPaso: d.string(forKey: "voz_paso"), latido: d.string(forKey: "voz_latido")))
         }
         prepararMandos()
         UNUserNotificationCenter.current().delegate = Notificaciones.shared; Notificaciones.shared.registrarCategorias()
@@ -337,7 +341,15 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     /// Lo que se suma al paso de un cierre: si el último turno de Juan quedó sin respuesta (guardia 18-nov-2026).
-    private func cierreNota() -> String { LlamadaContinua.notaCierre(juan: turnoJuan, voz: respuestaVoz, ahora: Date(), palabras: palabrasTurnoJuan) }
+    private func cierreNota() -> String { LlamadaContinua.notaCierre(juan: turnoJuan, voz: respuestaVoz, ahora: Date(), palabras: palabrasTurnoJuan) + corteNota() }
+    /// Lo que se suma a un corte para saber la causa (guardia 19-nov-2026): herramienta en curso, salida del audio (el tipo,
+    /// no el nombre), si la app estaba en segundo plano y si había una llamada de teléfono.
+    private func corteNota() -> String {
+        LlamadaContinua.notaCorte(herramienta: herramienta ? herramientaNombre : nil, desde: herramientaDesde, ahora: Date(),
+                                  salida: AVAudioSession.sharedInstance().currentRoute.outputs.first?.portType.rawValue ?? "",
+                                  enFondo: UIApplication.shared.applicationState != .active,
+                                  telefono: CXCallObserver().calls.contains { !$0.hasEnded })
+    }
 
     /// Para otras piezas de la llamada (AudioLlamada): un paso más en el mismo registro.
     func anotar(_ t: String) { paso(t) }
@@ -755,6 +767,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             guard self.estado == .hablando || self.estado == .conectando else { self.anilloCortado(); return }
             // Modo calle: otra llamada o Siri cortan sin error ni reintento; el Modo calle vuelve a esperar cuando regrese el micrófono.
             // Conferencia (conversación continua): igual, sin error; al terminar la interrupción vuelve a escuchar «Alma».
+            // Guardia 19-nov-2026: el motivo de iOS y lo demás (llamada de teléfono, herramienta en curso) quedan en el registro.
+            let motivo = (n.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt).map { " (motivo \($0))" } ?? ""
+            self.paso("iOS interrumpió el audio de la llamada" + motivo + self.corteNota())
             if self.tiemposCierre != nil { self.paso("Otra app o una llamada tomó el audio"); self.colgarCalle(.corte) } else { self.fallo("Otra app o una llamada tomó el audio.") }
         }
         // Al abrir la app (o al volver a ella) el micrófono queda listo otra vez.
@@ -1215,14 +1230,16 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 sonar(d, respiro: primera)
             }
         case "agent_tool_request":
-            herramienta = true; ultimaActividad = Date()
             let tr = j["agent_tool_request"] as? [String: Any] ?? [:]
+            herramientaNombre = tr["tool_name"] as? String ?? ""
+            herramienta = true; ultimaActividad = Date()
             coro.empieza(tr["tool_call_id"] as? String ?? "", nombre: tr["tool_name"] as? String ?? "")
             if conferencia != nil, (tr["tool_name"] as? String ?? "secretaria") == "secretaria" { armarEspera() }
             // El tablero se queda mientras Alma busca otra cosa: lo reemplaza la próxima tarjeta (Hub #508, por estado)
         case "client_tool_call":
             ultimaActividad = Date()
             let ct = j["client_tool_call"] as? [String: Any] ?? [:]
+            herramientaNombre = ct["tool_name"] as? String ?? ""
             coro.empieza(ct["tool_call_id"] as? String ?? "", nombre: ct["tool_name"] as? String ?? "")
             herramientaCliente(j["client_tool_call"] as? [String: Any] ?? [:])
         case "agent_tool_response":
@@ -1632,7 +1649,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 self.ultimaVoz = Date()
                 self.revivirMicrofono()
             }
-            if tramo % 10 == 0 { self.paso(String(format: "Voz enviada: %.1f s en 10 s", self.vozEnviada)); self.vozEnviada = 0 }
+            if tramo % 10 == 0 {
+                // Lo normal ya no se anota (llenaba el registro del Hub y se perdía el cierre): solo cuando el micrófono mandó poco.
+                if LlamadaContinua.anotaVozEnviada(self.vozEnviada) { self.paso(String(format: "Voz enviada: %.1f s en 10 s", self.vozEnviada)) }
+                self.vozEnviada = 0
+                // La última señal de vida: si la app se cierra a media llamada, al volver a abrir se sabe dónde iba.
+                let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
+                UserDefaults.standard.set(f.string(from: Date()) + String(format: " · %.0f s conectada", Date().timeIntervalSince(self.conectadaDesde)) + self.corteNota(), forKey: "voz_latido")
+            }
         }
     }
 
@@ -2117,12 +2141,16 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             cortesRed = RespaldoReglas.sumarCorte(cortesRed, ahora: ahora); Senal.shared.anotarCorte()
             if usar { pasarARespaldo(por: m, conectada: conectada != nil); return }
         }
+        let buscando = herramienta && agente == .alma   // Alma buscaba algo (la secretaria): se reabre y lo busca otra vez
         switch LlamadaContinua.trasCorte(claudio: agente == .claudio, calle: desdeCalle, conferencia: conferencia != nil, conectada: conectada,
-                                         reabiertas: reabiertas, sinCreditos: sinCreditos) {
+                                         reabiertas: reabiertas, sinCreditos: sinCreditos, buscando: buscando) {
         case .fallar: fallo(m, conexion: true)
         case .colgar: paso("Se cortó la conexión (" + m + ")"); colgarCalle(.corte)
         case .volverConAlma: reabrir(por: m, frase: LlamadaContinua.fraseSinClaudio(conectado: conectada != nil), porClaudio: true)
-        case .reabrir: reabrir(por: m, frase: LlamadaContinua.fraseTrasCorte, porClaudio: false)
+        case .reabrir:
+            // Se cortó buscando: sin frase fija (Alma se quedaría callada esperando); la app le pide que lo diga y lo busque otra vez.
+            if buscando { textoInicial = LlamadaContinua.pedidoTrasCorteBuscando; paso("Se cortó mientras Alma usaba " + (herramientaNombre.isEmpty ? "una herramienta" : herramientaNombre) + ": la reabro y lo busca otra vez") }
+            reabrir(por: m, frase: buscando ? "" : LlamadaContinua.fraseTrasCorte, porClaudio: false)
         }
     }
 

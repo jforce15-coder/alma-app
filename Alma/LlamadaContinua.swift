@@ -98,11 +98,14 @@ enum LlamadaContinua {
 
     /// La conexión de la llamada se cayó (falló el socket, ElevenLabs cerró sin colgar o no contestó a tiempo): ¿qué sigue?
     /// `conectada`: cuánto llevaba conectada (nil si no llegó a conectar). `reabiertas`: las veces que ya se reabrió.
-    static func trasCorte(claudio: Bool, calle: Bool, conferencia: Bool, conectada: TimeInterval?, reabiertas: Int, sinCreditos: Bool) -> TrasCorte {
+    /// `buscando`: Alma esperaba una herramienta (la secretaria) cuando se cortó. Guardia 19-nov-2026: Juan preguntó, Alma dijo
+    /// «Déjame revisar…» y la llamada se cayó; tuvo que volver a llamar y repetirlo. Así se reabre sola también en el Modo
+    /// calle y en conferencia (sin esto se cerraba y Juan se quedaba sin respuesta).
+    static func trasCorte(claudio: Bool, calle: Bool, conferencia: Bool, conectada: TimeInterval?, reabiertas: Int, sinCreditos: Bool, buscando: Bool = false) -> TrasCorte {
         if sinCreditos { return .fallar }                                    // sin créditos no hay con quién volver
         if claudio { return reabiertas < maxReabrir ? .volverConAlma : .fallar }
         guard let c = conectada else { return .fallar }                      // Alma nunca contestó: se dice por qué
-        if calle || conferencia { return .colgar }
+        if (calle || conferencia) && !buscando { return .colgar }
         return c >= minimoConectada && reabiertas < maxReabrir ? .reabrir : .fallar
     }
 
@@ -130,10 +133,43 @@ enum LlamadaContinua {
         conectado ? "Se cortó la llamada con Claudio. Sigo yo contigo: ¿qué necesitas?" : "No pude pasarte con Claudio. Sigo yo contigo: ¿qué necesitas?"
     }
 
+    /// Se cortó mientras Alma buscaba algo: Alma no saluda con una frase fija (después se quedaría callada esperando a Juan);
+    /// la app le manda este turno y ella dice en corto que se cortó y lo busca otra vez, sin que Juan lo repita.
+    static let pedidoTrasCorteBuscando = "(Se cortó la llamada mientras buscabas lo que te pedí. Dime en una frase corta que se cortó y búscalo otra vez ahora, sin preguntarme de nuevo: lo último que se dijo está en tu ficha.)"
+
+    /// Lo que se suma al paso de un corte para saber la causa (guardia 19-nov-2026: el 1006 no dejaba ver nada): qué
+    /// herramienta corría y desde hace cuánto, por dónde salía el audio (el tipo, no el nombre del aparato), si la app estaba
+    /// en segundo plano y si había una llamada de teléfono.
+    static func notaCorte(herramienta: String?, desde: Date?, ahora: Date, salida: String, enFondo: Bool, telefono: Bool) -> String {
+        var t = ""
+        if let h = herramienta, !h.isEmpty {
+            t += " · herramienta " + String(h.prefix(30)) + " en curso" + (desde.map { String(format: " hace %.0f s", max(0, ahora.timeIntervalSince($0))) } ?? "")
+        }
+        t += " · salida " + (salida.isEmpty ? "?" : String(salida.prefix(24)))
+        t += enFondo ? " · app en segundo plano" : " · app a la vista"
+        if telefono { t += " · había una llamada de teléfono" }
+        return t
+    }
+
+    /// «Voz enviada» cada 10 s: lo normal (casi 10 s de 10) no se anota; con eso se llenaba el registro del Hub y se perdía
+    /// el cierre de la llamada. Solo se anota cuando el micrófono mandó poco (ahí sí dice algo).
+    static let vozNormal: Double = 9
+    static func anotaVozEnviada(_ segundos: Double) -> Bool { segundos < vozNormal }
+
+    /// La última señal de vida de la llamada (cada 10 s, en el teléfono): si iOS cierra la app o la app falla a media
+    /// llamada no queda ningún paso del cierre (ElevenLabs solo ve un 1006). Al abrir otra vez, este paso dice dónde iba.
+    static func pasoAppCerrada(ultimoPaso: String?, latido: String?) -> String {
+        var t = "La app se cerró a media llamada (iOS la terminó o falló), sin que tocaras Terminar"
+        if let l = latido, !l.isEmpty { t += " · última señal: " + String(l.prefix(120)) }
+        if let p = ultimoPaso, !p.isEmpty { t += " · último paso: " + String(p.prefix(80)) }
+        return t
+    }
+
     /// La ficha de la conversación reabierta: lo último que se dijo va al final de quien_llama, para seguir donde iban.
     static func ficha(_ quienLlama: String, frase: String, charla: [String], porClaudio: Bool) -> String {
         let que = porClaudio ? "NO SE PUDO SEGUIR CON CLAUDIO y volviste tú" : "SE CORTÓ LA CONEXIÓN un momento y la app la volvió a abrir"
-        var t = quienLlama + "\n\n" + que + ": ya le dijiste «" + frase + "». No saludes ni te presentes otra vez; sigue exactamente donde iban."
+        let dijo = frase.isEmpty ? ". Lo que sigue te llega como un turno de Juan." : ": ya le dijiste «" + frase + "»."
+        var t = quienLlama + "\n\n" + que + dijo + " No saludes ni te presentes otra vez; sigue exactamente donde iban."
         if !charla.isEmpty { t += " LO ÚLTIMO QUE SE DIJO:\n" + charla.suffix(6).joined(separator: "\n") }
         return t
     }
