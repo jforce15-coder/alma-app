@@ -21,7 +21,7 @@ final class Companero {
     /// nil = este dispositivo puede abrir la llamada; si no, por qué no (desde cualquier hilo).
     func noDeja(porVoz: Bool) -> String? {
         candado.lock(); let o = otra, v = vista; candado.unlock()
-        return UnaLlamada.motivo(companero: UserDefaults.standard.bool(forKey: Companero.claveOn), porVoz: porVoz, otra: o, visto: v, ahora: Date())
+        return UnaLlamada.motivo(companero: UserDefaults.standard.bool(forKey: Companero.claveOn), telefono: dispositivo == "iPhone", porVoz: porVoz, otra: o, visto: v, ahora: Date())
     }
 
     func empezo(_ conv: String) { DispatchQueue.main.async { self.cola.empezo(conv); self.revisar() }; Retransmision.shared.empezo() }   // y la voz, por la red de cerca (Hub #727)
@@ -46,6 +46,7 @@ final class Companero {
                 guard let self else { return }
                 self.enviando = false
                 if let m = j?["mirando"] as? Bool { self.cola.mirando = m; AudioLlamada.shared.companeroMira(m) }
+                if (j?["ceder"] as? Bool) == true { VozNativa.shared.cederAlTelefono(j?["otra"] as? String ?? "") }   // una sola voz: manda el del teléfono (Hub vivo.js)
             }
         }.resume()
     }
