@@ -928,13 +928,19 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                                             anillo: AudioCalle.llamadaConAnillo(anilloListo: anilloListo, otraSuena: VozNativa.otraAppSuena)).map(AudioCalle.ios) ?? VozNativa.opciones
                 VigiaMusica.tomo("al abrir la llamada")
                 paso("Abriendo el micrófono" + (o.contains(.duckOthers) ? " (la música baja, no se pausa)" : ""))
-                try s.setCategory(.playAndRecord, mode: .default, options: o)
-                try s.setActive(true)
-                AudioLlamada.shared.empezo()   // el micrófono y la salida que eligió Juan (con Modo compañero, el del teléfono)
-                try prepararMotor()
+                do { try abrirMicrofono(o, conRutaElegida: true) }
+                catch {
+                    // Guardia (Hub #907): con música sonando, bajarla (duckOthers) a veces no deja abrir el micrófono (-1 sin
+                    // formato de entrada, -66680 dispositivo inválido). Una sola vez más: mezclando y con la ruta de fábrica.
+                    guard let otra = AudioCalle.reintento(AudioCalle.desde(ios: o)).map(AudioCalle.ios) else { throw error }
+                    paso(AudioCalle.textoReintento(pasoMicrofono, codigo: (error as NSError).code))
+                    rutaDeFabrica()
+                    try abrirMicrofono(otra, conRutaElegida: false)
+                    paso("Micrófono abierto al segundo intento: la música sigue a su volumen y el audio va por la ruta de fábrica")
+                }
             } else { AudioLlamada.shared.empezo() }
             paso("Micrófono abierto · conectando la voz")
-        } catch { fallo("No pude abrir el micrófono (\((error as NSError).code))."); return }
+        } catch { fallo(AudioCalle.textoFallo(pasoMicrofono, codigo: (error as NSError).code)); return }
         // Voz de respaldo (Hub #657): sin señal, Alma va sin ElevenLabs desde el principio.
         if self.agente == .alma, (ficha["respaldo"] as? Bool) == true {
             if !arrancarRespaldo(frase: RespaldoReglas.fraseAlEmpezar) { fallo("No hay internet y la voz de respaldo no está lista: falta el permiso del dictado (Ajustes del iPhone → Alma → Reconocimiento de voz).", conexion: true) }
@@ -1071,6 +1077,33 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         }
     }
 
+    /// La llamada de iOS que se está haciendo al abrir el micrófono de la llamada (para decir cuál falló).
+    private var pasoMicrofono = AudioCalle.PasoMicrofono.categoria
+
+    /// Las tres llamadas para abrir el micrófono de la llamada, anotando cuál va. `conRutaElegida`: el micrófono y la salida
+    /// que eligió Juan (AudioLlamada); en el segundo intento de la guardia no se piden: queda la ruta de fábrica de iOS.
+    private func abrirMicrofono(_ o: AVAudioSession.CategoryOptions, conRutaElegida: Bool) throws {
+        let s = AVAudioSession.sharedInstance()
+        pasoMicrofono = .categoria
+        try s.setCategory(.playAndRecord, mode: .default, options: o)
+        pasoMicrofono = .activar
+        try s.setActive(true)
+        if conRutaElegida { AudioLlamada.shared.empezo() }   // el micrófono y la salida que eligió Juan (con Modo compañero, el del teléfono)
+        pasoMicrofono = .motor
+        try prepararMotor()
+    }
+
+    /// Antes del segundo intento: se suelta lo que pidió AudioLlamada (micrófono, bocina, bocina de Google), el motor y el audio,
+    /// para que iOS vuelva a elegir una entrada que sí existe.
+    private func rutaDeFabrica() {
+        let s = AVAudioSession.sharedInstance()
+        AudioLlamada.shared.termino()
+        try? s.setPreferredInput(nil)
+        try? s.overrideOutputAudioPort(.none)
+        engine.inputNode.removeTap(onBus: 0); if engine.isRunning { engine.stop() }; engine.reset()
+        try? s.setActive(false)
+    }
+
     /// Abre el micrófono. Primero con cancelación de eco; si iOS la rechaza (error «what»), sin ella: así Alma igual escucha.
     private func prepararMotor() throws {
         if !motorListo {
@@ -1081,6 +1114,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             coro.normal = LlamadaContinua.volumenVoz
             coro.juanHabla = { [weak self] in Date().timeIntervalSince(self?.vozJuanCoro ?? .distantPast) < 0.35 }
         }
+        let huboEco = !sinEco
         if !sinEco {
             do { try armarMotor(eco: true); return }
             catch {
@@ -1089,7 +1123,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 sinEco = true
             }
         }
-        try armarMotor(eco: false)
+        do { try armarMotor(eco: false) }
+        catch {
+            // Tampoco sin el eco: el problema era el micrófono, no el eco. Que la próxima vez lo vuelva a intentar con él
+            // (antes un -1 sin micrófono dejaba la cancelación de eco apagada hasta cerrar la app) (Hub #907).
+            if huboEco { sinEco = false }
+            throw error
+        }
     }
 
     private func armarMotor(eco: Bool) throws {
