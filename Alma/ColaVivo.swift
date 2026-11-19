@@ -6,6 +6,8 @@ import Foundation
 //   · Los subtítulos se juntan y salen en un solo envío: cada `cada` segundos si alguien está mirando, y cada `sinMirar`
 //     si el Hub dijo que no hay compañero (así no gasta en una llamada que nadie ve). El estado (empezó, terminó) sale ya.
 //   · Una llamada nueva empieza vacía; al terminar se manda «fin» y no queda nada pendiente.
+//   · El latido (cada `latido` segundos, aunque nadie hable) también trae «colgar» si Juan tocó «Terminar» en el compañero
+//     (Juan, 19-nov-2026: «si por error se activa, no puedo terminar la llamada»).
 struct ColaVivo {
     struct Sub: Equatable { let de: String; let t: String }
     private(set) var conv = ""

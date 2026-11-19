@@ -527,6 +527,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     /// «Terminar» en la pantalla: cierra la conversación (el doble toque, en cambio, pausa).
     func colgar() { if estado == .hablando || estado == .conectando { motivoFin = "tocaste Terminar"; terminar() } }
+    /// «Terminar» en el otro dispositivo (Modo compañero, Hub vivoColgar): la misma salida que tocar Terminar aquí.
+    func colgarDesdeCompanero() { if estado == .hablando || estado == .conectando { motivoFin = "la terminaste desde el Modo compañero"; terminar() } }
     /// Una sola voz (Juan, 19-nov-2026: «solo debería haber un agente por voz activo; si está activado el teléfono,
     /// por default el agente del teléfono»): el Hub (vivoPublicar) avisó que la llamada sigue en el iPhone. Esta se cierra
     /// sin pasar al modo conferencia y la página muestra la del teléfono (Modo compañero) o dice dónde sigue.

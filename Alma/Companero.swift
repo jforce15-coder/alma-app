@@ -77,12 +77,15 @@ final class Companero {
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 10
         r.httpBody = try? JSONSerialization.data(withJSONObject: b)
         enviando = true
+        let conv = b0["conv_id"] as? String ?? ""
         URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
             let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.enviando = false
                 if let m = j?["mirando"] as? Bool { self.cola.mirando = m; AudioLlamada.shared.companeroMira(m) }
+                // «Terminar» en el compañero (Hub vivoColgar; Juan, 19-nov-2026): cuelga esta llamada, si sigue siendo la misma
+                if (j?["colgar"] as? Bool) == true, !conv.isEmpty, self.cola.conv == conv { VozNativa.shared.colgarDesdeCompanero() }
                 if (j?["ceder"] as? Bool) == true { VozNativa.shared.cederAlTelefono(j?["otra"] as? String ?? "") }   // una sola voz: manda el del teléfono (Hub vivo.js)
             }
         }.resume()
