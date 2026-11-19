@@ -17,11 +17,25 @@ enum MaricarmenReglas {
     static let alter = "maricarmen"
 
     /// Su voz de ElevenLabs, a prueba (Juan, 19-nov-2026: «Maricarmen es 2»): «Maricarmen ES · 2», castellano de España.
-    /// Con el interruptor encendido (Ajustes → Voces locales → Maricarmen, de fábrica encendido) la app la pide al Hub en
-    /// cada frase (voz_maricarmen) y la recibe en PCM a 24 kHz; si no llega, habla su voz local (la gratis, Kokoro o el
-    /// iPhone), sin cortar. Apagado: como antes, 100 % local y sin créditos.
+    /// Con el interruptor encendido (Ajustes → Voces locales → Maricarmen) la app la pide al Hub en cada frase
+    /// (voz_maricarmen = "a_proposito") y la recibe en PCM a 24 kHz; si no llega, habla su voz local (la gratis, Kokoro o
+    /// el iPhone), sin cortar. Apagado: 100 % local y sin créditos.
+    /// Juan, 19-nov-2026: «Deja apagada por defecto la voz de ElevenLabs. Claudio y Maricarmen solo deben trabajar con voz
+    /// local». De fábrica, apagado; a quien la build 328 se lo dejó encendido se le apaga una vez (vozElevenLabsAlAbrir).
     static let vozElevenLabs = "Maricarmen ES · 2"
     static let claveVozElevenLabs = "maricarmen_voz_es2"
+    /// Lo que manda la app cuando Juan encendió el interruptor a propósito (el Hub ya no acepta el true de la build 328).
+    static let pedirVozElevenLabs = "a_proposito"
+    /// La marca de que ya se apagó una vez el interruptor que la build 328 dejó encendido de fábrica.
+    static let claveApagadaUnaVez = "maricarmen_voz_es2_apagada_329"
+    /// El interruptor al abrir la app: la primera vez en esta versión queda apagado (aunque la 328 lo dejó encendido);
+    /// después, lo que Juan elija. De fábrica, apagado.
+    static func vozElevenLabsAlAbrir(_ d: UserDefaults = .standard) -> Bool {
+        if !d.bool(forKey: claveApagadaUnaVez) {
+            d.set(true, forKey: claveApagadaUnaVez); d.set(false, forKey: claveVozElevenLabs); return false
+        }
+        return d.object(forKey: claveVozElevenLabs) as? Bool ?? false
+    }
     static let hzVoz = 24000
     /// Cuánto se espera el saludo o la despedida con su voz antes de decirlos con la local.
     static let esperaVoz: TimeInterval = 6

@@ -63,11 +63,11 @@ enum RespaldoReglas {
     /// La acción calle del Hub (el mismo Chat con Alma del Modo calle), sin el audio de ElevenLabs: la dice el iPhone.
     /// `alter`: «maricarmen» cuando contesta Maricarmen, el alter ego de Alma (MaricarmenReglas.swift: el Hub le pone el Weebo en 3).
     /// `vozMaricarmen`: Maricarmen con su voz de ElevenLabs, a prueba (MaricarmenReglas.vozElevenLabs): el Hub manda la frase
-    /// ya dicha en PCM a 24 kHz (audio + hz).
+    /// ya dicha en PCM a 24 kHz (audio + hz). Solo con el interruptor encendido a propósito (de fábrica, apagado).
     static func pedido(token: String, sesion: String, texto: String, alter: String? = nil, vozMaricarmen: Bool = false) -> [String: Any] {
         var b: [String: Any] = ["hub": 1, "action": "calle", "app": "alma", "token": token, "session": sesion, "canal": "calle", "sin_audio": true,
                                 "texto": String(texto.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1500))]
-        if let a = alter, !a.isEmpty { b["alter"] = a; if vozMaricarmen { b["voz_maricarmen"] = true } }
+        if let a = alter, !a.isEmpty { b["alter"] = a; if vozMaricarmen { b["voz_maricarmen"] = "a_proposito" } }   // = MaricarmenReglas.pedirVozElevenLabs (RespaldoReglas se prueba sola)
         return b
     }
 

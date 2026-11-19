@@ -60,7 +60,7 @@ revisa(RespaldoReglas.pedido(token: "t", sesion: "s", texto: "hola")["alter"] ==
 // Su voz de ElevenLabs, a prueba (Juan, 19-nov-2026: «Maricarmen es 2»)
 revisa(p["voz_maricarmen"] == nil, "sin el interruptor no pide su voz de ElevenLabs")
 let pe = RespaldoReglas.pedido(token: "t", sesion: "s", texto: "hola", alter: M.alter, vozMaricarmen: true)
-revisa(pe["voz_maricarmen"] as? Bool == true && pe["sin_audio"] as? Bool == true, "con el interruptor la pide (y sigue sin el audio de Alma)")
+revisa(pe["voz_maricarmen"] as? String == M.pedirVozElevenLabs && M.pedirVozElevenLabs == "a_proposito" && pe["sin_audio"] as? Bool == true, "con el interruptor la pide a propósito (y sigue sin el audio de Alma)")
 revisa(RespaldoReglas.pedido(token: "t", sesion: "s", texto: "hola", vozMaricarmen: true)["voz_maricarmen"] == nil, "la voz de respaldo de Alma nunca la pide")
 let pcm = Data([1, 0, 2, 0, 3, 0]).base64EncodedString()
 revisa(RespaldoReglas.respuesta(["hablar": "Venga.", "audio": pcm, "hz": 24000])?.audio?.count == 6, "su audio a 24 kHz se usa")
@@ -68,6 +68,17 @@ revisa(RespaldoReglas.respuesta(["hablar": "Venga.", "audio": pcm, "hz": 16000])
 revisa(RespaldoReglas.respuesta(["hablar": "Venga."])?.audio == nil, "sin audio, la voz local")
 revisa(RespaldoReglas.respuesta(["hablar": "Venga.", "audio": "%%", "hz": 24000])?.audio == nil, "audio roto: la voz local")
 revisa(M.hzVoz == 24000 && M.vozElevenLabs == "Maricarmen ES · 2", "la voz elegida, a 24 kHz como su voz local")
+
+// Solo voz local (Juan, 19-nov-2026): el interruptor de ElevenLabs, apagado de fábrica y apagado una vez para la 328
+let d = UserDefaults(suiteName: "prueba-maricarmen-\(UUID().uuidString)")!
+revisa(M.vozElevenLabsAlAbrir(d) == false, "de fábrica, apagado")
+let d328 = UserDefaults(suiteName: "prueba-maricarmen-\(UUID().uuidString)")!
+d328.set(true, forKey: M.claveVozElevenLabs)
+revisa(M.vozElevenLabsAlAbrir(d328) == false && d328.bool(forKey: M.claveVozElevenLabs) == false, "encendido por la 328: se apaga una vez")
+d328.set(true, forKey: M.claveVozElevenLabs)
+revisa(M.vozElevenLabsAlAbrir(d328) == true, "si Juan lo vuelve a encender a propósito, se respeta")
+d328.set(false, forKey: M.claveVozElevenLabs)
+revisa(M.vozElevenLabsAlAbrir(d328) == false, "y si lo apaga, sigue apagado")
 
 // Su voz
 revisa(M.idiomas.first == "es-ES", "primero una voz de España (el acento del nivel 3)")

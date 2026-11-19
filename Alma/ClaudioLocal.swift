@@ -371,7 +371,7 @@ final class ClaudioLocal: NSObject {
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
         r.timeoutInterval = MaricarmenReglas.esperaVoz
         r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "calleVoz", "app": "alma", "token": token, "session": sesion,
-                                                                  "texto": t, "alter": MaricarmenReglas.alter, "voz_maricarmen": true])
+                                                                  "texto": t, "alter": MaricarmenReglas.alter, "voz_maricarmen": MaricarmenReglas.pedirVozElevenLabs])
         URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
             let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             DispatchQueue.main.async {

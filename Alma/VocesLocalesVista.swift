@@ -126,7 +126,7 @@ struct VocesLocalesVista: View {
                 Toggle(isOn: $v.maricarmenElevenLabs) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Voz de ElevenLabs: " + MaricarmenReglas.vozElevenLabs).font(Tipo.sans(15, .medium))
-                        Text("A prueba, en la llamada. Usa internet y créditos de ElevenLabs; si falla, habla la de abajo. Apágala para volver a la voz local.")
+                        Text("Apagada de fábrica: Maricarmen habla con su voz local, gratis. Encendida, usa internet y créditos de ElevenLabs; si falla, habla la de abajo.")
                             .font(Tipo.sans(12)).foregroundStyle(Tinta.suave)
                     }
                 }
