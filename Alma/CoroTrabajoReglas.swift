@@ -6,9 +6,12 @@ import Foundation
 /// el tecleo se baja y entra el coro de Juan (Recursos/Sonidos/alma-trabaja.wav). Aquí se decide CUÁNDO y A QUÉ VOLUMEN;
 /// CoroTrabajo.swift solo lo toca.
 /// · Lleva la cuenta de las herramientas que corren (por tool_call_id): suena desde la primera y para al terminar la última.
-/// · Las largas (pasar a Claudio o volver con Alma: se espera la conversación nueva) entran de inmediato. Entra en 0,4 s y
-///   sale en 0,5 s. Mientras suena, la voz del agente (el tecleo) baja a 0,12; Alma hablando se oye completa.
-/// · Mientras Alma habla baja 10 dB (en 150 ms) y vuelve en 400 ms; mientras Juan habla baja 6 dB.
+/// · Las largas (pasar a Claudio o volver con Alma: se espera la conversación nueva) entran de inmediato. Mientras suena,
+///   la voz del agente (el tecleo) baja a 0,12; Alma hablando se oye completa.
+/// · Entradas y salidas suaves (Juan, 19-nov-2026: «fade in y fade out, ease in y ease out, más suave, que no entre ni se
+///   corte de golpe»): entra en 1,2 s y sale en 1,2 s con curva coseno (arranca y termina despacio, sin escalón); una
+///   interrupción o colgar ya no lo apaga en seco: sale en 0,35 s con la misma curva.
+/// · Mientras Alma habla baja 10 dB (en 250 ms) y vuelve en 600 ms; mientras Juan habla baja 6 dB.
 /// · Las que no esperan respuesta (nivel_weebo, mostrar_gif…) y las de fondo no cuentan. Ninguna cuenta más de 75 s
 ///   (secretaria corta a los 60) ni el cambio de agente más de 12 s: si una respuesta nunca llega, el coro no se queda.
 struct CoroReglas {
@@ -17,14 +20,16 @@ struct CoroReglas {
     static let tecleo: Float = 0.12
     /// Las que siempre son espera larga: cambiar de agente (la app pide al Hub la conversación nueva).
     static let largas: Set<String> = ["hablar_con_claudio", "volver_con_alma"]
-    static let entrada: TimeInterval = 0.4
-    static let salida: TimeInterval = 0.5
+    static let entrada: TimeInterval = 1.2
+    static let salida: TimeInterval = 1.2
+    /// Interrupción, cambio de agente o colgar: sale rápido pero sin cortar en seco.
+    static let corte: TimeInterval = 0.35
     static let tope: TimeInterval = 75
     static let topeLarga: TimeInterval = 12
     static let bajaAlma: Float = -10
     static let bajaJuan: Float = -6
-    static let rampaBaja: TimeInterval = 0.15
-    static let rampaSube: TimeInterval = 0.4
+    static let rampaBaja: TimeInterval = 0.25
+    static let rampaSube: TimeInterval = 0.6
     /// Herramientas de cliente que no esperan respuesta o contestan al instante: nunca suenan.
     /// Las de fondo (enviar_confirmado, claudio_pedido: async, la conversación sigue) tampoco: no hay espera.
     static let sinEspera: Set<String> = ["nivel_weebo", "mostrar_gif", "pasar_a_maricarmen", "mostrar_tarjeta_club",
@@ -82,17 +87,22 @@ struct CoroReglas {
 
     static func lineal(_ db: Float) -> Float { powf(10, db / 20) }
 
-    /// Cuánto tarda en ir de un volumen a otro (lineales, 0 = callado): entrar 0,4 s, salir 0,5 s, bajar 150 ms, subir 400 ms.
+    /// Cuánto tarda en ir de un volumen a otro (lineales, 0 = callado): entrar 1,2 s, salir 1,2 s, bajar 250 ms, subir 600 ms.
     static func duracion(desde: Float, hacia: Float) -> TimeInterval {
         if hacia <= 0.0001 { return salida }
         if desde <= 0.0001 { return entrada }
         return hacia < desde ? rampaBaja : rampaSube
     }
 
-    /// Un paso de la rampa: el volumen avanza hacia el objetivo a la velocidad que da `duracion` (desde donde arrancó la rampa).
-    static func paso(nivel: Float, objetivo: Float, velocidad: Float, dt: TimeInterval) -> Float {
-        let d = velocidad * Float(dt)
-        if nivel < objetivo { return min(objetivo, nivel + d) }
-        return max(objetivo, nivel - d)
+    /// La curva ease-in/ease-out (coseno): 0 → 0, 1 → 1, y empieza y termina con velocidad cero (sin escalón).
+    static func curva(_ p: Double) -> Double {
+        let x = max(0, min(1, p))
+        return (1 - cos(Double.pi * x)) / 2
+    }
+
+    /// El volumen a `transcurrido` segundos de una rampa de `desde` a `hacia` que dura `duracion`.
+    static func nivel(desde: Float, hacia: Float, duracion: TimeInterval, transcurrido: TimeInterval) -> Float {
+        guard duracion > 0 else { return hacia }
+        return desde + (hacia - desde) * Float(curva(transcurrido / duracion))
     }
 }
