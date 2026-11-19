@@ -36,10 +36,13 @@ final class AudioLlamada: ObservableObject {
     func empezo() {
         enLlamada = true; mirandoAhora = nil
         aplicar("al abrir el micrófono")
+        // Bocina de Google elegida (BocinasGoogle.swift): si está en este Wi-Fi (en casa), Alma suena ahí.
+        if let g = BocinasGoogleReglas.elegida(prefSalida) { BocinasGoogle.shared.empezar(id: g.id, nombre: g.nombre) }
     }
     /// Al colgar: se suelta lo que se pidió (el Modo Inicio, la conferencia y el anillo siguen como siempre).
     func termino() {
         enLlamada = false; mirandoAhora = nil
+        BocinasGoogle.shared.parar()
         let s = AVAudioSession.sharedInstance()
         if puseEntrada { try? s.setPreferredInput(nil); puseEntrada = false }
         if puseBocina { try? s.overrideOutputAudioPort(.none); puseBocina = false }
@@ -63,10 +66,20 @@ final class AudioLlamada: ObservableObject {
         aplicar("elegiste el micrófono")
     }
     func elegirSalida(bocina: Bool) {
+        if BocinasGoogleReglas.elegida(prefSalida) != nil { BocinasGoogle.shared.parar() }
         prefSalida = bocina ? AudioLlamadaReglas.esteDispositivo : AudioLlamadaReglas.automatico
         UserDefaults.standard.set(prefSalida, forKey: AudioLlamadaReglas.claveSalida)
         if !bocina, puseBocina { try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.none); puseBocina = false }
         aplicar("elegiste la salida")
+    }
+
+    /// Una bocina o un grupo de Google Home: suena ahí desde ya (si hay llamada) y en las próximas, cuando estés en casa.
+    func elegirSalida(google b: BocinasGoogleReglas.Bocina) {
+        prefSalida = BocinasGoogleReglas.guardar(b)
+        UserDefaults.standard.set(prefSalida, forKey: AudioLlamadaReglas.claveSalida)
+        if puseBocina { try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.none); puseBocina = false }
+        if enLlamada { BocinasGoogle.shared.empezar(id: b.id, nombre: b.nombre) }
+        VozNativa.shared.anotar("Audio de la llamada (elegiste la salida): una bocina de Google" + (b.grupo ? " (grupo)" : ""))
     }
 
     // MARK: - Aplicar
@@ -129,6 +142,7 @@ final class AudioLlamada: ObservableObject {
     }
     /// El ícono del botón de la llamada: por dónde sale el audio ahora.
     var iconoAhora: String {
+        if BocinasGoogle.shared.sonando { return "hifispeaker.fill" }
         let s = AVAudioSession.sharedInstance()
         guard let o = s.currentRoute.outputs.first else { return "speaker.wave.2" }
         let c = clase(Puerto(tipo: o.portType.rawValue, nombre: o.portName))
@@ -139,6 +153,7 @@ final class AudioLlamada: ObservableObject {
 /// La hoja «Audio de la llamada»: micrófono (entrada) y salida.
 struct AudioLlamadaVista: View {
     @ObservedObject private var a = AudioLlamada.shared
+    @ObservedObject private var g = BocinasGoogle.shared
     @Environment(\.dismiss) private var cerrar
 
     var body: some View {
@@ -169,11 +184,29 @@ struct AudioLlamadaVista: View {
 
                 Etiqueta("Salida · oyes a Alma por aquí").padding(.top, 12)
                 opcion("Automático", a.salidaAhora.isEmpty ? "Lo que elija iOS" : "Ahora: " + a.salidaAhora, icono: "sparkles",
-                       elegida: !AudioLlamadaReglas.bocinaFija(a.prefSalida), enUso: false) { a.elegirSalida(bocina: false) }
+                       elegida: !AudioLlamadaReglas.bocinaFija(a.prefSalida) && elegidaGoogle == nil, enUso: false) { a.elegirSalida(bocina: false) }
                 opcion("Bocina de este \(a.dispositivo)", a.salidaTipo == AudioLlamadaReglas.bocinaPropia ? "En uso ahora" : nil, icono: "speaker.wave.2",
                        elegida: AudioLlamadaReglas.bocinaFija(a.prefSalida), enUso: a.salidaTipo == AudioLlamadaReglas.bocinaPropia) { a.elegirSalida(bocina: true) }
                 Fila("Audífonos, lentes o bocinas", "Abre la lista de iOS (Bluetooth y AirPlay)") {
                     ElegirSalidaLlamada { a.elegirSalida(bocina: false) }.frame(width: 40, height: 40)
+                }
+
+                // Bocinas de Google Home (Juan, 19-nov-2026): las que se ven en este Wi-Fi, o sea, cuando estás en casa.
+                Etiqueta("Bocinas de Google Home · en casa").padding(.top, 12)
+                ForEach(listaGoogle) { b in
+                    let es = elegidaGoogle?.id == b.id
+                    let suena = es && g.estado == .sonando(b.nombre)
+                    opcion(b.nombre, es ? (g.estado.linea ?? BocinasGoogleReglas.explica(b)) : BocinasGoogleReglas.explica(b),
+                           icono: b.grupo ? "hifispeaker.2" : "hifispeaker", elegida: es, enUso: suena) { a.elegirSalida(google: b) }
+                }
+                if g.encontradas.isEmpty {
+                    Text(elegidaGoogle == nil
+                         ? "Buscando en tu Wi-Fi… Aquí salen tus bocinas y grupos de Google Home cuando estás en casa."
+                         : "Fuera de casa, Alma sale por el teléfono; en casa vuelve sola a tu bocina.")
+                        .font(Tipo.sans(11.5)).foregroundStyle(Tinta.suave).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Por el Wi-Fi, Alma se oye en la bocina unos 2 segundos después. El micrófono sigue en tu \(a.dispositivo): háblale cerca.")
+                        .font(Tipo.sans(11.5)).foregroundStyle(Tinta.suave).fixedSize(horizontal: false, vertical: true)
                 }
 
                 Text("El micrófono y el sonido van en el dispositivo donde está la llamada; el Modo compañero solo la muestra. Para hablar por el iPad, llama desde el iPad.")
@@ -183,7 +216,16 @@ struct AudioLlamadaVista: View {
         }
         .foregroundStyle(Tinta.tinta)
         .background(FondoAtardecer())
-        .onAppear { a.mirar() }
+        .onAppear { a.mirar(); g.abrioVista() }
+        .onDisappear { g.cerroVista() }
+    }
+
+    private var elegidaGoogle: (id: String, nombre: String)? { BocinasGoogleReglas.elegida(a.prefSalida) }
+    /// Las que se ven en el Wi-Fi; la elegida sale aunque no se vea (fuera de casa), para poder quitarla.
+    private var listaGoogle: [BocinasGoogleReglas.Bocina] {
+        var l = g.encontradas
+        if let e = elegidaGoogle, !l.contains(where: { $0.id == e.id }) { l.insert(BocinasGoogleReglas.Bocina(id: e.id, nombre: e.nombre, modelo: "", grupo: false), at: 0) }
+        return l
     }
 
     private func opcion(_ t: String, _ sub: String?, icono: String, elegida: Bool, enUso: Bool, _ accion: @escaping () -> Void) -> some View {
