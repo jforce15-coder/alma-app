@@ -8,12 +8,15 @@ import UIKit
 ///     compañero cada trozo de la voz de Alma (o de Claudio) en el momento en que lo pone a sonar, más «corte» cuando
 ///     Juan la interrumpe y «fin» al colgar. No pasa por internet ni por el Hub, así que llega casi al mismo tiempo.
 ///   · El compañero (el iPad con «Modo compañero» encendido, que la página avisa con { accion: "companero", on }) busca
-///     esa llamada con la app abierta y reproduce lo que llega. El micrófono sigue solo en el teléfono.
+///     esa llamada con la app abierta y muestra lo que llega. El micrófono sigue solo en el teléfono.
+///   · Una sola voz (Juan, 19-nov-2026): la voz suena en el compañero solo con «Sonido de la llamada aquí» encendido en él
+///     (Ajustes → Voz y modos); de fábrica suena solo en el dispositivo de la llamada (sus audífonos o sus bocinas).
 ///   · Solo se juntan dispositivos de la misma cuenta (la huella de la llave de la app) y el canal va cifrado.
 final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertiserDelegate, MCNearbyServiceBrowserDelegate {
     static let shared = Retransmision()
     static let servicio = "alma-vivo"   // NSBonjourServices: _alma-vivo._tcp y _alma-vivo._udp (project.yml)
     private static let clave = "companero_on"
+    static let claveSonido = "companero_sonido"   // «Sonido de la llamada aquí» (apagado de fábrica: una sola voz)
 
     private let yo = MCPeerID(displayName: UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone")
     private lazy var sesion: MCSession = {
@@ -32,6 +35,7 @@ final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertise
     private override init() {
         super.init()
         reglas.companero = UserDefaults.standard.bool(forKey: Retransmision.clave)
+        reglas.sonidoAqui = UserDefaults.standard.bool(forKey: Retransmision.claveSonido)
         reglas.aLaVista = UIApplication.shared.applicationState != .background
         motor.attach(reproductor)
         let nc = NotificationCenter.default
@@ -44,10 +48,12 @@ final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertise
 
     // MARK: - Lo que dice la página (el interruptor del Modo compañero de este dispositivo)
 
-    func poner(companero on: Bool) {
+    /// `sonido`: «Sonido de la llamada aquí»; sin él (o con una página de antes que no lo manda), el compañero no suena.
+    func poner(companero on: Bool, sonido: Bool = false) {
         DispatchQueue.main.async {
             UserDefaults.standard.set(on, forKey: Retransmision.clave)
-            self.reglas.companero = on; self.actualizar()
+            UserDefaults.standard.set(sonido, forKey: Retransmision.claveSonido)
+            self.reglas.companero = on; self.reglas.sonidoAqui = sonido; self.actualizar()
         }
     }
 
@@ -77,6 +83,17 @@ final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertise
     func audio(_ pcm16: Data, hz: Int) { mandar(.audio(hz: hz, pcm: pcm16)) }
     /// Juan interrumpió: lo que quedaba se tira también en el compañero.
     func corte() { mandar(.corte) }
+    /// Lo que se ve, al momento (Juan, 19-nov-2026): cada subtítulo y cada cambio de estado (Companero.swift).
+    func texto(alma: Bool, _ t: String) {
+        let limpio = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+        if !limpio.isEmpty { mandar(.texto(alma: alma, t: limpio)) }
+    }
+    func estado(_ e: String) { mandar(.estado(e)) }
+
+    /// En el compañero: lo que llega por la red de cerca va a la página al momento (AlmaCompanero.cerca en alma/inicio.html):
+    /// { tipo: "sub", de, t } · { tipo: "estado", estado } · { tipo: "nivel", v }. Lo pone Puente (accion «companero»).
+    var alCerca: (([String: Any]) -> Void)?
+    private var ultimoNivel = Date.distantPast
 
     private func mandar(_ p: PaqueteVivo) {
         envio.async { [weak self] in
@@ -93,7 +110,8 @@ final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertise
         } else if !reglas.busca, let b = buscador {
             b.stopBrowsingForPeers(); buscador = nil
         }
-        if !reglas.suena { callar(apagar: true); if !reglas.llamadaAqui { envio.async { [weak self] in self?.sesion.disconnect() } } }
+        if !reglas.suena { callar(apagar: true) }   // una sola voz: sin «Sonido aquí», nada suena en el compañero
+        if !reglas.recibe && !reglas.llamadaAqui { envio.async { [weak self] in self?.sesion.disconnect() } }
     }
 
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
@@ -124,11 +142,15 @@ final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertise
     func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         guard let p = PaqueteVivo.leer(data) else { return }
         DispatchQueue.main.async {
-            guard self.reglas.suena else { return }
+            guard self.reglas.recibe else { return }
             switch p {
-            case let .audio(hz, pcm): self.sonar(pcm, hz: hz)
-            case .corte: self.callar(apagar: false)
-            case .fin: self.callar(apagar: true)
+            case let .audio(hz, pcm):
+                if self.reglas.suena { self.sonar(pcm, hz: hz) }   // callado, la pantalla igual se mueve con la voz
+                if Date().timeIntervalSince(self.ultimoNivel) > 0.08 { self.ultimoNivel = Date(); self.alCerca?(["tipo": "nivel", "v": NivelVivo.de(pcm)]) }
+            case .corte: self.callar(apagar: false); self.alCerca?(["tipo": "nivel", "v": 0])
+            case .fin: self.callar(apagar: true); self.alCerca?(["tipo": "estado", "estado": "fin"])
+            case let .texto(alma, t): self.alCerca?(["tipo": "sub", "de": alma ? "alma" : "yo", "t": t])
+            case let .estado(e): self.alCerca?(["tipo": "estado", "estado": e])
             }
         }
     }
