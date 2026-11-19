@@ -46,6 +46,8 @@ final class Companero {
                 guard let self else { return }
                 self.enviando = false
                 if let m = j?["mirando"] as? Bool { self.cola.mirando = m; AudioLlamada.shared.companeroMira(m) }
+                // «Terminar» en el compañero (Hub vivoColgar; Juan, 19-nov-2026): el otro dispositivo pidió colgar esta llamada.
+                if j?["colgar"] as? Bool == true { VozNativa.shared.colgar(motivo: "tocaste Terminar en tu otro dispositivo") }
             }
         }.resume()
     }

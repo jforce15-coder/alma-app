@@ -28,6 +28,15 @@ revisa((b4?["estado"] as? String) == "fin" && c.conv.isEmpty && c.sacar(t0.addin
 c.empezo("conv-2")
 revisa(c.subs.isEmpty && c.mirando && c.conv == "conv-2", "una llamada nueva empieza vacía")
 
+// Latido (Juan, 19-nov-2026): sin novedades también se pregunta al Hub, para recibir «Terminar» del compañero
+var l = ColaVivo(); l.empezo("conv-3")
+_ = l.sacar(t0)
+revisa(l.sacar(t0.addingTimeInterval(1)) == nil, "sin novedades no se manda enseguida")
+let lt = l.sacar(t0.addingTimeInterval(3.1))
+revisa(lt != nil && lt?["estado"] == nil && (lt?["subs"] as? [[String: String]])?.isEmpty == true, "con alguien mirando, un latido cada 3 s (sin estado ni subtítulos)")
+l.mirando = false
+revisa(l.sacar(t0.addingTimeInterval(8)) == nil && l.sacar(t0.addingTimeInterval(15.2)) != nil, "sin nadie mirando, cada 12 s")
+
 // Una sola llamada (Juan, 17-nov-2026): el compañero no abre otra
 revisa(UnaLlamada.motivo(companero: false, porVoz: true, otra: "iPhone", visto: t0, ahora: t0) == nil, "sin Modo compañero, todo como antes")
 revisa(UnaLlamada.motivo(companero: true, porVoz: true, otra: "", visto: nil, ahora: t0) != nil, "con Modo compañero, por voz nunca (aunque no se sepa de otra llamada)")

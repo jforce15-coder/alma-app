@@ -15,6 +15,9 @@ struct ColaVivo {
     var mirando = true                 // lo último que dijo el Hub (al principio, sí: el primer envío lo averigua)
     var ultimoEnvio: Date = .distantPast
     static let cada: TimeInterval = 1.2, sinMirar: TimeInterval = 12, maxSubs = 8, largo = 280
+    /// Latido sin novedades (Juan, 19-nov-2026: «no me está dejando terminar la llamada»): la respuesta del Hub trae si el
+    /// compañero tocó «Terminar» (y si alguien mira). Con alguien mirando, cada 3 s; si no, cada 12 s.
+    static let latido: TimeInterval = 3
 
     mutating func empezo(_ id: String) { conv = id; subs = []; estado = "conectando"; estadoNuevo = true; mirando = true; ultimoEnvio = .distantPast }
     mutating func cambiar(_ e: String) { guard !conv.isEmpty, e != estado else { return }; estado = e; estadoNuevo = true }
@@ -28,6 +31,7 @@ struct ColaVivo {
     func toca(_ ahora: Date) -> Bool {
         guard !conv.isEmpty else { return false }
         if estadoNuevo { return true }
+        if ahora.timeIntervalSince(ultimoEnvio) >= (mirando ? ColaVivo.latido : ColaVivo.sinMirar) { return true }
         guard !subs.isEmpty else { return false }
         return ahora.timeIntervalSince(ultimoEnvio) >= (mirando ? ColaVivo.cada : ColaVivo.sinMirar)
     }

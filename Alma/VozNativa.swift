@@ -525,7 +525,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     /// «Terminar» en la pantalla: cierra la conversación (el doble toque, en cambio, pausa).
-    func colgar() { if estado == .hablando || estado == .conectando { motivoFin = "tocaste Terminar"; terminar() } }
+    /// «Terminar»: en la página de aquí o en la del compañero (Hub vivoColgar, llega por Companero). Sin ventana de toques
+    /// repetidos: colgar siempre cuelga (Juan, 19-nov-2026: «si por el roce activa, no puedo terminar la llamada normalmente»).
+    func colgar(motivo: String = "tocaste Terminar") { if estado == .hablando || estado == .conectando { motivoFin = motivo; terminar() } }
 
     var resumen: [String: Any] {
         var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",
