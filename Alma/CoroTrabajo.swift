@@ -19,7 +19,8 @@ final class CoroTrabajo {
     private var tecleoBajo = false
     /// ¿Se oye el coro? (el micrófono lo trata como el eco de la voz de Alma: solo pasa lo que suena más fuerte)
     private(set) var audible = false
-    private var nivel: Float = 0, objetivo: Float = 0, velocidad: Float = 1
+    /// La rampa en curso (CoroReglas.nivel: ease-in/ease-out).
+    private var nivel: Float = 0, objetivo: Float = 0, desde: Float = 0, inicio = Date(), dur: TimeInterval = 0
     private var sonando = false
     private var reloj: Timer?
     private static let dt: TimeInterval = 0.025
@@ -41,13 +42,26 @@ final class CoroTrabajo {
 
     func termina(_ id: String) { if reglas.termina(id) { bajarTecleo(false) } }   // Alma va a contestar: su voz completa
 
-    /// Interrupción, cambio de agente o colgar: se corta ya (sin rampa).
+    /// Interrupción, cambio de agente o colgar: sale rápido (0,35 s) pero con curva, no en seco (Juan, 19-nov-2026).
     func corta() {
         reglas.corta()
         bajarTecleo(false)
-        reloj?.invalidate(); reloj = nil
-        if sonando { nodo.stop() }
-        sonando = false; nivel = 0; objetivo = 0; audible = false; nodo.volume = 0
+        guard sonando else {
+            reloj?.invalidate(); reloj = nil
+            nivel = 0; objetivo = 0; audible = false; nodo.volume = 0
+            return
+        }
+        rampa(hacia: 0, en: CoroReglas.corte, ahora: Date())
+        arrancarReloj()
+    }
+
+    private func rampa(hacia: Float, en t: TimeInterval, ahora: Date) {
+        desde = nivel; objetivo = hacia; inicio = ahora; dur = t
+    }
+
+    private func parar() {
+        nodo.stop(); sonando = false; audible = false; nivel = 0; objetivo = 0; nodo.volume = 0
+        if reglas.cuantas == 0 { reloj?.invalidate(); reloj = nil }
     }
 
     private func bajarTecleo(_ on: Bool) {
@@ -68,7 +82,7 @@ final class CoroTrabajo {
         let debe = permitido && reglas.debeSonar(ahora)
         if debe && !sonando {
             guard let b = buffer, let motor = nodo.engine, motor.isRunning else { return }
-            nodo.volume = 0; nivel = 0
+            nodo.volume = 0; nivel = 0; objetivo = 0
             nodo.scheduleBuffer(b, at: nil, options: [.loops], completionHandler: nil)
             nodo.play(); sonando = true
         }
@@ -79,34 +93,30 @@ final class CoroTrabajo {
         let alma = almaHabla()
         bajarTecleo(debe && !alma)   // el tecleo se baja mientras suena la espera; Alma hablando se oye completa
         let nuevo: Float = debe ? CoroReglas.lineal(CoroReglas.objetivoDb(almaHabla: alma, juanHabla: juanHabla())) : 0
-        if nuevo != objetivo {
-            velocidad = abs(nuevo - nivel) / Float(max(0.01, CoroReglas.duracion(desde: nivel, hacia: nuevo)))
-            objetivo = nuevo
-        }
-        nivel = CoroReglas.paso(nivel: nivel, objetivo: objetivo, velocidad: velocidad, dt: CoroTrabajo.dt)
+        if let m = nodo.engine, !m.isRunning { parar(); return }   // colgó y el motor ya paró: no hay nada que bajar
+        // La salida en curso (0 → corte o salida) no se cambia por otra salida: solo una herramienta nueva la revierte.
+        if nuevo != objetivo { rampa(hacia: nuevo, en: CoroReglas.duracion(desde: nivel, hacia: nuevo), ahora: ahora) }
+        nivel = CoroReglas.nivel(desde: desde, hacia: objetivo, duracion: dur, transcurrido: ahora.timeIntervalSince(inicio))
         nodo.volume = nivel
         audible = nivel > 0.01
-        if nivel <= 0.0001 && !debe {   // terminó de salir
-            nodo.stop(); sonando = false; audible = false
-            if reglas.cuantas == 0 { reloj?.invalidate(); reloj = nil }
-        }
+        if nivel <= 0.0001 && objetivo <= 0.0001 && !debe { parar() }   // terminó de salir
     }
 }
 
 /// El coro cuando la voz es la de una página dentro de la app (js/alma-voz.js, por el puente): la página lleva la cuenta de
 /// las herramientas, el umbral y el ducking, y aquí solo se toca con el volumen y la rampa que pide (v = 0: sale y para).
+/// La rampa usa la misma curva ease-in/ease-out que el coro nativo (CoroReglas.nivel), no la lineal de AVAudioPlayer.
 final class CoroPagina {
     static let shared = CoroPagina()
     private var p: AVAudioPlayer?
+    private var reloj: Timer?
+    private var desde: Float = 0, hacia: Float = 0, inicio = Date(), dur: TimeInterval = 0
 
     func poner(_ v: Float, en t: TimeInterval) {
-        let vol = max(0, min(1, v)), dur = max(0, min(2, t))
+        let vol = max(0, min(1, v)), d = max(0, min(2, t))
         if vol <= 0.0001 {
             guard let p, p.isPlaying else { return }
-            p.setVolume(0, fadeDuration: dur)
-            DispatchQueue.main.asyncAfter(deadline: .now() + dur + 0.05) { [weak self] in
-                if let q = self?.p, q.volume <= 0.0001 { q.stop(); q.currentTime = 0 }
-            }
+            rampa(p, hacia: 0, en: d)
             return
         }
         if p == nil, let u = Bundle.main.url(forResource: "alma-trabaja", withExtension: "wav") {
@@ -114,6 +124,22 @@ final class CoroPagina {
         }
         guard let p else { return }
         if !p.isPlaying { p.volume = 0; p.play() }
-        p.setVolume(vol, fadeDuration: dur)
+        rampa(p, hacia: vol, en: d)
+    }
+
+    private func rampa(_ p: AVAudioPlayer, hacia v: Float, en t: TimeInterval) {
+        desde = p.volume; hacia = v; inicio = Date(); dur = t
+        guard reloj == nil else { return }
+        let r = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(r, forMode: .common); reloj = r
+    }
+
+    private func tick() {
+        guard let p else { reloj?.invalidate(); reloj = nil; return }
+        let pasado = Date().timeIntervalSince(inicio)
+        p.volume = CoroReglas.nivel(desde: desde, hacia: hacia, duracion: dur, transcurrido: pasado)
+        guard pasado >= dur else { return }
+        reloj?.invalidate(); reloj = nil
+        if hacia <= 0.0001 { p.stop(); p.currentTime = 0 }
     }
 }

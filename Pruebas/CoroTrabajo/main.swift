@@ -85,21 +85,34 @@ do {
     revisa(cerca(Double(CoroReglas.lineal(-6)), 0.5012), "−6 dB es 0,501 lineal")
 }
 
-// Rampas: entrar 0,4 · salir 0,5 · bajar 150 ms · subir 400 ms
+// Rampas suaves (Juan, 19-nov-2026: «fade in y fade out, ease in y ease out, que no entre ni se corte de golpe»):
+// entrar 1,2 · salir 1,2 · cortar 0,35 · bajar 250 ms · subir 600 ms, todas con curva coseno
 do {
-    revisa(CoroReglas.duracion(desde: 0, hacia: 1) == 0.4, "entrar en 0,4 s")
-    revisa(CoroReglas.duracion(desde: 1, hacia: 0) == 0.5, "salir en 0,5 s")
-    revisa(CoroReglas.duracion(desde: 1, hacia: CoroReglas.lineal(-10)) == 0.15, "bajar en 150 ms")
-    revisa(CoroReglas.duracion(desde: CoroReglas.lineal(-10), hacia: 1) == 0.4, "volver en 400 ms")
-    let objetivo = CoroReglas.lineal(-10)
-    let v = (1 - objetivo) / Float(CoroReglas.duracion(desde: 1, hacia: objetivo))
-    var nivel: Float = 1, t = 0.0
-    while nivel > objetivo { nivel = CoroReglas.paso(nivel: nivel, objetivo: objetivo, velocidad: v, dt: 0.025); t += 0.025 }
-    revisa(cerca(t, 0.15, 0.026) && nivel == objetivo, "la bajada a −10 dB tarda ~150 ms y no se pasa")
-    let vs = Float(1) / Float(CoroReglas.duracion(desde: 1, hacia: 0))
-    nivel = 1; t = 0
-    while nivel > 0 { nivel = CoroReglas.paso(nivel: nivel, objetivo: 0, velocidad: vs, dt: 0.025); t += 0.025 }
-    revisa(cerca(t, 0.5, 0.026), "la salida tarda ~0,5 s")
+    revisa(CoroReglas.duracion(desde: 0, hacia: 1) == 1.2, "entrar en 1,2 s")
+    revisa(CoroReglas.duracion(desde: 1, hacia: 0) == 1.2, "salir en 1,2 s")
+    revisa(CoroReglas.corte == 0.35, "interrupción o colgar: sale en 0,35 s, no en seco")
+    revisa(CoroReglas.duracion(desde: 1, hacia: CoroReglas.lineal(-10)) == 0.25, "bajar en 250 ms")
+    revisa(CoroReglas.duracion(desde: CoroReglas.lineal(-10), hacia: 1) == 0.6, "volver en 600 ms")
+    revisa(CoroReglas.curva(0) == 0 && cerca(CoroReglas.curva(1), 1) && cerca(CoroReglas.curva(0.5), 0.5), "la curva va de 0 a 1 y pasa por la mitad")
+    revisa(CoroReglas.curva(-1) == 0 && cerca(CoroReglas.curva(2), 1), "fuera de la rampa se queda en los bordes")
+    // ease-in y ease-out: el primer y el último 10 % cambian mucho menos que el 10 % del medio (lineal sería igual)
+    let inicio = CoroReglas.curva(0.1) - CoroReglas.curva(0), medio = CoroReglas.curva(0.55) - CoroReglas.curva(0.45), fin = CoroReglas.curva(1) - CoroReglas.curva(0.9)
+    revisa(inicio < medio / 5 && fin < medio / 5, "arranca y termina despacio (sin escalón al entrar ni al cortarse)")
+    // Paso a paso, como el reloj de 25 ms: nunca sube de golpe y llega justo
+    var nivel: Float = 0, mayor: Float = 0, t = 0.0
+    while t < CoroReglas.entrada + 0.05 {
+        t += 0.025
+        let n = CoroReglas.nivel(desde: 0, hacia: 1, duracion: CoroReglas.entrada, transcurrido: t)
+        mayor = max(mayor, n - nivel); nivel = n
+    }
+    revisa(nivel == 1, "la entrada llega al volumen completo")
+    revisa(mayor < 0.04, "en la entrada ningún paso de 25 ms sube más de 4 %")
+    let primero = CoroReglas.nivel(desde: 0, hacia: 1, duracion: CoroReglas.entrada, transcurrido: 0.025)
+    revisa(primero < 0.002, "el primer paso casi no se oye (fade in, no golpe)")
+    let ultimo = CoroReglas.nivel(desde: 1, hacia: 0, duracion: CoroReglas.salida, transcurrido: CoroReglas.salida - 0.025)
+    revisa(ultimo < 0.002, "el último paso antes de callar casi no se oye (fade out, no corte)")
+    revisa(CoroReglas.nivel(desde: 1, hacia: 0, duracion: CoroReglas.corte, transcurrido: CoroReglas.corte) == 0, "el corte termina en silencio")
+    revisa(CoroReglas.nivel(desde: 0.4, hacia: 1, duracion: 0, transcurrido: 0) == 1, "sin duración va directo")
 }
 
 print(fallos == 0 ? "Todo bien" : "\(fallos) fallos")
