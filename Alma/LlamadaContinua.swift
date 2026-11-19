@@ -101,11 +101,13 @@ enum LlamadaContinua {
     /// `buscando`: Alma esperaba una herramienta (la secretaria) cuando se cortó. Guardia 19-nov-2026: Juan preguntó, Alma dijo
     /// «Déjame revisar…» y la llamada se cayó; tuvo que volver a llamar y repetirlo. Así se reabre sola también en el Modo
     /// calle y en conferencia (sin esto se cerraba y Juan se quedaba sin respuesta).
-    static func trasCorte(claudio: Bool, calle: Bool, conferencia: Bool, conectada: TimeInterval?, reabiertas: Int, sinCreditos: Bool, buscando: Bool = false) -> TrasCorte {
+    /// `esperando`: Juan acababa de pedir algo y Alma todavía no le respondía (`juanEspera`). Juan, 19-nov-2026: en conferencia
+    /// pidió algo, la conexión se cayó a los 11 s y la app colgó; Alma nunca contestó y tuvo que volver a abrir.
+    static func trasCorte(claudio: Bool, calle: Bool, conferencia: Bool, conectada: TimeInterval?, reabiertas: Int, sinCreditos: Bool, buscando: Bool = false, esperando: Bool = false) -> TrasCorte {
         if sinCreditos { return .fallar }                                    // sin créditos no hay con quién volver
         if claudio { return reabiertas < maxReabrir ? .volverConAlma : .fallar }
         guard let c = conectada else { return .fallar }                      // Alma nunca contestó: se dice por qué
-        if (calle || conferencia) && !buscando { return .colgar }
+        if (calle || conferencia) && !buscando && !esperando { return .colgar }
         return c >= minimoConectada && reabiertas < maxReabrir ? .reabrir : .fallar
     }
 
@@ -135,6 +137,18 @@ enum LlamadaContinua {
 
     /// Se cortó mientras Alma buscaba algo: Alma no saluda con una frase fija (después se quedaría callada esperando a Juan);
     /// la app le manda este turno y ella dice en corto que se cortó y lo busca otra vez, sin que Juan lo repita.
+    /// ¿Juan quedó esperando? Dijo algo (de 2 palabras o más) hace menos de `esperaMaxima` s y la voz todavía no le respondía.
+    /// Más viejo que eso ya no es «lo que acaba de pedir» (en conferencia, la charla que no es para Alma también llega).
+    static let esperaMaxima: TimeInterval = 45
+    static func juanEspera(juan: Date?, voz: Date?, palabras: Int, ahora: Date) -> Bool {
+        guard palabras >= 2, let e = esperaSinRespuesta(juan: juan, voz: voz, ahora: ahora) else { return false }
+        return e <= esperaMaxima
+    }
+
+    /// Se cortó con Juan esperando respuesta: igual que al buscar, sin frase fija; Alma atiende lo último que le pidió. Si lo
+    /// último no era para ella (conferencia), se queda callada.
+    static let pedidoTrasCorteEsperando = "(Se cortó la llamada justo después de lo último que dije y no alcanzaste a responder. Si era un pedido o una pregunta para ti, dime en una frase corta que se cortó y atiéndelo ahora, sin preguntarme de nuevo: lo último que se dijo está en tu ficha. Si no era para ti, no digas nada y sigue escuchando.)"
+
     static let pedidoTrasCorteBuscando = "(Se cortó la llamada mientras buscabas lo que te pedí. Dime en una frase corta que se cortó y búscalo otra vez ahora, sin preguntarme de nuevo: lo último que se dijo está en tu ficha.)"
 
     /// Lo que se suma al paso de un corte para saber la causa (guardia 19-nov-2026: el 1006 no dejaba ver nada): qué
@@ -149,6 +163,16 @@ enum LlamadaContinua {
         t += enFondo ? " · app en segundo plano" : " · app a la vista"
         if telefono { t += " · había una llamada de teléfono" }
         return t
+    }
+
+    /// El audio cambió de ruta poco antes del corte (Juan, 19-nov-2026: el Modo compañero pasó el micrófono al del iPhone con
+    /// audífonos Bluetooth y 11 s después se cayó el socket). Si fue en los últimos `rutaReciente` s, va en el paso del corte.
+    static let rutaReciente: TimeInterval = 15
+    static func notaRuta(cambio: Date?, motivo: UInt, salida: String, ahora: Date) -> String {
+        guard let c = cambio else { return "" }
+        let hace = ahora.timeIntervalSince(c)
+        guard hace >= 0, hace <= rutaReciente else { return "" }
+        return String(format: " · el audio cambió de ruta hace %.0f s (motivo %d → ", hace, Int(motivo)) + (salida.isEmpty ? "?" : String(salida.prefix(24))) + ")"
     }
 
     /// «Voz enviada» cada 10 s: lo normal (casi 10 s de 10) no se anota; con eso se llenaba el registro del Hub y se perdía

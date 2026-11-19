@@ -70,6 +70,15 @@ enum AudioLlamadaReglas {
         return companero ? propio : nil
     }
 
+    /// ¿Se cambia el micrófono ahora? Juan, 19-nov-2026: en conferencia con audífonos Bluetooth de manos libres (BluetoothHFP),
+    /// el Modo compañero pasó el micrófono al del iPhone a media llamada; iOS movió todo el audio y 11 s después se cayó la
+    /// conexión. Con la salida en BluetoothHFP y la llamada ya en curso, lo automático no toca el micrófono (sigue el de los
+    /// audífonos). Al abrir el micrófono o si Juan elige uno, sí se cambia.
+    static let manosLibres = "BluetoothHFP"
+    static func cambiaMicrofono(preferencia: String?, salida: String, aMedia: Bool) -> Bool {
+        !(aMedia && (preferencia ?? automatico) == automatico && salida == manosLibres)
+    }
+
     /// ¿Esta opción de la lista es la elegida? (para la palomita).
     static func elegida(_ p: Puerto?, preferencia: String?) -> Bool {
         let pref = preferencia ?? automatico

@@ -53,10 +53,10 @@ final class AudioLlamada: ObservableObject {
         if m { UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: AudioLlamadaReglas.claveCompanero) }
         guard enLlamada, m != mirandoAhora else { return }
         mirandoAhora = m
-        aplicar(m ? "el Modo compañero está mirando" : "el Modo compañero dejó de mirar")
+        aplicar(m ? "el Modo compañero está mirando" : "el Modo compañero dejó de mirar", aMedia: true)
     }
     /// Cambió la ruta en plena llamada (se conectaron o se quitaron unos audífonos): se vuelve a pedir lo elegido.
-    func rutaCambio() { if enLlamada { aplicar(nil) } }
+    func rutaCambio() { if enLlamada { aplicar(nil, aMedia: true) } }
 
     // MARK: - Lo que elige Juan
 
@@ -84,16 +84,20 @@ final class AudioLlamada: ObservableObject {
 
     // MARK: - Aplicar
 
-    private func aplicar(_ porque: String?) {
+    /// `aMedia`: la llamada ya está en curso (no es al abrir el micrófono ni porque Juan eligió algo).
+    private func aplicar(_ porque: String?, aMedia: Bool = false) {
         let s = AVAudioSession.sharedInstance()
         let ultimo = UserDefaults.standard.object(forKey: AudioLlamadaReglas.claveCompanero) as? Double
         companero = AudioLlamadaReglas.companeroActivo(ahora: mirandoAhora, ultimoVisto: ultimo.map { Date(timeIntervalSince1970: $0) }, hoy: Date())
         let disponibles = s.availableInputs ?? []
         let quiero = AudioLlamadaReglas.entrada(preferencia: prefEntrada, companero: companero, disponibles: disponibles.map(puerto))
         var hecho: [String] = []
+        let salidaTipo = s.currentRoute.outputs.first?.portType.rawValue ?? ""
         if let q = quiero, let p = disponibles.first(where: { puerto($0) == q }) {
             // Solo si todavía no se pidió: pedirlo otra vez en cada cambio de ruta sería una vuelta sin fin.
-            if s.preferredInput.map(puerto) != q || !puseEntrada {
+            if !AudioLlamadaReglas.cambiaMicrofono(preferencia: prefEntrada, salida: salidaTipo, aMedia: aMedia) {
+                if s.preferredInput.map(puerto) != q || !puseEntrada { hecho.append("micrófono → sigue el de los audífonos Bluetooth (no se cambia a media llamada)") }
+            } else if s.preferredInput.map(puerto) != q || !puseEntrada {
                 do { try s.setPreferredInput(p); puseEntrada = true; hecho.append("micrófono → " + (q.tipo == AudioLlamadaReglas.microfonoPropio ? "el del \(dispositivo)" : q.tipo)) }
                 catch { hecho.append("no pude poner el micrófono (\((error as NSError).code))") }
             }
