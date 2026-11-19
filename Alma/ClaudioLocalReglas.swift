@@ -14,6 +14,17 @@ import Foundation
 ///   mejorada o premium va antes que una normal («compacta», la más robótica) aunque sea de otro país.
 enum ClaudioLocalReglas {
 
+    // MARK: - Solo voz local (Juan, 19-nov-2026: «Claudio y Maricarmen solo deben trabajar con voz local»)
+
+    /// Qué falta para hablar con Claudio local, en una frase para que Alma se la diga a Juan; nil si está listo.
+    /// Sin Claudio local la app ya NO abre el agente de Claudio en ElevenLabs: sigue Alma.
+    static func falta(local: Bool, conv: String?, permiso: Bool, disponible: Bool) -> String? {
+        if !local || !(conv ?? "").hasPrefix("conv_local_") { return "Claudio local está apagado en el Hub (CLAUDIO_LOCAL), y Claudio solo habla con voz local." }
+        if !permiso { return "Para hablar con Claudio falta el permiso del dictado: Ajustes del iPhone, Alma, Reconocimiento de voz." }
+        if !disponible { return "El dictado del iPhone no está disponible ahora, así que Claudio no puede hablar. Probemos en un rato." }
+        return nil
+    }
+
     // MARK: - Fin de la frase
 
     /// Segundos de silencio (sin cambios en lo que oye el dictado) que cierran la frase; si la frase queda colgando, más.

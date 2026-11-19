@@ -1476,7 +1476,9 @@ final class ModoCalle: NSObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDeleg
         let v = VozNativa.shared
         v.desdeCalle = encendido
         v.ultimaLlamada = (0, nil)   // si la llamada no llega a empezar, no se cuenta la anterior
-        if let claudio { if !v.hablarConClaudio(ficha: claudio) { anotar("No pude abrir la llamada con Claudio (ya había otra o falta la sesión)") } }
+        if let claudio, let falta = ClaudioLocal.falta(claudio) {   // solo voz local (Juan, 19-nov-2026): sin ElevenLabs para Claudio
+            anotar("Claudio local no está listo: abro con Alma, sin ElevenLabs para Claudio (" + falta + ")"); v.hablarAlOir(pedido)
+        } else if let claudio { if !v.hablarConClaudio(ficha: claudio) { anotar("No pude abrir la llamada con Claudio (ya había otra o falta la sesión)") } }
         else if let aviso { _ = v.hablarPorAviso(aviso, id: avisoId, conferencia: nil) } else { v.hablarAlOir(pedido) }
         llamadaVista = false; llamadaDesde = Date()
         reloj?.invalidate()

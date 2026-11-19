@@ -54,6 +54,13 @@ final class ClaudioLocal: NSObject {
     /// poner_voz (Hub #779; PonerVoz.swift): las voces o el audio del enlace, por el mismo camino que su voz.
     private let poner = PonerVoz()
 
+    /// Qué falta para Claudio local con esta ficha (ClaudioLocalReglas.falta); nil si está listo.
+    static func falta(_ ficha: [String: Any]) -> String? {
+        let r = SFSpeechRecognizer(locale: Locale(identifier: "es-MX"))
+        return ClaudioLocalReglas.falta(local: (ficha["local"] as? Bool) == true, conv: ficha["conv_id"] as? String,
+                                        permiso: SFSpeechRecognizer.authorizationStatus() == .authorized, disponible: r?.isAvailable == true)
+    }
+
     init?(ficha: [String: Any]) {
         guard (ficha["local"] as? Bool) == true, let c = ficha["conv_id"] as? String, c.hasPrefix("conv_local_"),
               SFSpeechRecognizer.authorizationStatus() == .authorized,
