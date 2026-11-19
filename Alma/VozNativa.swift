@@ -112,7 +112,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var sinSiguesAhi: Bool { desdeCalle || conferencia != nil }
     private func callarPregunta() {
         sinVozPregunta = true
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         paso("Alma iba a preguntar si sigues ahí: no suena (calle o conferencia)")
         mandar(["type": "contextual_update", "text": "No preguntes si Juan sigue ahí ni insistas: en este modo el silencio y el ruido son normales. Quédate en silencio con skip_turn hasta que te llamen."])
     }
@@ -1123,7 +1123,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
            Juan la interrumpiera (se corta a media frase y repite «te iba diciendo…»). Mientras suena, solo pasa lo que
            suena más fuerte que su eco (Juan hablándole de verdad); lo demás se manda como silencio. Sin cancelación de
            eco el eco es más fuerte, así que el umbral sube. */
-        let suenaAlma = Date() < finVozAlma.addingTimeInterval(0.35)
+        // En una bocina de Google (BocinasGoogle.swift) la voz llega unos segundos tarde y la cancelación de eco no la ve.
+        let enBocina = BocinasGoogle.shared.sonando
+        let suenaAlma = Date() < finVozAlma.addingTimeInterval(0.35 + BocinasGoogleReglas.colitaEco(enBocina: enBocina))
         // El saludo se oye entero: mientras suena (o todavía no llega), lo del micrófono va como silencio.
         let saludando = (saludoDesde.map { LlamadaContinua.saludoSigue(desde: $0, ahora: Date(), sono: sono, finVoz: finVozAlma) } ?? false) || Date() < finGrabado   // también el saludo grabado (Hub #724)
         /* La señal de la llamada (alma-inicio, ~1 s fuerte) suena por el parlante mientras conecta: si llegaba a ElevenLabs
@@ -1136,7 +1138,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let suenaCoro = coro.audible
         limpieza.limpiar(dst[0], cuenta: Int(buf.frameLength), aprender: !suenaAlma && !suenaSenal && !saludando && !suenaCoro)
         if saludando { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
-        else if (suenaAlma || suenaCoro) && rmsTu < (sinEco ? 0.12 : 0.045) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
+        else if (suenaAlma || suenaCoro) && rmsTu < (sinEco || enBocina ? 0.12 : 0.045) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
         else if suenaSenal && rmsTu < (sinEco ? 0.15 : 0.08) { for i in 0..<Int(buf.frameLength) { dst[0][i] = 0 } }
         let cap = AVAudioFrameCount(Double(buf.frameLength) * 16000 / buf.format.sampleRate) + 32
         guard let out = AVAudioPCMBuffer(pcmFormat: formatoEntrada, frameCapacity: cap) else { return }
@@ -1269,7 +1271,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // Cuánta voz de Alma se tiró (lo que faltaba por sonar): si se repite, se ve en el registro por qué no se oyó.
             let tirada = max(0, finVozAlma.timeIntervalSinceNow); cortesVoz += 1
             if tirada > 0.3 { paso(String(format: "ElevenLabs cortó a Alma (oyó voz): %.1f s de su voz no sonaron (corte %d)", tirada, cortesVoz)) }
-            player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
+            player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
             coro.corta()   // Juan interrumpió: el coro se corta
         case "ping":
             let ev = j["ping_event"] as? [String: Any] ?? [:]
@@ -1516,6 +1518,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let inicio = max(finVozAlma, Date())
         finVozAlma = inicio.addingTimeInterval(dur)   // los trozos llegan más rápido de lo que suenan
         agendarNivelAlma(ch[0], n: n, inicio: inicio)
+        // Suena en la bocina de Google: aquí se agenda en silencio (el tiempo de cada frase sigue igual).
+        if BocinasGoogle.shared.sonando { for i in 0..<n { ch[0][i] = 0 } }
         finHabla?.cancel()
         let w = DispatchWorkItem { [weak self] in self?.almaHabla = false; self?.nivel = 0; self?.ventanasAlma = [] }
         finHabla = w; DispatchQueue.main.asyncAfter(deadline: .now() + dur + 0.25, execute: w)
@@ -1526,6 +1530,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         player.scheduleBuffer(buf, completionHandler: nil)
         if !player.isPlaying { player.play() }
         Retransmision.shared.audio(pcm16, hz: Int(formatoSalida.sampleRate))   // Modo compañero con sonido (Hub #727): la misma voz en el iPad
+        BocinasGoogle.shared.audio(pcm16, hz: Int(formatoSalida.sampleRate))   // y en la bocina de Google elegida, si estás en casa
     }
 
     /// La voz de Alma tiene que oírse (Juan, 16-nov-2026: «todo el audio previo estaba en mute y el saludo no se escuchó»).
@@ -1798,7 +1803,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .normalClosure, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil   // Claudio local se va: vuelve Alma
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         inicioEnviado = false; antesDeFicha = []; colaVoz = []; sono = false; sinVozPregunta = false
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()   // vuelve Alma: el Panel de Claudio se quita
         volviendo = nuevo == .alma
@@ -2187,7 +2192,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         inicioEnviado = false; antesDeFicha = []; colaVoz = []
         cambiando = true   // mientras llega la conversación nueva no se cambia de agente
         estado = .conectando
@@ -2246,7 +2251,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
         if !arrancarRespaldo(frase: conectada ? RespaldoReglas.fraseSeFue : RespaldoReglas.fraseAlEmpezar) { fallo(m) }
     }
@@ -2269,7 +2274,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte()
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
         local = l
         l.paso = { [weak self] t in self?.paso(t) }

@@ -157,6 +157,14 @@ jobs:
           xcrun swiftc Alma/AudioLlamadaReglas.swift Pruebas/AudioLlamada/main.swift -o /tmp/audio-llamada
           /tmp/audio-llamada
 
+      # Bocinas de Google Home en la llamada (Juan, 19-nov-2026): el anuncio de cada bocina, la salida que se recuerda, los
+      # mensajes de Google Cast y el audio en vivo que toca la bocina. Lógica pura.
+      - name: Probar las bocinas de Google Home
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/BocinasGoogleReglas.swift Pruebas/BocinasGoogle/main.swift -o /tmp/bocinas-google
+          /tmp/bocinas-google
+
       # El encendido del Modo calle (Juan, 6-nov-2026): arranca como lo dejó Juan, apagar apaga de verdad, un aviso con la app
       # abierta no se ve como Modo calle y la voz del aviso es la de Alma. Lógica pura, se prueba sola en segundos.
       - name: Probar el encendido del Modo calle
