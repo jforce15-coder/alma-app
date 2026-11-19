@@ -15,6 +15,16 @@ import Foundation
 enum MaricarmenReglas {
 
     static let alter = "maricarmen"
+
+    /// Su voz de ElevenLabs, a prueba (Juan, 19-nov-2026: «Maricarmen es 2»): «Maricarmen ES · 2», castellano de España.
+    /// Con el interruptor encendido (Ajustes → Voces locales → Maricarmen, de fábrica encendido) la app la pide al Hub en
+    /// cada frase (voz_maricarmen) y la recibe en PCM a 24 kHz; si no llega, habla su voz local (la gratis, Kokoro o el
+    /// iPhone), sin cortar. Apagado: como antes, 100 % local y sin créditos.
+    static let vozElevenLabs = "Maricarmen ES · 2"
+    static let claveVozElevenLabs = "maricarmen_voz_es2"
+    static let hzVoz = 24000
+    /// Cuánto se espera el saludo o la despedida con su voz antes de decirlos con la local.
+    static let esperaVoz: TimeInterval = 6
     /// La herramienta de cliente con la que Alma (ElevenLabs) pasa a Juan con Maricarmen cuando la app no reconoció la frase
     /// (Hub #707, Juan 17-nov-2026: «hablar directamente con Maricarmen dentro de la llamada, sin derivarlo a WhatsApp ni
     /// llamadas externas»). No se contesta (expects_response false): no hace hablar a Alma.

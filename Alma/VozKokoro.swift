@@ -331,6 +331,10 @@ final class VocesLocales: ObservableObject {
     /// La voz gratis (Pocket, temporal; la descarga en VozPocket.swift).
     @Published var gratis: Estado = .falta
     var observaGratis: NSKeyValueObservation?
+    /// Maricarmen con su voz de ElevenLabs, a prueba (MaricarmenReglas.vozElevenLabs). De fábrica, encendida.
+    @Published var maricarmenElevenLabs: Bool = UserDefaults.standard.object(forKey: MaricarmenReglas.claveVozElevenLabs) as? Bool ?? true {
+        didSet { UserDefaults.standard.set(maricarmenElevenLabs, forKey: MaricarmenReglas.claveVozElevenLabs) }
+    }
 
     let carpeta: URL
     var modeloURL: URL { carpeta.appendingPathComponent("model_quantized.onnx") }

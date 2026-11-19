@@ -57,6 +57,18 @@ revisa(p["action"] as? String == "calle" && p["sin_audio"] as? Bool == true, "va
 revisa(p["alter"] as? String == "maricarmen" && p["texto"] as? String == "hola", "con alter maricarmen y el texto limpio")
 revisa(RespaldoReglas.pedido(token: "t", sesion: "s", texto: "hola")["alter"] == nil, "la voz de respaldo no manda alter")
 
+// Su voz de ElevenLabs, a prueba (Juan, 19-nov-2026: «Maricarmen es 2»)
+revisa(p["voz_maricarmen"] == nil, "sin el interruptor no pide su voz de ElevenLabs")
+let pe = RespaldoReglas.pedido(token: "t", sesion: "s", texto: "hola", alter: M.alter, vozMaricarmen: true)
+revisa(pe["voz_maricarmen"] as? Bool == true && pe["sin_audio"] as? Bool == true, "con el interruptor la pide (y sigue sin el audio de Alma)")
+revisa(RespaldoReglas.pedido(token: "t", sesion: "s", texto: "hola", vozMaricarmen: true)["voz_maricarmen"] == nil, "la voz de respaldo de Alma nunca la pide")
+let pcm = Data([1, 0, 2, 0, 3, 0]).base64EncodedString()
+revisa(RespaldoReglas.respuesta(["hablar": "Venga.", "audio": pcm, "hz": 24000])?.audio?.count == 6, "su audio a 24 kHz se usa")
+revisa(RespaldoReglas.respuesta(["hablar": "Venga.", "audio": pcm, "hz": 16000])?.audio == nil, "otro formato no: habla la voz local")
+revisa(RespaldoReglas.respuesta(["hablar": "Venga."])?.audio == nil, "sin audio, la voz local")
+revisa(RespaldoReglas.respuesta(["hablar": "Venga.", "audio": "%%", "hz": 24000])?.audio == nil, "audio roto: la voz local")
+revisa(M.hzVoz == 24000 && M.vozElevenLabs == "Maricarmen ES · 2", "la voz elegida, a 24 kHz como su voz local")
+
 // Su voz
 revisa(M.idiomas.first == "es-ES", "primero una voz de España (el acento del nivel 3)")
 

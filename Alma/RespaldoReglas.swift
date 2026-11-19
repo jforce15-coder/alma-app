@@ -62,18 +62,26 @@ enum RespaldoReglas {
 
     /// La acción calle del Hub (el mismo Chat con Alma del Modo calle), sin el audio de ElevenLabs: la dice el iPhone.
     /// `alter`: «maricarmen» cuando contesta Maricarmen, el alter ego de Alma (MaricarmenReglas.swift: el Hub le pone el Weebo en 3).
-    static func pedido(token: String, sesion: String, texto: String, alter: String? = nil) -> [String: Any] {
+    /// `vozMaricarmen`: Maricarmen con su voz de ElevenLabs, a prueba (MaricarmenReglas.vozElevenLabs): el Hub manda la frase
+    /// ya dicha en PCM a 24 kHz (audio + hz).
+    static func pedido(token: String, sesion: String, texto: String, alter: String? = nil, vozMaricarmen: Bool = false) -> [String: Any] {
         var b: [String: Any] = ["hub": 1, "action": "calle", "app": "alma", "token": token, "session": sesion, "canal": "calle", "sin_audio": true,
                                 "texto": String(texto.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1500))]
-        if let a = alter, !a.isEmpty { b["alter"] = a }
+        if let a = alter, !a.isEmpty { b["alter"] = a; if vozMaricarmen { b["voz_maricarmen"] = true } }
         return b
     }
 
-    struct Respuesta: Equatable { let hablar: String; let claudio: Bool }
+    struct Respuesta: Equatable { let hablar: String; let claudio: Bool; var audio: Data? = nil }
     static func respuesta(_ j: [String: Any]?) -> Respuesta? {
         guard let j else { return nil }
         let h = (j["hablar"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return Respuesta(hablar: h.isEmpty ? fraseSinRespuesta : h, claudio: (j["claudio"] as? Bool) == true)
+        return Respuesta(hablar: h.isEmpty ? fraseSinRespuesta : h, claudio: (j["claudio"] as? Bool) == true, audio: h.isEmpty ? nil : audio(j, hz: 24000))
+    }
+    /// El audio que mandó el Hub: PCM 16 bits en base64 a `hz` (audio + hz). Otro formato, roto o vacío: nil (habla la voz local).
+    static func audio(_ j: [String: Any]?, hz: Int) -> Data? {
+        guard let b = j?["audio"] as? String, !b.isEmpty, (j?["hz"] as? NSNumber)?.intValue == hz,
+              let a = Data(base64Encoded: b), a.count >= 2 else { return nil }
+        return a.count % 2 == 0 ? a : a.dropLast()
     }
 
     // MARK: - Lo guardado sin internet
