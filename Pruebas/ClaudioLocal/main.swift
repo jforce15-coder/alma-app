@@ -18,6 +18,26 @@ revisa(!R.termino(texto: "cambia el botón de pagos y", ultimoCambio: t0, empezo
 revisa(R.termino(texto: "cambia el botón de pagos y", ultimoCambio: t0, empezo: t0, ahora: t0.addingTimeInterval(2.1)), "… pero no para siempre (2 s)")
 revisa(R.termino(texto: "y esto y lo otro y", ultimoCambio: t0.addingTimeInterval(25), empezo: t0, ahora: t0.addingTimeInterval(25.1)), "con el tope (25 s hablando) la frase va igual")
 
+// Cuándo terminó, por el sonido (Juan, 19-nov-2026: la transcripción tardaba)
+let v0 = t0.addingTimeInterval(3)   // Juan calló a los 3 s; el dictado escribió lo último a los 3,5 s
+let c0 = t0.addingTimeInterval(3.5)
+revisa(R.termino(texto: "cambia el botón de pagos", ultimoCambio: c0, empezo: t0, ultimaVoz: v0, ahora: t0.addingTimeInterval(3.85)), "callado 0,85 s y el texto quieto: la frase va (antes esperaba hasta los 4,6 s)")
+revisa(!R.termino(texto: "cambia el botón de pagos", ultimoCambio: c0, empezo: t0, ultimaVoz: v0, ahora: t0.addingTimeInterval(3.6)), "callado 0,6 s todavía no: una pausa natural no lo corta")
+revisa(!R.termino(texto: "cambia el botón de pagos", ultimoCambio: t0.addingTimeInterval(3.7), empezo: t0, ultimaVoz: v0, ahora: t0.addingTimeInterval(3.8)), "si el dictado sigue escribiendo, espera")
+revisa(!R.termino(texto: "cambia el botón de pagos y", ultimoCambio: c0, empezo: t0, ultimaVoz: v0, ahora: t0.addingTimeInterval(4.2)), "frase colgando («… y»): con el sonido también espera más")
+revisa(R.termino(texto: "cambia el botón de pagos y", ultimoCambio: c0, empezo: t0, ultimaVoz: v0, ahora: t0.addingTimeInterval(4.6)), "… 1,5 s callado y va")
+revisa(!R.termino(texto: "cambia el botón", ultimoCambio: c0, empezo: t0.addingTimeInterval(3), ultimaVoz: t0, ahora: t0.addingTimeInterval(3.9)), "un ruido de antes de la frase no cuenta como su voz")
+revisa(!R.termino(texto: "cambia el botón", ultimoCambio: c0, empezo: t0, ultimaVoz: nil, ahora: t0.addingTimeInterval(4.0)), "sin voz oída (micrófono bajito) manda la regla de antes")
+revisa(R.termino(texto: "cambia el botón", ultimoCambio: c0, empezo: t0, ultimaVoz: nil, ahora: t0.addingTimeInterval(4.7)), "… y con ella la frase va igual")
+revisa(!R.termino(texto: "", ultimoCambio: c0, empezo: t0, ultimaVoz: v0, ahora: t0.addingTimeInterval(9)), "sin texto no hay frase, aunque haya sonado algo")
+revisa(R.esVoz(rms: 0.08, piso: 0.01) && !R.esVoz(rms: 0.015, piso: 0.002), "la voz limpia (0,08) es voz; un susurro de ruido no")
+revisa(!R.esVoz(rms: 0.05, piso: 0.02), "en un lugar ruidoso hace falta más que el ruido de fondo")
+var pz: Float = 0.01
+for _ in 0..<100 { pz = R.piso(pz, rms: 0.08) }
+revisa(pz < 0.03, "una voz larga no se vuelve ruido de fondo (el piso sube despacio)")
+for _ in 0..<40 { pz = R.piso(pz, rms: 0.001) }
+revisa(pz < 0.002, "en el silencio el piso baja rápido")
+
 // Lo que se manda al Hub
 var h: [R.Turno] = []
 for i in 0..<20 { h = R.sumar(h, .init(deClaudio: i % 2 == 1, texto: "frase \(i)")) }
