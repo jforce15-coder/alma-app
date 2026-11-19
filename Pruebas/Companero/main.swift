@@ -36,8 +36,16 @@ revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: 
 revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: t0, ahora: t0.addingTimeInterval(31)) == nil, "lo que dijo la página vence a los 30 s")
 revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: nil, ahora: t0) == nil, "sin noticia de la página, a mano sí")
 
+// Una sola voz (Juan, 19-nov-2026): el del teléfono manda
+revisa(UnaLlamada.motivo(companero: true, telefono: true, porVoz: true, otra: "", visto: nil, ahora: t0) == nil, "el iPhone con Modo compañero sí abre por voz")
+revisa(UnaLlamada.motivo(companero: true, telefono: true, porVoz: false, otra: "iPad", visto: t0, ahora: t0) == nil, "el iPhone abre aunque la llamada esté en el iPad (el iPad cede)")
+var l = ColaVivo(); l.empezo("conv-9"); _ = l.sacar(t0)
+revisa(l.sacar(t0.addingTimeInterval(3)) == nil, "sin nada nuevo, no se manda enseguida")
+revisa(l.sacar(t0.addingTimeInterval(ColaVivo.latido)) != nil, "pero cada pocos segundos se avisa que la llamada sigue (para saber si hay que ceder)")
+l.cambiar("fin"); _ = l.sacar(t0.addingTimeInterval(7))
+revisa(l.sacar(t0.addingTimeInterval(20)) == nil, "después de terminar, ya no hay latido")
 // Una voz a la vez (Juan, 19-nov-2026): el iPhone manda; el iPad no abre por voz mientras el iPhone está activo
-revisa(UnaLlamada.motivo(companero: true, porVoz: true, otra: "iPad", visto: t0, ahora: t0, telefono: true, telActivo: true) == nil, "el iPhone nunca se bloquea (ni con Modo compañero encendido)")
+revisa(UnaLlamada.motivo(companero: true, telefono: true, porVoz: true, otra: "iPad", visto: t0, ahora: t0, telActivo: true) == nil, "el iPhone nunca se bloquea (ni con Modo compañero encendido)")
 revisa(UnaLlamada.motivo(companero: false, porVoz: true, otra: "", visto: t0, ahora: t0, telActivo: true)?.contains("iPhone") == true, "iPad sin compañero: con el iPhone activo, por voz no")
 revisa(UnaLlamada.motivo(companero: false, porVoz: false, otra: "", visto: t0, ahora: t0, telActivo: true) == nil, "iPad: con el iPhone activo pero sin llamada, a mano sí")
 revisa(UnaLlamada.motivo(companero: false, porVoz: true, otra: "iPhone", visto: t0, ahora: t0) != nil, "iPad sin compañero: con la llamada en el iPhone, por voz no")
