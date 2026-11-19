@@ -1336,6 +1336,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let t = ev["agent_response"] as? String, sinSiguesAhi, LlamadaContinua.esPreguntaDeSilencio(t) { callarPregunta(); break }
             sinVozPregunta = false; textoAlmaCoro = Date()
             if let t = ev["agent_response"] as? String { emitir(["tipo": "alma", "texto": t]); linea(true, t); Companero.shared.sub(alma: true, t) }   // modo compañero (Hub #607)
+            // Despedida única (Juan, 19-nov-2026): si Alma se despidió en una llamada normal y nadie habla en unos segundos, la app cuelga.
+            if let t = ev["agent_response"] as? String, agente == .alma, local == nil, tiemposCierre == nil, !aConferencia, DespedidaUnica.esDespedida(t) { cerrarTrasDespedida() }
             if let j = turnoJuan, respuestaVoz.map({ $0 < j }) ?? true { paso(String(format: "%@ contestó en %.1f s", agente.nombre, Date().timeIntervalSince(j))) }
             respuestaVoz = Date()
         case "user_transcript":
@@ -1849,6 +1851,25 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if let j = self.juanDijo, j >= desde { t.invalidate(); self.paso("Seguiste hablando: la llamada sigue"); return }
             guard AgenteVoz.cuelgaTrasVuelta(desde: desde, finVoz: self.finVozAlma, juanHablo: self.juanDijo, ahora: Date()) else { return }
             t.invalidate(); self.motivoFin = "volvió de Claudio y Alma cerró la interacción"; self.terminar()
+        }
+    }
+
+    /// Despedida única (DespedidaUnica): Alma se despidió en una llamada normal (no en conversación continua). Si Juan no dice
+    /// nada en `DespedidaUnica.tras` segundos desde que su voz terminó, la app cuelga aunque Alma no haya usado end_call.
+    /// Si Juan habla, la llamada sigue; una despedida nueva reinicia la cuenta (solo vale el reloj de la última).
+    private var despedidaDesde: Date?
+    private func cerrarTrasDespedida() {
+        let llamada = inicioLlamada, desde = Date()
+        despedidaDesde = desde
+        paso("Alma se despidió: cuelga si no dices nada en \(Int(DespedidaUnica.tras)) s")
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] t in
+            guard let self, self.despedidaDesde == desde, self.inicioLlamada == llamada, self.agente == .alma, self.local == nil,
+                  self.tiemposCierre == nil, self.estado == .hablando || self.estado == .conectando else { t.invalidate(); return }
+            if let j = self.juanDijo, j >= desde { t.invalidate(); self.despedidaDesde = nil; self.paso("Hablaste tras la despedida: la llamada sigue"); return }
+            guard DespedidaUnica.cuelga(desde: desde, finVoz: self.finVozAlma, juanHablo: self.juanDijo, vozJuan: self.sonidoCalle,
+                                        trabajando: self.herramienta, ahora: Date()) else { return }
+            t.invalidate(); self.despedidaDesde = nil
+            self.motivoFin = "Alma se despidió y no hubo respuesta en \(Int(DespedidaUnica.tras)) s"; self.terminar()
         }
     }
 

@@ -219,6 +219,12 @@ jobs:
         run: |
           xcrun swiftc Alma/AgenteVoz.swift Pruebas/AgenteVoz/main.swift -o /tmp/agente-voz
           /tmp/agente-voz
+      # Despedida única (Juan, 19-nov-2026): qué es una despedida de Alma y cuándo cuelga la app si nadie responde. Lógica pura.
+      - name: Probar la despedida única
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/DespedidaUnica.swift Pruebas/DespedidaUnica/main.swift -o /tmp/despedida-unica
+          /tmp/despedida-unica
       # Claudio local (Hub #629): cuándo terminó de hablar Juan, qué se manda al Hub, qué se dice y qué voz del iPhone imita a
       # Claudio. Lógica pura.
       - name: Probar Claudio local
