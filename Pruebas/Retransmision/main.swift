@@ -24,11 +24,15 @@ revisa(PaqueteVivo.leer(PaqueteVivo.audio(hz: 1, pcm: pcm).datos()) == nil, "una
 var r = ReglasRetransmision()
 revisa(!r.busca && !r.suena, "con el Modo compañero apagado no busca ni suena")
 r.companero = true
-revisa(r.busca && r.suena, "encendido (iPad): busca la llamada del otro y la voz suena")
+revisa(r.busca && r.recibe && !r.suena, "encendido (iPad): busca la llamada del otro y la muestra, callado (una sola voz)")
+r.sonidoAqui = true
+revisa(r.busca && r.suena, "con «Sonido de la llamada aquí», la voz también suena en el iPad")
 r.aLaVista = false
 revisa(!r.busca && r.suena, "con la app cerrada deja de buscar, pero lo ya conectado sigue sonando")
 r.aLaVista = true; r.llamadaAqui = true
-revisa(!r.busca && !r.suena, "si la llamada es en este dispositivo, no busca ni reproduce al otro")
+revisa(!r.busca && !r.recibe && !r.suena, "si la llamada es en este dispositivo, no busca ni reproduce al otro")
+var r2 = ReglasRetransmision(); r2.sonidoAqui = true
+revisa(!r2.suena && !r2.recibe, "el sonido solo, sin el Modo compañero, no hace nada")
 
 let p1 = ReglasRetransmision.pareja("llave-de-prueba"), p2 = ReglasRetransmision.pareja("otra-llave")
 revisa(p1 != nil && p1 == ReglasRetransmision.pareja("llave-de-prueba") && p1 != p2, "la huella es la misma con la misma llave y distinta con otra")

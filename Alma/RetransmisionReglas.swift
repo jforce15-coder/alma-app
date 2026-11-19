@@ -77,10 +77,17 @@ struct ReglasRetransmision {
     var llamadaAqui = false   // la llamada está en este dispositivo: él es el que manda, no el que oye
     var aLaVista = true       // la app abierta (con la app cerrada no se busca)
 
+    /// «Sonido de la llamada aquí» (Juan, 19-nov-2026: «solo debe haber un agente activo… por defecto el móvil / audífonos,
+    /// salvo que el usuario configure explícitamente la salida de audio en otro dispositivo como iPad o bocinas»). Viene
+    /// apagado: la voz suena solo en el dispositivo de la llamada y el compañero se queda callado.
+    var sonidoAqui = false
+
     /// El compañero busca la llamada del otro solo encendido, sin llamada propia y con la app abierta.
     var busca: Bool { companero && !llamadaAqui && aLaVista }
-    /// Y la voz que llega suena con el modo encendido y sin llamada propia (una vez conectado, sigue sonando bloqueado).
-    var suena: Bool { companero && !llamadaAqui }
+    /// Lo que llega (subtítulos, estado, nivel) se recibe con el modo encendido y sin llamada propia.
+    var recibe: Bool { companero && !llamadaAqui }
+    /// Y la voz suena aquí solo si se pidió a propósito (una vez conectado, sigue sonando bloqueado).
+    var suena: Bool { recibe && sonidoAqui }
 
     /// Solo se juntan los dispositivos de la misma cuenta: los dos guardan la misma llave de la app (voz_token), y lo que
     /// se anuncia es una huella de ella (nunca la llave). Sin llave, nada.
