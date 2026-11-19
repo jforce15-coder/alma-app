@@ -17,16 +17,24 @@ final class Companero {
     func pagina(on: Bool, otra o: String) {
         UserDefaults.standard.set(on, forKey: Companero.claveOn)
         candado.lock(); otra = on ? String(o.prefix(30)) : ""; vista = Date(); candado.unlock()
+        PushAlma.shared.callar(callaAvisos)   // iPad compañero (Juan, 19-nov-2026): su push se apaga y vuelve al apagar el modo
     }
+    /// El iPad con el Modo compañero encendido no muestra notificaciones (UnaLlamada.callaAvisos): quedan en el teléfono.
+    var callaAvisos: Bool { UnaLlamada.callaAvisos(companero: UserDefaults.standard.bool(forKey: Companero.claveOn), ipad: dispositivo == "iPad") }
     /// nil = este dispositivo puede abrir la llamada; si no, por qué no (desde cualquier hilo).
     func noDeja(porVoz: Bool) -> String? {
         candado.lock(); let o = otra, v = vista; candado.unlock()
-        return UnaLlamada.motivo(companero: UserDefaults.standard.bool(forKey: Companero.claveOn), porVoz: porVoz, otra: o, visto: v, ahora: Date())
+        return UnaLlamada.motivo(companero: UserDefaults.standard.bool(forKey: Companero.claveOn), ipad: dispositivo == "iPad", porVoz: porVoz, otra: o, visto: v, ahora: Date())
     }
 
     func empezo(_ conv: String) { DispatchQueue.main.async { self.cola.empezo(conv); self.revisar() }; Retransmision.shared.empezo() }   // y la voz, por la red de cerca (Hub #727)
-    func estado(_ e: String) { DispatchQueue.main.async { self.cola.cambiar(e); self.revisar() }; if e == "fin" { Retransmision.shared.termino() } }
-    func sub(alma: Bool, _ t: String) { DispatchQueue.main.async { self.cola.sub(alma: alma, t); self.revisar() } }
+    // El estado y los subtítulos van también por la red de cerca (Juan, 19-nov-2026: «no sincroniza la actividad de voz en
+    // pantalla en tiempo real»): llegan al iPad al momento; lo del Hub (cada 1,2 s) queda para el tablero y si no hay red de cerca.
+    func estado(_ e: String) {
+        DispatchQueue.main.async { self.cola.cambiar(e); self.revisar() }
+        if e == "fin" { Retransmision.shared.termino() } else { Retransmision.shared.estado(e) }
+    }
+    func sub(alma: Bool, _ t: String) { DispatchQueue.main.async { self.cola.sub(alma: alma, t); self.revisar() }; Retransmision.shared.texto(alma: alma, t) }
 
     private func revisar() {
         if reloj == nil { reloj = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.mandar() } }

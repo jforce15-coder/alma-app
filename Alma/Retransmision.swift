@@ -77,6 +77,17 @@ final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertise
     func audio(_ pcm16: Data, hz: Int) { mandar(.audio(hz: hz, pcm: pcm16)) }
     /// Juan interrumpió: lo que quedaba se tira también en el compañero.
     func corte() { mandar(.corte) }
+    /// Lo que se ve, al momento (Juan, 19-nov-2026): cada subtítulo y cada cambio de estado (Companero.swift).
+    func texto(alma: Bool, _ t: String) {
+        let limpio = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+        if !limpio.isEmpty { mandar(.texto(alma: alma, t: limpio)) }
+    }
+    func estado(_ e: String) { mandar(.estado(e)) }
+
+    /// En el compañero: lo que llega por la red de cerca va a la página al momento (AlmaCompanero.cerca en alma/inicio.html):
+    /// { tipo: "sub", de, t } · { tipo: "estado", estado } · { tipo: "nivel", v }. Lo pone Puente (accion «companero»).
+    var alCerca: (([String: Any]) -> Void)?
+    private var ultimoNivel = Date.distantPast
 
     private func mandar(_ p: PaqueteVivo) {
         envio.async { [weak self] in
@@ -126,9 +137,13 @@ final class Retransmision: NSObject, MCSessionDelegate, MCNearbyServiceAdvertise
         DispatchQueue.main.async {
             guard self.reglas.suena else { return }
             switch p {
-            case let .audio(hz, pcm): self.sonar(pcm, hz: hz)
-            case .corte: self.callar(apagar: false)
-            case .fin: self.callar(apagar: true)
+            case let .audio(hz, pcm):
+                self.sonar(pcm, hz: hz)
+                if Date().timeIntervalSince(self.ultimoNivel) > 0.08 { self.ultimoNivel = Date(); self.alCerca?(["tipo": "nivel", "v": NivelVivo.de(pcm)]) }
+            case .corte: self.callar(apagar: false); self.alCerca?(["tipo": "nivel", "v": 0])
+            case .fin: self.callar(apagar: true); self.alCerca?(["tipo": "estado", "estado": "fin"])
+            case let .texto(alma, t): self.alCerca?(["tipo": "sub", "de": alma ? "alma" : "yo", "t": t])
+            case let .estado(e): self.alCerca?(["tipo": "estado", "estado": e])
             }
         }
     }

@@ -96,6 +96,7 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         case "companero":   // Modo compañero (alma/inicio.html): { on, otra } → una sola llamada (UnaLlamada, ColaVivo.swift)
             Companero.shared.pagina(on: (d["on"] as? Bool) ?? false, otra: d["otra"] as? String ?? "")
             Retransmision.shared.poner(companero: (d["on"] as? Bool) ?? false)   // y con él encendido, la voz del otro suena aquí (Hub #727)
+            Retransmision.shared.alCerca = { [weak self] e in self?.responder("AlmaCompanero.cerca", [e]) }   // y lo que se ve, al momento (19-nov-2026)
         case "voz":
             voz(d)
         case "archivos":   // un archivo nuevo en órbita (Hub archivosorbita.js): la próxima llamada lleva la ficha con él
