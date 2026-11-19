@@ -91,7 +91,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Solo en una llamada normal con Alma: el Modo calle y la conferencia tienen su propio camino sin ElevenLabs.
     private var puedeRespaldo: Bool { agente == .alma && !desdeCalle && conferencia == nil }
     /// Maricarmen (Hub #679): también en la llamada que abre el Modo calle (la pidió Juan; no es la voz de respaldo).
-    private var puedeMaricarmen: Bool { agente == .alma && conferencia == nil }
+    /// Y en la que abre el modo conferencia (Hub #840, Juan: «que la active para modo conferencia también»): sigue con ella
+    /// sin colgar y, como cualquier llamada de la conferencia, la app la cierra sola tras el silencio y vuelve a escuchar «Alma».
+    private var puedeMaricarmen: Bool { agente == .alma }
     private var sesionURL: URLSession?
     private var silencio: AVAudioPlayer?
     private var ultimoToque = Date.distantPast
@@ -1296,13 +1298,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             return
         }
         // Maricarmen (Hub #707): Alma entendió que Juan quiere hablar con ella (dicho de una forma que la app no reconoció) y la
-        // pasa sin colgar, como «pásame con Maricarmen». No se contesta (expects_response false). Si no se puede (conferencia,
-        // Claudio, ya está con ella), Alma se entera para no prometer lo que no pasó.
+        // pasa sin colgar, como «pásame con Maricarmen». No se contesta (expects_response false). Si no se puede
+        // (Claudio, ya está con ella), Alma se entera para no prometer lo que no pasó.
         if nombre == MaricarmenReglas.herramienta {
             if local == nil, puedeMaricarmen, !cambiando { pasarAMaricarmen() }
             else if local?.modo != .maricarmen, ws != nil {
                 paso("Alma pidió pasar con Maricarmen, pero aquí no se puede")
-                mandar(["type": "contextual_update", "text": "No se pudo pasar con Maricarmen en este momento (" + (conferencia != nil ? "estás en modo conferencia" : "esta conversación no lo permite") + "). Díselo a Juan en una frase; nunca le ofrezcas WhatsApp ni una llamada aparte."])
+                mandar(["type": "contextual_update", "text": "No se pudo pasar con Maricarmen en este momento (esta conversación no lo permite). Díselo a Juan en una frase; nunca le ofrezcas WhatsApp ni una llamada aparte."])
             }
             return
         }
