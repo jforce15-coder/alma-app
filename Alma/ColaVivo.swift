@@ -15,6 +15,9 @@ struct ColaVivo {
     var mirando = true                 // lo último que dijo el Hub (al principio, sí: el primer envío lo averigua)
     var ultimoEnvio: Date = .distantPast
     static let cada: TimeInterval = 1.2, sinMirar: TimeInterval = 12, maxSubs = 8, largo = 280
+    /// Aunque no haya nada nuevo, cada `latido` segundos se avisa que la llamada sigue: así, si la llamada se abrió también
+    /// en el iPhone, el Hub se lo dice a esta enseguida («ceder») y solo queda una voz (UnaLlamada).
+    static let latido: TimeInterval = 6
 
     mutating func empezo(_ id: String) { conv = id; subs = []; estado = "conectando"; estadoNuevo = true; mirando = true; ultimoEnvio = .distantPast }
     mutating func cambiar(_ e: String) { guard !conv.isEmpty, e != estado else { return }; estado = e; estadoNuevo = true }
@@ -28,6 +31,7 @@ struct ColaVivo {
     func toca(_ ahora: Date) -> Bool {
         guard !conv.isEmpty else { return false }
         if estadoNuevo { return true }
+        if ahora.timeIntervalSince(ultimoEnvio) >= ColaVivo.latido { return true }
         guard !subs.isEmpty else { return false }
         return ahora.timeIntervalSince(ultimoEnvio) >= (mirando ? ColaVivo.cada : ColaVivo.sinMirar)
     }
@@ -48,13 +52,16 @@ struct ColaVivo {
 ///     los dos abrieran, habría dos llamadas con dos Almas hablando a la vez.
 ///   · A mano (la roca, el anillo): sí, salvo que la página haya visto hace poco la llamada abierta en el otro.
 ///   · Sin Modo compañero, todo como antes.
+///   · El iPhone nunca se detiene (Juan, 19-nov-2026: «si está activado el teléfono, por default el agente del teléfono»):
+///     aunque tenga el Modo compañero encendido, «Alma» dicho en voz alta abre ahí. Si el iPad ya estaba en una llamada, el
+///     Hub (vivoPublicar, apps-script/vivo.js) le dice al iPad que ceda y el iPad cuelga la suya (VozNativa.cederAlTelefono).
 /// La página (alma/inicio.html, que pregunta al Hub con vivoLeer) le cuenta a la app si está encendido y si el otro
 /// está en una llamada; lo que dijo vale `vigencia` segundos (la página lo repite cada 10 s mientras sigue).
 enum UnaLlamada {
     static let vigencia: TimeInterval = 30
     /// nil = puede abrir la llamada aquí; si no, la frase de por qué no (va al registro de la voz).
-    static func motivo(companero: Bool, porVoz: Bool, otra: String, visto: Date?, ahora: Date) -> String? {
-        guard companero else { return nil }
+    static func motivo(companero: Bool, telefono: Bool = false, porVoz: Bool, otra: String, visto: Date?, ahora: Date) -> String? {
+        guard companero, !telefono else { return nil }
         if porVoz { return "Modo compañero: aquí no se abre una llamada por voz; la llamada es en tu otro dispositivo" }
         guard !otra.isEmpty, let v = visto, ahora.timeIntervalSince(v) < vigencia else { return nil }
         return "Modo compañero: la llamada sigue en tu \(otra); aquí no se abre otra"

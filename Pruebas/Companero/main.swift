@@ -36,5 +36,14 @@ revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: 
 revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: t0, ahora: t0.addingTimeInterval(31)) == nil, "lo que dijo la página vence a los 30 s")
 revisa(UnaLlamada.motivo(companero: true, porVoz: false, otra: "iPhone", visto: nil, ahora: t0) == nil, "sin noticia de la página, a mano sí")
 
+// Una sola voz (Juan, 19-nov-2026): el del teléfono manda
+revisa(UnaLlamada.motivo(companero: true, telefono: true, porVoz: true, otra: "", visto: nil, ahora: t0) == nil, "el iPhone con Modo compañero sí abre por voz")
+revisa(UnaLlamada.motivo(companero: true, telefono: true, porVoz: false, otra: "iPad", visto: t0, ahora: t0) == nil, "el iPhone abre aunque la llamada esté en el iPad (el iPad cede)")
+var l = ColaVivo(); l.empezo("conv-9"); _ = l.sacar(t0)
+revisa(l.sacar(t0.addingTimeInterval(3)) == nil, "sin nada nuevo, no se manda enseguida")
+revisa(l.sacar(t0.addingTimeInterval(ColaVivo.latido)) != nil, "pero cada pocos segundos se avisa que la llamada sigue (para saber si hay que ceder)")
+l.cambiar("fin"); _ = l.sacar(t0.addingTimeInterval(7))
+revisa(l.sacar(t0.addingTimeInterval(20)) == nil, "después de terminar, ya no hay latido")
+
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallaron.")
 exit(fallos == 0 ? 0 : 1)
