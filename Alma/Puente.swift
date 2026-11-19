@@ -18,9 +18,12 @@ import WebKit
 ///   { accion: "notif", que: "probarSiri" }  → «Probar con Siri» (NotifArmar.swift) → AlmaNotif.evento({ tipo: "prueba", ok, en, error })
 ///   { accion: "fotosContactos", numeros }   → la foto de los Contactos del iPhone solo de esos números (FotosContactosIOS.swift, Hub #567 T4) → AlmaFotosCt.evento({ permiso, fotos })
 ///   { accion: "anilloBle" }                  → abre el Diagnóstico del anillo (Bluetooth) (DiagnosticoAnillo.swift)
-///   { accion: "dispositivos" }               → abre Dispositivos: el anillo y los lentes (Dispositivos.swift)
+///   { accion: "dispositivos", id? }          → abre Wearables: el anillo, los lentes y los audífonos (Wearables.swift); con id, ese
 ///   { accion: "tarjetas" }                   → abre Tarjetas de clubes (TarjetasClub.swift)
-///   { accion: "companero", on }              → Modo compañero de este dispositivo: la voz de la llamada del otro suena aquí (Retransmision.swift)
+///   { accion: "vocesLocales" }               → abre Voces locales: Kokoro o la voz del iPhone para Claudio y Maricarmen (VocesLocalesVista.swift)
+///   { accion: "companero", on, otra }        → Modo compañero de este dispositivo y si la llamada está en el otro (Companero.swift);
+///                                              con él encendido, la voz de la llamada del otro suena aquí (Retransmision.swift)
+///   { accion: "archivos", que: "nuevo" }      → entró un archivo en órbita: la ficha de la voz se pide otra vez (Alma ya lo sabe)
 /// Solo responde a páginas de hub.spacioam.com.
 final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
     static let nombre = "alma"
@@ -46,12 +49,12 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
             Llavero.borrar()
         case "anillo":
             anillo(d)
-        case "dispositivos":   // Ajustes → «Dispositivos» (Dispositivos.swift): el anillo y los lentes, pantalla nativa
-            NotificationCenter.default.post(name: .abrirDispositivos, object: nil)
+        case "dispositivos", "wearables":   // Ajustes → «Wearables» (Wearables.swift): pantalla nativa; con id abre uno directo
+            NotificationCenter.default.post(name: .abrirWearables, object: d["id"] as? String)
         case "tarjetas":   // Ajustes → «Tarjetas de clubes» (TarjetasClub.swift): pantalla nativa, guardadas solo en este iPhone
             NotificationCenter.default.post(name: .abrirTarjetasClub, object: nil)
-        case "companero":   // el Modo compañero de este dispositivo (Hub #727): con él encendido, la voz de la llamada del otro suena aquí
-            Retransmision.shared.poner(companero: (d["on"] as? Bool) ?? false)
+        case "vocesLocales":   // Ajustes → Voz y modos → «Voces locales» (VocesLocalesVista.swift): Kokoro o el iPhone para Claudio y Maricarmen
+            NotificationCenter.default.post(name: .abrirVocesLocales, object: nil)
         case "anilloBle":   // Ajustes → Alma con el anillo → «Diagnóstico del anillo (Bluetooth)» (DiagnosticoAnillo.swift): pantalla nativa
             NotificationCenter.default.post(name: .abrirDiagnosticoAnillo, object: nil)
         case "conferencia":   // Ajustes → «Modo conferencia» (Conferencia.swift): { que: "on" | "off" | "estado" } · { que: "mudo", on }
@@ -90,8 +93,13 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
                 NivelAvisos.poner(t, nivel: n.intValue, por: d["por"] as? String ?? "4h")
             }
             responder("AlmaAvisos.evento", [NivelAvisos.resumen])
+        case "companero":   // Modo compañero (alma/inicio.html): { on, otra } → una sola llamada (UnaLlamada, ColaVivo.swift)
+            Companero.shared.pagina(on: (d["on"] as? Bool) ?? false, otra: d["otra"] as? String ?? "")
+            Retransmision.shared.poner(companero: (d["on"] as? Bool) ?? false)   // y con él encendido, la voz del otro suena aquí (Hub #727)
         case "voz":
             voz(d)
+        case "archivos":   // un archivo nuevo en órbita (Hub archivosorbita.js): la próxima llamada lleva la ficha con él
+            if d["que"] as? String == "nuevo" { VozNativa.shared.fichaVieja() }
         case "navegador":   // llevaste a Alma hacia un lado en el inicio: se abre el navegador con la búsqueda lista
             NotificationCenter.default.post(name: .modoNavegador, object: d["pos"] as? String ?? "")
         case "atajos":   // Ajustes → «Atajos permitidos» (AtajosIOS.swift): { que: "estado" | "agregar" | "quitar" | "todos", nombre, on }
@@ -149,6 +157,8 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
         case "mudo": v.silenciar((d["on"] as? Bool) ?? false)
         case "sinvoz": v.sinVoz((d["on"] as? Bool) ?? false)   // modo chat: Alma oye pero no habla
         case "sonido": v.sonar(d["n"] as? String ?? ""); return   // la señal de la voz de las páginas (alma-voz.js)
+        // Coro «Alma está trabajando» de la voz de las páginas (alma-voz.js): la página dice a qué volumen y en cuánto tiempo.
+        case "coro": CoroPagina.shared.poner((d["v"] as? NSNumber)?.floatValue ?? 0, en: (d["t"] as? NSNumber)?.doubleValue ?? 0.4); return
         // Medidor de personalidad (#410): Juan cambió el Modo Weebo en la hoja de la llamada; Alma se entera en la misma llamada.
         case "personalidad": v.ajustarWeebo(modo: d["modo"] as? String ?? "auto", nivel: (d["nivel"] as? NSNumber)?.intValue ?? 1)
         // Tarjeta de la llamada (#446 T2): lo que Juan toca en la tarjeta de la roca del inicio (alma/inicio.html)

@@ -3,7 +3,7 @@ import UIKit
 
 /// Alma maneja el anillo QRing (Juan, 16-nov-2026, rebanada 2 del anillo): las herramientas de cliente de la voz
 /// (anillo_estado, anillo_medidas, anillo_medir_ahora, anillo_ajustes, anillo_buscar; las define el Hub en anillo.js),
-/// la pantalla Dispositivos y la Lectura del anillo que va al Hub (action anilloResumen, como mucho cada 10 min).
+/// la pantalla Wearables y la Lectura del anillo que va al Hub (action anilloResumen, como mucho cada 10 min).
 /// · Escucha todo lo que manda el anillo (Anillo.swift → .almaAnillo) y guarda lo último con su hora (AnilloDatos.Memoria).
 /// · Si el anillo no está conectado lo dice claro: lo que da es lo último leído, con su hora. Nunca inventa.
 /// · Lo que se sabe leer está en AnilloDatos.swift (lógica pura, Pruebas/AnilloDatos).
@@ -16,7 +16,7 @@ final class AnilloAlma: ObservableObject {
     @Published private(set) var memoria = AnilloDatos.Memoria()
     @Published private(set) var conectado = false
     @Published private(set) var midiendo: AnilloDatos.Medida?
-    /// Lo último que pasó (para la pantalla Dispositivos): «Midiendo…», «72 lpm», «El anillo parpadea».
+    /// Lo último que pasó (para la pantalla Wearables): «Midiendo…», «72 lpm», «El anillo parpadea».
     @Published var aviso = ""
 
     private let claveMemoria = "anillo_memoria", claveSubida = "anillo_subida"
@@ -115,7 +115,7 @@ final class AnilloAlma: ObservableObject {
         }
     }
 
-    /// Lee hoy (pasos y ritmo) y la batería. La usan la conexión y la pantalla Dispositivos.
+    /// Lee hoy (pasos y ritmo) y la batería. La usan la conexión y la pantalla Wearables.
     func sincronizar() {
         guard Anillo.shared.listo, !sincronizando, medicion == nil else { return }
         sincronizando = true
@@ -162,7 +162,7 @@ final class AnilloAlma: ObservableObject {
     }
 
     private func sinConexion() -> [String: Any] {
-        if !Anillo.hayGuardado { return ["conectado": false, "nota": "No hay un anillo conectado a la app. Dile que lo conecte en Ajustes → Dispositivos."] }
+        if !Anillo.hayGuardado { return ["conectado": false, "nota": "No hay un anillo conectado a la app. Dile que lo conecte desde Health → Anillo; después lo ve en Ajustes → Wearables."] }
         Anillo.shared.buscar()   // que intente reconectarse para la próxima
         var r: [String: Any] = ["conectado": false, "nota": "El anillo no está conectado ahora (lejos, sin batería o apagado). Dilo claro. Lo de lo_ultimo es lo último que se leyó, con su hora; no lo des como de ahora."]
         let l = loLeido(); if !l.isEmpty { r["lo_ultimo"] = l }
@@ -170,7 +170,7 @@ final class AnilloAlma: ObservableObject {
     }
 
     private func estadoHerramienta(_ p: [String: Any], _ contestar: @escaping Contestar) {
-        if AnilloDatos.booleano(p["mostrar"]) == true { NotificationCenter.default.post(name: .abrirDispositivos, object: nil) }
+        if AnilloDatos.booleano(p["mostrar"]) == true { NotificationCenter.default.post(name: .abrirWearables, object: nil) }
         guard Anillo.shared.listo else { return contestar(json(sinConexion()), false) }
         pedir("bateria", segundos: 4, hasta: { if case .bateria = $0 { return true }; return false }) { [weak self] l in
             guard let self else { return }
@@ -178,7 +178,7 @@ final class AnilloAlma: ObservableObject {
             if case .bateria(let n, let c)? = l { r["bateria"] = "\(n) %"; r["cargando"] = c } else { r["bateria"] = "no respondió; lo último: " + ((self.loLeido()["bateria"] as? String) ?? "sin dato") }
             if let f = self.memoria.firmware, !f.isEmpty { r["firmware"] = f }
             if let s = self.memoria.sync { r["ultima_sincronizacion"] = AnilloDatos.hace(s, ahora: self.ahora) ?? "" }
-            if AnilloDatos.booleano(p["mostrar"]) == true { r["pantalla"] = "Abrí la pantalla Dispositivos." }
+            if AnilloDatos.booleano(p["mostrar"]) == true { r["pantalla"] = "Abrí la pantalla Wearables." }
             contestar(self.json(r), false)
         }
     }
@@ -240,7 +240,7 @@ final class AnilloAlma: ObservableObject {
     }
     private static func esAjustes(_ l: L) -> Bool { if case .ritmoAjustes = l { return true }; return false }
 
-    // MARK: - Acciones (voz y pantalla Dispositivos)
+    // MARK: - Acciones (voz y pantalla Wearables)
 
     func buscar() { Anillo.shared.comando("buscarAnillo", [:]); aviso = "El anillo está parpadeando." }
 
@@ -309,6 +309,7 @@ final class AnilloAlma: ObservableObject {
 }
 
 extension Notification.Name {
-    /// Ajustes → Dispositivos, o Alma con anillo_estado (mostrar: true): abre la pantalla Dispositivos (Dispositivos.swift).
-    static let abrirDispositivos = Notification.Name("alma.dispositivos.abrir")
+    /// Ajustes → Wearables, o Alma con anillo_estado (mostrar: true): abre la pantalla Wearables (Wearables.swift). El objeto,
+    /// si viene, es el wearable que se abre directo («anillo», «lentes», «agregar» o el id de unos audífonos).
+    static let abrirWearables = Notification.Name("alma.wearables.abrir")
 }

@@ -13,13 +13,21 @@ struct ContentView: View {
     @State private var salud = false
     /// Diagnóstico del anillo (Bluetooth): Ajustes → Alma con el anillo (DiagnosticoAnillo.swift).
     @State private var diagAnillo = false
-    @State private var dispositivos = false
+    /// Wearables (Wearables.swift): a pantalla completa; `wearableInicial` abre uno directo («anillo», «lentes», «agregar»).
+    @State private var wearables = false
+    @State private var wearableInicial: String?
     /// Guía de camino (GuiaCamino.swift): el mapa sube cuando la guía empieza con la pantalla a la vista.
     @State private var mapaCamino = false
     /// Ajustes → «Tarjetas de clubes» (TarjetasClub.swift).
     @State private var tarjetasClub = false
+    /// Ajustes → Voz y modos → «Voces locales» (VocesLocalesVista.swift).
+    @State private var vocesLocales = false
+    /// Modo Creator (Creator.swift, Hub #770): a pantalla completa cuando Claudio cambia el diseño; la llamada sigue abajo.
+    @State private var creator = false
     @ObservedObject private var voz = VozNativa.shared
     @ObservedObject private var mejora = MejoraCampo.shared
+    /// Modo guiado: la tarjeta de datos para copiar (GuiaNavegador.swift); sigue aunque la llamada termine.
+    @ObservedObject private var tarjeta = TarjetaDatos.shared
     /// La roca de Alma del navegador: la misma de las web apps, en una capa encima de la página.
     @StateObject private var roca = RocaNavegador()
     @State private var llamadaOculta = false
@@ -66,20 +74,30 @@ struct ContentView: View {
             }
     }
 
-    /// Las hojas que suben sobre la pantalla (anillo, dispositivos, Guía de camino, tarjetas de clubes), aparte del body
+    /// Las hojas que suben sobre la pantalla (anillo, Wearables, Guía de camino, tarjetas de clubes), aparte del body
     /// para que el compilador no se tarde de más.
     private var conHojas: some View {
         conRoca
             .background { Color.clear.sheet(isPresented: $diagAnillo) { DiagnosticoAnilloVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirDiagnosticoAnillo)) { _ in diagAnillo = true }
-            // Dispositivos (el anillo y los lentes): desde Ajustes o cuando Alma la abre (anillo_estado con mostrar); la llamada se baja.
-            .background { Color.clear.sheet(isPresented: $dispositivos) { DispositivosVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
-            .onReceive(NotificationCenter.default.publisher(for: .abrirDispositivos)) { _ in llamadaOculta = true; dispositivos = true }
+            // Wearables (el anillo, los lentes y los audífonos): desde Ajustes o cuando Alma la abre (anillo_estado con mostrar);
+            // a pantalla completa en iPhone y iPad (nada de hojas chicas); la llamada se baja.
+            .background { Color.clear.fullScreenCover(isPresented: $wearables) { WearablesVista(inicial: wearableInicial) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirWearables)) { n in
+                llamadaOculta = true; wearableInicial = n.object as? String; wearables = true
+            }
             // Guía de camino: el mapa con el camino y el próximo paso; la llamada se baja (sigue en la roca).
             .background { Color.clear.sheet(isPresented: $mapaCamino) { MapaCaminoVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirGuiaCamino)) { _ in llamadaOculta = true; mapaCamino = true }
             .background { Color.clear.sheet(isPresented: $tarjetasClub) { TarjetasClubVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirTarjetasClub)) { _ in llamadaOculta = true; tarjetasClub = true }
+            .background { Color.clear.sheet(isPresented: $vocesLocales) { VocesLocalesVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirVocesLocales)) { _ in vocesLocales = true }
+            .background { Color.clear.fullScreenCover(isPresented: $creator) { CreatorVista() } }
+            .onReceive(NotificationCenter.default.publisher(for: .abrirCreator)) { _ in
+                guard !CreatorReglas.esCreator(nav.web.url) else { llamadaOculta = true; return }   // ya lo ve en el navegador
+                llamadaOculta = true; creator = true
+            }
     }
 
     /// La roca del navegador: se aparta de los cuadros de texto, brilla mientras escucha y cuenta los toques.
@@ -92,6 +110,8 @@ struct ContentView: View {
             .onChange(of: mejora.estado) { _, _ in brilloRoca() }
             .onChange(of: voz.estado) { _, _ in brilloRoca() }   // la roca brilla durante la llamada de los tres toques
             .onChange(of: voz.mostrado) { _, m in if let m { ponerEnChat(m) } }
+            // Pausa de privacidad: Alma sabe en la llamada que ya no ve (y cuándo vuelve a ver). Nunca va lo de la pantalla.
+            .onChange(of: nav.privada) { _, m in voz.avisarPrivacidad(m) }
             .onAppear {
                 roca.web.isHidden = nav.esSpacio
                 roca.alToques = { n in tocaron(n) }
@@ -204,6 +224,18 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .transition(.opacity)
                 }
+                // Pausa de privacidad («Te toca a ti»): arriba, debajo del ✕. La tarjeta de datos para copiar: abajo, encima de
+                // la roca (senalar deja lo que se marca al centro, así no lo tapa).
+                if !nav.enInicio, let m = nav.privada {
+                    AvisoTeToca(motivo: m) { nav.listoPrivada() }
+                        .padding(.top, 52)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+                if !nav.enInicio && !tarjeta.datos.isEmpty {
+                    TarjetaDatosVista()
+                        .padding(.bottom, conPestanita ? 150 : 110)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                }
                 if conPestanita {
                     Pestanita { nav.mostrarBarra() }
                         .offset(x: pestanitaCorrida ? -84 : 0)
@@ -214,6 +246,7 @@ struct ContentView: View {
                 Color.white.opacity(destello ? 0.55 : 0).allowsHitTesting(false).ignoresSafeArea()
             }
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: nav.esSpacio)
+            .animation(.spring(response: 0.38, dampingFraction: 0.86), value: nav.privada)
             if !limpio && !nav.barraOculta { BarraDireccion().transition(.move(edge: .bottom).combined(with: .opacity)) }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: limpio)
@@ -248,14 +281,14 @@ extension ContentView {
     /// tiene cómo llamar (nunca se abrió el inicio con sesión), se abre el chat con la captura, como antes.
     func capturar() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        let titulo = nav.titulo, direccion = nav.direccion
-        nav.captura { du in
+        let titulo = nav.titulo, direccion = nav.direccion, privada = nav.privada != nil
+        nav.captura { du in   // con la pausa de privacidad no hay captura (du = nil) y Alma lo sabe por la ficha
             DispatchQueue.main.async {
                 withAnimation(.easeOut(duration: 0.08)) { destello = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { withAnimation(.easeOut(duration: 0.35)) { destello = false } }
                 if voz.puedeHablar {
                     llamadaOculta = true
-                    voz.hablarSobrePantalla(captura: du, titulo: titulo, direccion: direccion)
+                    voz.hablarSobrePantalla(captura: du, titulo: titulo, direccion: direccion, privada: privada)
                 } else {
                     captura = du
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { almaAbierta = true }

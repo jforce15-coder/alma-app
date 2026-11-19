@@ -8,17 +8,26 @@ extension Notification.Name {
 
 /// Manos de Alma (navegador), #396 T3: durante la llamada, Alma maneja el navegador de la app con herramientas de cliente
 /// (VozNativa.herramientaCliente): leer_pagina, senalar, tocar, escribir, bajar y abrir. Idea de Atticus («Draw on screen»
-/// y el trabajo web en su propia ventana): se lee la página como una lista de elementos con número (data-alma-id), se
+/// y el trabajo web en su propia ventana): se lee la página como una lista de elementos con número (que vive en el mundo de la app, no en la página), se
 /// marca dónde tocar con un círculo durazno, paso a paso, y se actúa dentro del navegador de Alma, nunca en otra app.
 /// · Lo que compra, paga, envía, borra o confirma no se toca: vuelve { necesita_permiso, que } y Alma le pregunta a Juan.
 ///   El sí vale solo para ese elemento, en esa página y por 2 minutos (la segunda llamada trae confirmado: true).
 /// · Contraseñas y tarjetas: nunca se escriben; las escribe Juan.
 /// · Después de actuar se dice qué cambió (página, título, aviso) o «no pude confirmar el resultado».
-/// El JS corre en su propio mundo (WKContentWorld.defaultClient): la página no lo ve ni lo puede cambiar.
+/// El JS corre en su propio mundo (WKContentWorld.defaultClient): la página no lo ve ni lo puede cambiar. Los números de
+/// los elementos viven en ese mundo (no en la página): un sitio no ve marcas de Alma en su HTML.
+/// Modos (Hub #773; reglas puras en NavegadorReglas.swift):
+/// · Guiado: senalar un paso a la vez y mostrar_dato (la tarjeta de datos para copiar, que se queda aunque se cuelgue).
+/// · Control: tocar, escribir y bajar, una acción a la vez, con una pausa humana antes de cada una y un tope por sitio.
+/// · Pausa de privacidad: con una contraseña, un código, una tarjeta o un captcha a la vista, nada lee ni actúa; responde
+///   te_toca y Alma le dice a Juan «te toca a ti».
 final class ManosAlma {
     static let shared = ManosAlma()
     weak var nav: Navegador?
-    static let herramientas: Set<String> = ["leer_pagina", "senalar", "tocar", "escribir", "bajar", "abrir"]
+    static let herramientas: Set<String> = ["leer_pagina", "senalar", "tocar", "escribir", "bajar", "abrir", "mostrar_dato"]
+    /// Modo control: una acción a la vez y un tope por sitio (NavegadorReglas.Tope), para que ninguna página vea una ráfaga.
+    private var ocupada = false
+    private var tope = NavegadorReglas.Tope()
     /// El permiso que Alma pidió (necesita_permiso): vale para ese elemento, en esa página, por 2 minutos.
     private var permiso: (id: String, url: String, hasta: Date)?
 
@@ -27,8 +36,17 @@ final class ManosAlma {
         guard let nav, UIApplication.shared.applicationState == .active else { return "" }
         if nav.enInicio { return "NAVEGADOR DE ALMA: está en el inicio, sin página abierta. Si Juan te pide abrir o buscar algo en una página, usa abrir." }
         let donde = nav.titulo.isEmpty ? nav.direccion : "«" + nav.titulo + "» (" + nav.direccion + ")"
-        return "NAVEGADOR DE ALMA: Juan tiene abierta " + donde + ". Tus manos (leer_pagina, senalar, tocar, escribir, bajar, abrir) trabajan ahí."
+        let ahora: String = nav.privada.map { " AHORA: " + $0.paraAlma } ?? ""
+        let manos = "NAVEGADOR DE ALMA: Juan tiene abierta " + donde + ". Tus manos (leer_pagina, senalar, tocar, escribir, bajar, abrir, mostrar_dato) trabajan ahí. "
+        return manos + ManosAlma.modos + ahora
     }
+
+    /// Los modos del navegador, para la ficha (solo cuando hay navegador; no gasta el prompt fijo de la voz).
+    static let modos: String = "MODOS: GUIADO si Juan pregunta cómo hacer algo o está perdido: senalar un paso a la vez y, si tiene que poner un dato "
+        + "(un número de reserva, un correo, una dirección), mostrar_dato para que lo copie y pegue; la tarjeta y la marca se quedan aunque la llamada termine. "
+        + "CONTROL si te pide hacerlo tú: tocar, escribir y bajar, una cosa a la vez, y narra en corto. "
+        + "Si una herramienta responde te_toca (contraseña, código, tarjeta o «soy humano»), tú no ves esa pantalla: dile «te toca a ti» y espera su «listo». "
+        + "Si responde pausa_sitio, la página no quiere prisa: dile que vas despacio para que no lo bloqueen."
 
     /// Corre una herramienta y siempre contesta (texto JSON, ¿es error?): Alma nunca se queda esperando.
     func correr(_ nombre: String, _ p: [String: Any], _ fin: @escaping (String, Bool) -> Void) {
@@ -37,14 +55,50 @@ final class ManosAlma {
         }
         guard let nav else { fin(ManosAlma.json(["error": "El navegador de Alma no está listo."]), true); return }
         NotificationCenter.default.post(name: .manosAlma, object: nil)
+        if nombre == "mostrar_dato" { mostrarDato(p, fin); return }
+        // Pausa de privacidad: con una contraseña, un código, una tarjeta o un captcha a la vista, nada lee ni actúa.
+        if let m = nav.privada { fin(ManosAlma.teToca(m), false); return }
         if nombre == "abrir" { abrir(ManosAlma.texto(p["url"]), fin); return }
         guard !nav.enInicio else {
             fin(ManosAlma.json(["sin_pagina": true, "motivo": "El navegador de Alma está en el inicio, sin página abierta. Usa abrir con la dirección o con lo que hay que buscar."]), false); return
         }
+        if NavegadorReglas.actuan.contains(nombre) { conRitmo(nombre, p, fin); return }
+        hacer(nombre, p, fin)
+    }
+
+    /// Modo control: una acción a la vez, el tope por sitio y una pausa al azar antes de actuar (como una persona).
+    /// Las páginas de Spacio AM no tienen tope.
+    private func conRitmo(_ nombre: String, _ p: [String: Any], _ fin: @escaping (String, Bool) -> Void) {
+        guard !ocupada else {
+            fin(ManosAlma.json(["espera": true, "instruccion": "Todavía estoy terminando lo anterior en la página. Espera un momento y vuelve a intentar."]), false); return
+        }
+        let host = nav?.web.url?.host?.lowercased() ?? ""
+        if !(host == "spacioam.com" || host.hasSuffix(".spacioam.com")), let falta = tope.pedir(host, ahora: Date()) {
+            let s = Int(falta.rounded(.up))
+            fin(ManosAlma.json(["pausa_sitio": true, "segundos": s,
+                                "instruccion": "Voy despacio en esta página para que no bloqueen a Juan (muchas acciones seguidas). Díselo en una frase y vuelve a intentar en \(s) segundos."]), false)
+            return
+        }
+        ocupada = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + NavegadorReglas.pausa(nombre, azar: Double.random(in: 0...1))) { [weak self] in
+            guard let self else { return }
+            // Durante la pausa pudo aparecer una contraseña o un captcha.
+            if let m = self.nav?.privada { self.ocupada = false; fin(ManosAlma.teToca(m), false); return }
+            self.hacer(nombre, p) { [weak self] r, e in self?.ocupada = false; fin(r, e) }
+        }
+    }
+
+    private func hacer(_ nombre: String, _ p: [String: Any], _ fin0: @escaping (String, Bool) -> Void) {
+        // Si el JS ve una contraseña, un código o un captcha que la app aún no sabía, responde te_toca: se completa aquí.
+        let fin: (String, Bool) -> Void = { r, e in
+            if r.contains("\"te_toca\""), let d = r.data(using: .utf8), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+               let m = NavegadorReglas.Motivo(rawValue: o["motivo"] as? String ?? "") { fin0(ManosAlma.teToca(m), false); return }
+            fin0(r, e)
+        }
         let id = ManosAlma.texto(p["id"])
         switch nombre {
         case "leer_pagina":
-            js("leer", [:]) { r in fin(r.map(ManosAlma.json) ?? ManosAlma.sinRespuesta, r == nil) }
+            js("leer", ["para": ManosAlma.texto(p["para"])]) { r in fin(r.map(ManosAlma.json) ?? ManosAlma.sinRespuesta, r == nil) }
         case "senalar":
             js("senalar", ["id": id, "texto": ManosAlma.texto(p["texto"])]) { r in fin(r.map(ManosAlma.json) ?? ManosAlma.sinRespuesta, r == nil || r?["error"] != nil) }
         case "escribir":
@@ -62,6 +116,22 @@ final class ManosAlma {
         default:
             fin(ManosAlma.json(["error": "Esta herramienta no existe en la app."]), true)
         }
+    }
+
+    /// Te toca a ti: la respuesta de la pausa de privacidad (sin nada de la pantalla).
+    static func teToca(_ m: NavegadorReglas.Motivo) -> String {
+        json(["te_toca": true, "motivo": m.rawValue, "instruccion": m.paraAlma])
+    }
+
+    /// Modo guiado: el dato para copiar y pegar va a la tarjeta de datos, encima del navegador (GuiaNavegador.swift). Se queda
+    /// aunque la llamada termine; Juan la cierra. Nunca contraseñas, códigos ni tarjetas.
+    private func mostrarDato(_ p: [String: Any], _ fin: @escaping (String, Bool) -> Void) {
+        let etiqueta = ManosAlma.texto(p["etiqueta"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let valor = ManosAlma.texto(p["valor"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if let no = TarjetaDatos.shared.mostrar(etiqueta: etiqueta.isEmpty ? "Dato" : etiqueta, valor: valor) {
+            fin(ManosAlma.json(["rechazado": true, "motivo": no]), false); return
+        }
+        fin(ManosAlma.json(["ok": true, "que": "Puse «" + (etiqueta.isEmpty ? "Dato" : etiqueta) + "» en la tarjeta para copiar: Juan la toca y se copia. Se queda aunque cuelgues."]), false)
     }
 
     private func tocar(_ id: String, confirmado: Bool, _ fin: @escaping (String, Bool) -> Void) {
@@ -137,8 +207,9 @@ final class ManosAlma {
 
     /// Corre el JS de las manos en la página (su propio mundo) y devuelve lo que contestó.
     private func js(_ cmd: String, _ args: [String: Any], _ fin: @escaping ([String: Any]?) -> Void) {
+        var args = args; args["libre"] = nav?.privadaLiberada ?? false   // «Listo» en «Te toca a ti» (solo esa página)
         guard let web = nav?.web, let d = try? JSONSerialization.data(withJSONObject: args), let a = String(data: d, encoding: .utf8) else { fin(nil); return }
-        let codigo = ManosAlma.script + "\n;window.__almaManos('" + cmd + "', " + a + ");"
+        let codigo = Navegador.jsPrivada + "\n" + ManosAlma.script + "\n;window.__almaManos('" + cmd + "', " + a + ");"
         web.evaluateJavaScript(codigo, in: nil, in: .defaultClient) { r in
             var o: [String: Any]?
             if case .success(let v) = r, let s = v as? String, let d = s.data(using: .utf8) {
@@ -173,7 +244,7 @@ final class ManosAlma {
   /* Lo que compra, paga, envía, borra o confirma: nunca se toca sin el sí de Juan. */
   var RIESGO = /\b(comprar|compra|compralo|cómpralo|pagar|pago|paga|enviar|envíar|envía|envialo|envíalo|mandar|send|submit|checkout|check out|order|ordenar|delete|borrar|eliminar|quitar cuenta|confirmar|confirm|buy|purchase|pay|payment|transferir|transfer|donar|donate|publicar|publish|reservar|book now|suscribirme|subscribe|place order|finalizar compra)\b/i;
   var RIESGO_URL = /(checkout|\/pay\b|\/pago|payment|purchase|\/delete|\/remove|\/borrar|\/eliminar|unsubscribe|\/order)/i;
-  var SENSIBLE = /(card|tarjeta|cvv|cvc|csc|cc-?num|cc-?exp|security.?code|c[oó]digo de seguridad|contraseña|password|passwd|\bclave\b|\bpin\b|iban|routing)/i;
+  var SENSIBLE = /(card|tarjeta|cvv|cvc|csc|cc-?num|cc-?exp|security.?code|c[oó]digo de seguridad|contraseña|password|passwd|\bclave\b|\bpin\b|iban|routing|one.?time|\botp\b|2fa|verification.?code|c[oó]digo de verificaci[oó]n|passcode)/i;
   var n = 0;
   var reducido = function () { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } };
   var limpio = function (s, max) { s = String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); return max && s.length > max ? s.slice(0, max - 1) + '…' : s; };
@@ -226,6 +297,7 @@ final class ManosAlma {
     if ((e.type || '').toLowerCase() === 'password') return 'es una contraseña';
     var ac = (e.getAttribute('autocomplete') || '').toLowerCase();
     if (/cc-|current-password|new-password/.test(ac)) return 'es un dato de tarjeta o una contraseña';
+    if (/one-time-code/.test(ac)) return 'es un código de verificación';
     var pista = [e.name, e.id, e.placeholder, e.getAttribute('aria-label'), e.labels && e.labels[0] && sinControl(e.labels[0], e)].join(' ');
     if (SENSIBLE.test(pista)) return 'parece un dato de tarjeta o una contraseña';
     return '';
@@ -253,8 +325,22 @@ final class ManosAlma {
     }
     return '';
   }
-  function marcar(e) { var id = e.getAttribute('data-alma-id'); if (!id) { id = String(++n); e.setAttribute('data-alma-id', id); } return id; }
-  function buscar(id) { return document.querySelector('[data-alma-id="' + String(id).replace(/[^0-9]/g, '') + '"]'); }
+  /* Los números viven aquí (el mundo de la app), no en el HTML: la página no ve marcas de Alma. */
+  var ids = new Map(), deEl = new WeakMap();
+  function marcar(e) { var id = deEl.get(e); if (!id) { id = String(++n); deEl.set(e, id); ids.set(id, e); } return id; }
+  function buscar(id) { var e = ids.get(String(id).replace(/[^0-9]/g, '')); return e && e.isConnected ? e : null; }
+  function olvidar() { ids.forEach(function (e, id) { if (!e.isConnected) ids.delete(id); }); }
+  /* Pausa de privacidad: el detector (Navegador.jsPrivada) corre en este mismo mundo. */
+  /* Con «Listo» (libre) la página se puede leer aunque el campo siga ahí, salvo que tenga el cursor o sea un captcha. */
+  var libre = false;
+  function privada() {
+    try {
+      var p = window.__almaPrivada && window.__almaPrivada();
+      if (!p || !p.motivo) return null;
+      if (libre && p.motivo !== 'captcha' && !p.enfocado) return null;
+      return { te_toca: true, motivo: p.motivo };
+    } catch (x) { return null; }
+  }
   var SEL = 'a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=switch],[role=tab],[role=menuitem],[role=option],[role=radio],[role=textbox],[role=searchbox],[role=combobox],[contenteditable=""],[contenteditable=true],[onclick]';
 
   function estado() {
@@ -267,9 +353,14 @@ final class ManosAlma {
     return { url: location.href, titulo: document.title, firma: b.length + ':' + document.getElementsByTagName('*').length, aviso: limpio(avisos.join(' · '), 300) };
   }
 
-  function leer() {
-    limpiarSenal();
-    var dentro = [], fuera = [];
+  /* Sin acentos y en minúsculas, para buscar lo que Alma pide (para). */
+  function llano(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+  function leer(para) {
+    var pv = privada(); if (pv) return pv;
+    limpiarSenal(); olvidar();
+    var palabras = llano(para).split(/[^a-z0-9ñ]+/).filter(function (w) { return w.length > 2; });
+    var importa = function (l) { var x = llano(l); for (var i = 0; i < palabras.length; i++) if (x.indexOf(palabras[i]) >= 0) return true; return false; };
+    var dentro = [], fuera = [], vistos = {};
     document.querySelectorAll(SEL).forEach(function (e) {
       if (e.closest('#__alma_senal') || e.disabled || !visible(e)) return;
       var r = e.getBoundingClientRect(), R = rol(e), txt = etiqueta(e);
@@ -281,17 +372,25 @@ final class ManosAlma {
       else if (R === 'campo' && e.tagName !== 'A' && !sensible(e)) { var v = limpio(e.isContentEditable ? e.innerText : e.value, 40); if (v) l += ' = «' + v + '»'; }
       else if (R === 'campo' && sensible(e)) l += ' (dato sensible: lo escribe Juan)';
       if (riesgo(e)) l += ' ⚠';
-      if (enPantalla(r)) dentro.push({ y: r.top, l: l }); else fuera.push({ y: r.top, l: l + (r.top < 0 ? ' (más arriba)' : ' (más abajo)') });
+      var clave = R + '|' + txt; if (vistos[clave] > 2) return; vistos[clave] = (vistos[clave] || 0) + 1;   // «Ver más» ×40: solo 3
+      var p = palabras.length && importa(txt) ? -1e6 : 0;   // lo que Alma busca va primero
+      if (enPantalla(r)) dentro.push({ y: r.top + p, l: l }); else fuera.push({ y: p ? p : Math.abs(r.top), l: l + (r.top < 0 ? ' (más arriba)' : ' (más abajo)') });
     });
     dentro.sort(function (a, b) { return a.y - b.y; });
-    fuera.sort(function (a, b) { return Math.abs(a.y) - Math.abs(b.y); });
-    var lista = dentro.slice(0, 60).concat(fuera.slice(0, Math.max(10, 80 - Math.min(60, dentro.length)))).map(function (x) { return x.l; });
+    fuera.sort(function (a, b) { return a.y - b.y; });
+    /* Barato (lección de agent-browser): la lista numerada y poco texto. Con «para», solo las líneas que importan. */
+    var lista = dentro.slice(0, 50).concat(fuera.slice(0, Math.max(10, 70 - Math.min(50, dentro.length)))).map(function (x) { return x.l; });
     var raiz = document.querySelector('main,[role=main],article') || document.body;
     var texto = raiz ? String(raiz.innerText || '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim() : '';
+    if (palabras.length) {
+      var hay = texto.split('\n').filter(importa);
+      if (hay.length) texto = hay.join('\n');
+    }
+    var max = palabras.length ? 1500 : 2500;
     var sc = document.scrollingElement || document.documentElement;
     var pos = sc.scrollHeight > innerHeight ? Math.round(100 * sc.scrollTop / Math.max(1, sc.scrollHeight - innerHeight)) : 100;
     return { titulo: document.title, url: location.href, elementos: lista, total: dentro.length + fuera.length,
-      texto: texto.length > 4000 ? texto.slice(0, 3999) + '…' : texto, bajado: pos + '%', nota: '⚠ = compra, paga, envía, borra o confirma: pide permiso antes de tocarlo.' };
+      texto: texto.length > max ? texto.slice(0, max - 1) + '…' : texto, bajado: pos + '%', nota: '⚠ = compra, paga, envía, borra o confirma: pide permiso antes de tocarlo.' };
   }
 
   /* ── El señalador: un círculo durazno con su etiqueta y una flechita, encima de todo, sin tapar los toques ── */
@@ -299,6 +398,7 @@ final class ManosAlma {
   function limpiarSenal() { cancelAnimationFrame(reloj); if (senal) { senal.host.remove(); senal = null; } }
   document.addEventListener('pointerdown', function (ev) { if (senal) limpiarSenal(); }, true);
   function senalar(id, texto) {
+    var pv = privada(); if (pv) return pv;
     limpiarSenal();
     var e = buscar(id); if (!e) return { error: 'No encuentro ese elemento. Vuelve a leer la página (leer_pagina).' };
     var quieto = reducido();
@@ -337,6 +437,7 @@ final class ManosAlma {
   }
 
   function tocar(id, confirmado) {
+    var pv = privada(); if (pv) return pv;
     var e = buscar(id); if (!e) return { error: 'No encuentro ese elemento. Vuelve a leer la página (leer_pagina).' };
     var r = riesgo(e);
     if (r && !confirmado) return { necesita_permiso: true, que: r };
@@ -359,6 +460,7 @@ final class ManosAlma {
   }
 
   function escribir(id, texto, enter) {
+    var pv = privada(); if (pv) return pv;
     var e = buscar(id); if (!e) return { error: 'No encuentro ese elemento. Vuelve a leer la página (leer_pagina).' };
     texto = String(texto == null ? '' : texto);
     var s = sensible(e);
@@ -427,8 +529,9 @@ final class ManosAlma {
 
   window.__almaManos = function (cmd, a) {
     a = a || {};
+    libre = a.libre === true;
     try {
-      if (cmd === 'leer') return res(leer());
+      if (cmd === 'leer') return res(leer(a.para));
       if (cmd === 'senalar') return res(senalar(a.id, a.texto));
       if (cmd === 'tocar') return res(tocar(a.id, a.confirmado === true));
       if (cmd === 'escribir') return res(escribir(a.id, a.texto, a.enter === true));

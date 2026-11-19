@@ -9,6 +9,21 @@ final class Companero {
     private var enviando = false
     private let dispositivo = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
 
+    /// Una sola llamada (UnaLlamada, ColaVivo.swift): lo que la página cuenta de este dispositivo. Se guarda el interruptor
+    /// porque el Modo calle o un aviso pueden abrir con la página cerrada.
+    private static let claveOn = "companero_on"
+    private let candado = NSLock()
+    private var otra = "", vista: Date?
+    func pagina(on: Bool, otra o: String) {
+        UserDefaults.standard.set(on, forKey: Companero.claveOn)
+        candado.lock(); otra = on ? String(o.prefix(30)) : ""; vista = Date(); candado.unlock()
+    }
+    /// nil = este dispositivo puede abrir la llamada; si no, por qué no (desde cualquier hilo).
+    func noDeja(porVoz: Bool) -> String? {
+        candado.lock(); let o = otra, v = vista; candado.unlock()
+        return UnaLlamada.motivo(companero: UserDefaults.standard.bool(forKey: Companero.claveOn), porVoz: porVoz, otra: o, visto: v, ahora: Date())
+    }
+
     func empezo(_ conv: String) { DispatchQueue.main.async { self.cola.empezo(conv); self.revisar() }; Retransmision.shared.empezo() }   // y la voz, por la red de cerca (Hub #727)
     func estado(_ e: String) { DispatchQueue.main.async { self.cola.cambiar(e); self.revisar() }; if e == "fin" { Retransmision.shared.termino() } }
     func sub(alma: Bool, _ t: String) { DispatchQueue.main.async { self.cola.sub(alma: alma, t); self.revisar() } }

@@ -99,6 +99,22 @@ targets:
         # Siri anuncia las notificaciones de comunicación (Hub #551, NotifArmar.swift): el intent de mensaje que dona la app.
         NSUserActivityTypes:
           - INSendMessageIntent
+        # Archivos para Alma (Hub, Juan 18-nov-2026): la app sale en «Compartir» y «Abrir en…» de un PDF, Word, Excel, CSV,
+        # texto, foto o audio; el archivo queda cargado en el chat del inicio (ArchivosEntrada.swift). iOS pasa una copia.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Archivo para Alma
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - com.adobe.pdf
+              - org.openxmlformats.wordprocessingml.document
+              - com.microsoft.word.doc
+              - org.openxmlformats.spreadsheetml.sheet
+              - com.microsoft.excel.xls
+              - public.comma-separated-values-text
+              - public.plain-text
+              - public.image
+              - public.audio
+        LSSupportsOpeningDocumentsInPlace: false
         # «Abrir en Alma»: alma://abrir?u=<enlace> (atajo de Compartir de iOS)
         CFBundleURLTypes:
           - CFBundleURLName: com.spacioam.alma

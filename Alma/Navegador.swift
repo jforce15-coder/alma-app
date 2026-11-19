@@ -38,6 +38,12 @@ final class Navegador: NSObject, ObservableObject {
     /// El cuadro de texto activo de la página (dónde está y qué dice): Alma se aparta de él y, con dos toques, lo mejora.
     struct Campo: Equatable { var rect: CGRect; var texto: String; var etiqueta: String; var clave: Bool }
     @Published var campo: Campo?
+    /// Pausa de privacidad (NavegadorReglas): hay una contraseña, un código, una tarjeta o un captcha a la vista. Mientras
+    /// dure, Alma no ve esta página (ni texto ni captura) y arriba sale «Te toca a ti» con «Listo».
+    @Published private(set) var privada: NavegadorReglas.Motivo?
+    /// Lo último que vio el detector (sin valores) y la página donde Juan tocó «Listo».
+    private var senales = NavegadorReglas.Senales()
+    private var liberada: String?
     /// La barra de dirección tiene el teclado (se escribe una dirección o una búsqueda).
     @Published var escribiendo = false {
         didSet { guard escribiendo != oldValue else { return }; if escribiendo { mostrarBarra(esconder: false) } else { esconderBarraLuego() } }
@@ -65,11 +71,16 @@ final class Navegador: NSObject, ObservableObject {
         web.configuration.userContentController.add(PuenteDebil(puente), name: Puente.nombre)
         web.configuration.userContentController.add(PuenteDebil(self), name: "almaCampo")
         web.configuration.userContentController.addUserScript(WKUserScript(source: Navegador.scriptCampo, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        // El detector de privacidad corre en el mundo de la app (la página no lo ve ni lo puede apagar) y solo dice qué hay
+        // a la vista, nunca un valor.
+        web.configuration.userContentController.add(PuenteDebil(self), contentWorld: .defaultClient, name: "almaPrivada")
+        web.configuration.userContentController.addUserScript(WKUserScript(source: Navegador.jsPrivada + "\n;window.__almaPrivadaVigilar && __almaPrivadaVigilar();",
+                                                                           injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: .defaultClient))
         web.scrollView.alwaysBounceVertical = true   // páginas más cortas que la pantalla también se pueden tirar
         tirar.tintColor = UIColor(red: 0xE9 / 255, green: 0x82 / 255, blue: 0x6A / 255, alpha: 1)
         tirar.addTarget(self, action: #selector(alTirar), for: .valueChanged)
         observaciones = [
-            web.observe(\.url, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.direccion = w.url?.absoluteString ?? ""; self?.campo = nil } },
+            web.observe(\.url, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.direccion = w.url?.absoluteString ?? ""; self?.campo = nil; self?.revisarPrivada() } },
             web.observe(\.title, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.titulo = w.title ?? "" } },
             web.observe(\.canGoBack, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.puedeAtras = w.canGoBack } },
             web.observe(\.canGoForward, options: [.new]) { [weak self] w, _ in DispatchQueue.main.async { self?.puedeAdelante = w.canGoForward } },
@@ -96,7 +107,11 @@ final class Navegador: NSObject, ObservableObject {
         if(t==='TEXTAREA') return !e.readOnly && !e.disabled; if(t!=='INPUT') return false;
         var ty=(e.type||'text').toLowerCase(); return ['text','search','email','url','tel','password','number'].indexOf(ty)>=0 && !e.readOnly && !e.disabled; }
       function val(e){ return e.isContentEditable ? e.innerText : e.value; }
-      function enviar(e,on){ try { var r=e.getBoundingClientRect(), clave=(e.type||'')==='password';
+      var PRIV=/(one.?time|otp|2fa|mfa|verification.?code|c[oó]digo de (verificaci|segur|acceso)|security.?code|cvv|cvc|csc|card.?num|cc-?num|tarjeta|password|contrase|passcode|\\bpin\\b)/i;
+      function privado(e){ if((e.type||'')==='password') return true; var ac=(e.getAttribute('autocomplete')||'').toLowerCase();
+        if(/current-password|new-password|one-time-code|cc-/.test(ac)) return true;
+        return PRIV.test([e.name,e.id,e.placeholder,e.getAttribute('aria-label')].join(' ')); }
+      function enviar(e,on){ try { var r=e.getBoundingClientRect(), clave=privado(e);
         webkit.messageHandlers.almaCampo.postMessage({ on:on, x:r.left, y:r.top, w:r.width, h:r.height, clave:clave,
           texto: on && !clave ? String(val(e)||'').slice(0,6000) : '',
           etiqueta: String(e.getAttribute('aria-label')||e.placeholder||e.name||'').slice(0,120) }); } catch(x){} }
@@ -142,8 +157,10 @@ final class Navegador: NSObject, ObservableObject {
         web.evaluateJavaScript("window.SANav && SANav.escena(null)")
     }
 
-    /// Captura de lo que se ve en el navegador, lista para Alma (JPEG chico en data URL).
+    /// Captura de lo que se ve en el navegador, lista para Alma (JPEG chico en data URL). Nunca durante la pausa de
+    /// privacidad: con una contraseña, un código, una tarjeta o un captcha a la vista no sale ninguna captura.
     func captura(_ fin: @escaping (String?) -> Void) {
+        guard privada == nil else { fin(nil); return }
         let c = WKSnapshotConfiguration()
         c.snapshotWidth = NSNumber(value: Double(min(web.bounds.width, 430)))
         web.takeSnapshot(with: c) { img, _ in
@@ -244,16 +261,125 @@ final class Navegador: NSObject, ObservableObject {
     }
 }
 
-// MARK: - El cuadro de texto activo
+// MARK: - El cuadro de texto activo y la pausa de privacidad
 
 extension Navegador: WKScriptMessageHandler {
     func userContentController(_ uc: WKUserContentController, didReceive m: WKScriptMessage) {
+        if m.name == "almaPrivada", let d = m.body as? [String: Any] {
+            let si = { (k: String) in (d[k] as? Bool) ?? ((d[k] as? NSNumber)?.boolValue ?? false) }
+            senales = NavegadorReglas.Senales(clave: si("clave"), codigo: si("codigo"), tarjeta: si("tarjeta"), captcha: si("captcha"), enfocado: si("enfocado"))
+            if senales.enfocado { liberada = nil }   // volvió al campo: otra vez es solo de Juan
+            revisarPrivada(); return
+        }
         guard m.name == "almaCampo", let d = m.body as? [String: Any] else { return }
         guard (d["on"] as? Bool) == true else { campo = nil; return }
         let n = { (k: String) in CGFloat((d[k] as? NSNumber)?.doubleValue ?? 0) }
         campo = Campo(rect: CGRect(x: n("x"), y: n("y"), width: n("w"), height: n("h")), texto: d["texto"] as? String ?? "",
                       etiqueta: d["etiqueta"] as? String ?? "", clave: (d["clave"] as? Bool) ?? false)
     }
+}
+
+extension Navegador {
+    /// «Listo» en el aviso «Te toca a ti»: Alma vuelve a ver esta página (un captcha a la vista no se salta).
+    /// Se suelta el campo (sin cursor ahí, el «Listo» vale aunque el campo siga a la vista).
+    func listoPrivada() {
+        liberada = direccion; senales.enfocado = false; revisarPrivada()
+        web.evaluateJavaScript("(function(){var e=document.activeElement;if(e&&e.blur)e.blur()})()", in: nil, in: .defaultClient) { _ in }
+    }
+    /// Juan tocó «Listo» en esta página (las manos pueden leerla aunque el campo, ya lleno, siga a la vista).
+    var privadaLiberada: Bool { liberada != nil && liberada == direccion }
+
+    /// Se recalcula con cada aviso del detector y al cambiar de página (el «Listo» vale solo para la página donde se tocó).
+    func revisarPrivada() {
+        if let l = liberada, l != direccion { liberada = nil }
+        let m = enInicio ? nil : NavegadorReglas.pausar(senales, liberada: liberada != nil)
+        if m != privada { privada = m }
+    }
+
+    /// El detector de privacidad (mundo de la app, WKContentWorld.defaultClient). Mira solo lo que está en pantalla o tiene
+    /// el cursor: un campo de contraseña, de código (one-time-code, OTP, 2FA), de tarjeta o un captcha («no soy un robot»,
+    /// reCAPTCHA, hCaptcha, Turnstile, Arkose, PerimeterX, DataDome). Nunca lee un valor. __almaPrivada() lo dice al momento
+    /// (lo usan las manos antes de leer o actuar) y __almaPrivadaVigilar() avisa a la app cada vez que cambia.
+    /// Probado en un navegador de verdad: Pruebas/Navegador/pagina.mjs.
+    static let jsPrivada = #"""
+(function(){
+  if (window.__almaPrivada) return;
+  var CODIGO = /(one.?time|\botp\b|2fa|mfa|verification.?code|verify.?code|c[oó]digo de verificaci[oó]n|c[oó]digo de acceso|c[oó]digo enviado|c[oó]digo sms|sms.?code|security.?code|totp|passcode|authenticator)/i;
+  var TARJETA = /(card.?number|cardnumber|cc-?num|cc-?csc|cc-?exp|\bcvv\b|\bcvc\b|\bcsc\b|n[uú]mero de (la )?tarjeta|c[oó]digo de seguridad|fecha de vencimiento)/i;
+  var CAPTCHA_SRC = /(recaptcha|hcaptcha|challenges\.cloudflare\.com|turnstile|arkoselabs|funcaptcha|captcha-delivery|px-cloud|px-captcha|geo\.captcha)/i;
+  var PAGO_SRC = /(js\.stripe\.com|stripe\.network|braintreegateway|adyen|checkoutshopper|secure\.checkout|paypal\.com\/.*(card|checkout)|mercadopago|recurly|chargify)/i;
+  var HUMANO = /(verify (that )?you are (a )?human|are you a robot|i'?m not a robot|not a robot|no soy un robot|verifica(r)? que (eres|sos) (un )?humano|confirma que (eres|sos) (un )?humano|demuestra que eres humano|press (and|&) hold|mant[eé]n presionado)/i;
+  function vis(e) {
+    var r = e.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return false;
+    var s = getComputedStyle(e); if (s.visibility === 'hidden' || s.display === 'none' || +s.opacity < 0.05) return false;
+    return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+  }
+  function pista(e) {
+    var l = ''; try { if (e.labels && e.labels[0]) l = e.labels[0].textContent; } catch (x) {}
+    return [e.name, e.id, e.placeholder, e.getAttribute('aria-label'), l].join(' ');
+  }
+  function tipo(e) {
+    var ty = (e.type || '').toLowerCase(), ac = (e.getAttribute('autocomplete') || '').toLowerCase();
+    if (ty === 'password' || /current-password|new-password/.test(ac)) return 'clave';
+    if (/one-time-code/.test(ac)) return 'codigo';
+    if (/cc-(number|csc|exp)/.test(ac)) return 'tarjeta';
+    if (ty === 'hidden' || ty === 'checkbox' || ty === 'radio' || ty === 'submit' || ty === 'button') return '';
+    var p = pista(e);
+    if (TARJETA.test(p)) return 'tarjeta';
+    if (CODIGO.test(p)) return 'codigo';
+    return '';
+  }
+  function estado() {
+    var o = { clave: false, codigo: false, tarjeta: false, captcha: false, enfocado: false };
+    var act = document.activeElement, cajitas = 0;
+    var campos = document.querySelectorAll('input,textarea');
+    for (var i = 0; i < campos.length; i++) {
+      var e = campos[i], t = tipo(e), foco = e === act;
+      if (!t && e.tagName === 'INPUT' && e.maxLength === 1 && vis(e)) cajitas++;   // el código en cajitas de una cifra
+      if (!t || !(foco || vis(e))) continue;
+      o[t] = true; if (foco) o.enfocado = true;
+    }
+    if (cajitas >= 4) o.codigo = true;
+    var marcos = document.querySelectorAll('iframe');
+    for (var j = 0; j < marcos.length; j++) {
+      var f = marcos[j], src = (f.getAttribute('src') || '') + ' ' + (f.getAttribute('title') || '');
+      if (!vis(f) || /size=invisible/.test(src) || f.closest('.grecaptcha-badge')) continue;   // el sello de reCAPTCHA invisible no es una prueba
+      if (CAPTCHA_SRC.test(src) || /captcha|challenge/i.test(f.getAttribute('title') || '')) o.captcha = true;
+      else if (PAGO_SRC.test(src)) o.tarjeta = true;
+    }
+    var cajas = document.querySelectorAll('.g-recaptcha,.h-captcha,.cf-turnstile,#px-captcha,#challenge-form,#challenge-stage,[data-sitekey]');
+    for (var k = 0; k < cajas.length; k++) if (vis(cajas[k]) && cajas[k].getAttribute('data-size') !== 'invisible' && !cajas[k].closest('.grecaptcha-badge')) o.captcha = true;
+    if (!o.captcha) {
+      var b = document.body ? String(document.body.innerText || '').slice(0, 3000) : '';
+      if (HUMANO.test(document.title + ' ' + b)) o.captcha = true;
+    }
+    return o;
+  }
+  window.__almaPrivada = function () {
+    var o = estado();
+    o.motivo = o.captcha ? 'captcha' : o.clave ? 'clave' : o.codigo ? 'codigo' : o.tarjeta ? 'tarjeta' : '';
+    return o;
+  };
+  window.__almaPrivadaVigilar = function () {
+    if (window.__almaPrivadaVigila) return; window.__almaPrivadaVigila = true;
+    var antes = '', reloj = 0;
+    function avisar() {
+      reloj = 0;
+      var o = estado(), firma = JSON.stringify(o);
+      if (firma === antes) return; antes = firma;
+      try { webkit.messageHandlers.almaPrivada.postMessage(o); } catch (x) {}
+    }
+    function luego() { if (!reloj) reloj = setTimeout(avisar, 250); }
+    document.addEventListener('focusin', luego, true);
+    document.addEventListener('focusout', luego, true);
+    addEventListener('scroll', luego, true);
+    addEventListener('resize', luego);
+    try { new MutationObserver(luego).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['type', 'style', 'class', 'hidden', 'src'] }); } catch (x) {}
+    setInterval(avisar, 2000);
+    avisar();
+  };
+})();
+"""#
 }
 
 // MARK: - Navegación

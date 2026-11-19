@@ -24,10 +24,32 @@ struct AlmaApp: App {
             ContentView()
                 .environmentObject(navegador)
                 // alma://abrir?u=<enlace> (atajo de Compartir de iOS) o alma://https://… · alma://calle?on=1|0 (Modo calle)
+                // Un archivo («Compartir» o «Abrir en Alma» desde Archivos, Mail…): queda cargado en el chat del inicio (ArchivosEntrada.swift)
                 .onOpenURL { u in
-                    if u.host?.lowercased() == "calle" { ModoCalle.shared.abrirEnlace(u) } else { navegador.abrir(desdeEnlace: u) }
+                    if u.isFileURL { AlmaApp.recibirArchivo(u, navegador) }
+                    else if u.host?.lowercased() == "calle" { ModoCalle.shared.abrirEnlace(u) } else { navegador.abrir(desdeEnlace: u) }
                 }
         }
+    }
+}
+
+extension AlmaApp {
+    /// Lee el archivo que iOS le pasó a la app (con permiso de acceso si viene de otra app) y lo deja cargado en el chat del
+    /// inicio, como soltarlo en la pantalla. Lo que no sirve (tipo, tamaño) se dice en el chat. La copia de iOS se borra.
+    static func recibirArchivo(_ u: URL, _ nav: Navegador) {
+        let acceso = u.startAccessingSecurityScopedResource()
+        defer { if acceso { u.stopAccessingSecurityScopedResource() } }
+        let nombre = u.lastPathComponent
+        let js: String
+        if let d = try? Data(contentsOf: u, options: .mappedIfSafe) {
+            switch ArchivosEntrada.js(nombre: nombre, datos: d) {
+            case .listo(let j): js = j
+            case .noSirve(let t): js = ArchivosEntrada.jsAviso(t)
+            }
+        } else { js = ArchivosEntrada.jsAviso("No pude leer «\(nombre)».") }
+        if u.path.contains("/Inbox/") { try? FileManager.default.removeItem(at: u) }   // la copia que iOS dejó en la app
+        NotificationCenter.default.post(name: .manosAlma, object: nil)   // si la pantalla de la llamada estaba encima, se baja
+        nav.alInicio(js)
     }
 }
 

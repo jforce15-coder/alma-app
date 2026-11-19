@@ -1,0 +1,9 @@
+{
+  "_como": "Catálogo de voces de Kokoro para Claudio local y Maricarmen (VozKokoroReglas.catalogo). La app lo lee de main cada 6 horas: una voz nueva se agrega aquí con un PR, sin otra versión de la app. Cada voz: id (letras, números, _ o -), nombre, url https a un .bin (510 × 256 float32) o .npy (<f4, 510 × 1 × 256), sha256 opcional, acento es-419 o es, genero hombre o mujer. Las de fábrica (em_alex, ef_dora, em_santa) ya vienen en la app; una con el mismo id las reemplaza. pronunciaciones: palabra → fonemas de Kokoro, para lo que no se lee como se escribe.",
+  "voces": [],
+  "pronunciaciones": {
+    "spacio": "spˈasjo",
+    "airbnb": "ˈeɾβiˌenβi",
+    "hospitable": "ospˈitaβol"
+  }
+}

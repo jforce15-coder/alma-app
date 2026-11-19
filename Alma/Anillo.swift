@@ -170,7 +170,7 @@ final class Anillo: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor s: CBService, error: Error?) {
         for ch in s.characteristics ?? [] {
             if ch.uuid == Anillo.escribir { canal = ch }
-            if ch.uuid == Anillo.versionFirmware { p.readValue(for: ch) }   // el firmware (Dispositivos, anillo_estado)
+            if ch.uuid == Anillo.versionFirmware { p.readValue(for: ch) }   // el firmware (Wearables, anillo_estado)
             if ch.properties.contains(.notify) || ch.properties.contains(.indicate) { p.setNotifyValue(true, for: ch) }
         }
         if s.uuid == Anillo.servicio, canal != nil {
