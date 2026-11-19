@@ -92,4 +92,29 @@ enum AudioCalle {
         let destapa = ahora.contains(.mezclar) && !ahora.contains(.bajarOtras)
         return tapaba && destapa && appActiva ? .soltarYCambiar : .cambiar
     }
+
+    // MARK: - Guardia: la llamada no abre el micrófono (Hub #907)
+
+    /// Las tres llamadas a iOS para abrir el micrófono de la llamada, en orden. El nombre va en los pasos (llegan al Hub):
+    /// así se sabe cuál falló.
+    enum PasoMicrofono: String { case categoria = "setCategory", activar = "setActive", motor = "prepararMotor" }
+
+    /// Abrir el micrófono falló con estas opciones: ¿con cuáles se reintenta una vez? Solo si bajaban la música (duckOthers o
+    /// pausar lo hablado): el segundo intento la mezcla (sigue sonando a su volumen; no se pausa). nil: no se reintenta.
+    static func reintento(_ o: Set<OpcionAudio>) -> Set<OpcionAudio>? {
+        guard o.contains(.bajarOtras) || o.contains(.pausarHablado) else { return nil }
+        var r = o
+        r.remove(.bajarOtras); r.remove(.pausarHablado); r.insert(.mezclar)
+        return r
+    }
+
+    /// El paso del primer intento que falló.
+    static func textoReintento(_ p: PasoMicrofono, codigo: Int) -> String {
+        "Falló \(p.rawValue) (\(codigo)) con la música bajando: reintento una vez sin bajarla y con la ruta de fábrica"
+    }
+
+    /// El error que ve Juan: también dice cuál de las tres llamadas falló.
+    static func textoFallo(_ p: PasoMicrofono, codigo: Int) -> String {
+        "No pude abrir el micrófono (\(p.rawValue), \(codigo))."
+    }
 }

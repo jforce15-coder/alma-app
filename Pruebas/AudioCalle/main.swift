@@ -59,5 +59,19 @@ revisa(!A.llamadaConAnillo(anilloListo: true, otraSuena: true), "con el anillo y
 revisa(A.opciones(.llamada, donde: .nada, baja: true, anillo: A.llamadaConAnillo(anilloListo: true, otraSuena: true)) == A.llamadaBajando, "esa llamada baja la música")
 revisa(!A.llamadaConAnillo(anilloListo: false, otraSuena: false), "sin el anillo, nunca")
 
+// MARK: - Guardia: la llamada no abre el micrófono con música sonando (Hub #907)
+
+let otra = A.reintento(A.llamadaBajando)!
+revisa(!otra.contains(.bajarOtras) && !otra.contains(.pausarHablado), "si abrir falla bajando la música, el segundo intento ya no la baja")
+revisa(otra.contains(.mezclar), "el segundo intento mezcla: la música sigue sonando, no se pausa")
+revisa(otra.contains(.parlante) && otra.contains(.manosLibres) && otra.contains(.audifonos), "el segundo intento conserva parlante, micrófono de los audífonos y alta calidad")
+revisa(A.reintento(A.bajando) == [.mezclar, .parlante, .audifonos], "también desde el Modo calle o un aviso")
+revisa(A.reintento(A.llamadaSola) == nil, "si no bajaba la música, no hay segundo intento (el error sale de una vez)")
+revisa(A.reintento(A.escucha) == nil, "la escucha que ya mezcla tampoco se reintenta")
+revisa(A.reintento(otra) == nil, "un solo reintento: el segundo intento ya no da otro")
+revisa(A.PasoMicrofono.categoria.rawValue == "setCategory" && A.PasoMicrofono.activar.rawValue == "setActive" && A.PasoMicrofono.motor.rawValue == "prepararMotor", "los tres pasos se llaman como en el código")
+revisa(A.textoFallo(.activar, codigo: -66680) == "No pude abrir el micrófono (setActive, -66680).", "el error dice cuál de las tres llamadas falló")
+revisa(A.textoReintento(.motor, codigo: -1).hasPrefix("Falló prepararMotor (-1)"), "el paso del reintento dice qué falló y con qué código")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")
