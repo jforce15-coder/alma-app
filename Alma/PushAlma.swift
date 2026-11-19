@@ -19,6 +19,7 @@ final class PushAlma {
     /// Al abrir la app (AlmaApp.init): con una configuración guardada, OneSignal arranca ya.
     func arrancar() {
         let d = UserDefaults.standard
+        callado = Companero.shared.callaAvisos
         guard let app = d.string(forKey: claveApp), let ext = d.string(forKey: claveExterno), !app.isEmpty, !ext.isEmpty else { return }
         iniciar(app: app, externo: ext)
     }
@@ -36,10 +37,26 @@ final class PushAlma {
         // OneSignal se inicia una vez por arranque; si el Hub cambia de app de OneSignal, la nueva vale desde el próximo.
         if appIniciada == nil { OneSignal.initialize(app, withLaunchOptions: nil); appIniciada = app }
         if OneSignal.User.externalId != externo { OneSignal.login(externo) }
+        aplicarCallado()
         UNUserNotificationCenter.current().getNotificationSettings { s in
             guard s.authorizationStatus == .notDetermined else { return }
             DispatchQueue.main.async { OneSignal.Notifications.requestPermission({ _ in }, fallbackToSettings: false) }
         }
+    }
+
+    /// iPad con el Modo compañero encendido (Juan, 19-nov-2026; UnaLlamada.callaAvisos): su push se apaga en OneSignal para
+    /// que no le lleguen notificaciones con la app cerrada. Al apagar el modo vuelve, solo si lo apagó esto (la marca): así
+    /// nunca se le pide permiso a nadie que no lo tenía.
+    private let claveCallado = "push_callado_companero"
+    private var callado = false
+    func callar(_ on: Bool) {
+        DispatchQueue.main.async { self.callado = on; self.aplicarCallado() }
+    }
+    private func aplicarCallado() {
+        guard appIniciada != nil else { return }   // sin OneSignal iniciado, se aplica al iniciar
+        let d = UserDefaults.standard, apagado = d.bool(forKey: claveCallado)
+        if callado && !apagado { OneSignal.User.pushSubscription.optOut(); d.set(true, forKey: claveCallado) }
+        else if !callado && apagado { OneSignal.User.pushSubscription.optIn(); d.set(false, forKey: claveCallado) }
     }
 
     /// Para vozAvisos: { listo } (permiso, suscripción de OneSignal y el external_id que mandó el Hub). Sin configuración, nada.

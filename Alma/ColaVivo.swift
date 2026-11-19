@@ -52,6 +52,9 @@ struct ColaVivo {
 ///   · Con el Modo compañero encendido, por voz o sola («Alma» en el inicio, el Modo calle, la conferencia, un aviso): nunca.
 ///   · Sin él, por voz no mientras el iPhone esté activo (la app abierta o escuchando: el Hub lo sabe por vivoTelefono) o
 ///     en una llamada. Los dos oyen lo mismo y, si los dos abrieran, habría dos Almas hablando a la vez.
+///   · En el iPad con el Modo compañero encendido (Juan, 19-nov-2026: «en modo Companion en iPad… permite hacer llamadas y
+///     muestra notificaciones cuando debería estar deshabilitado en ese modo»): a mano tampoco y no llegan notificaciones;
+///     para llamar desde el iPad, se apaga el Modo compañero.
 ///   · A mano (la roca, el anillo): sí, salvo que la página haya visto hace poco la llamada abierta en el otro.
 ///   · Si el iPad ya estaba en una llamada y el iPhone abre otra, el Hub (vivoPublicar, apps-script/vivo.js) le dice al
 ///     iPad que ceda y el iPad cuelga la suya (VozNativa.cederAlTelefono).
@@ -59,10 +62,12 @@ struct ColaVivo {
 /// otro está en una llamada y si el iPhone está activo; lo que dijo vale `vigencia` segundos (la página lo repite cada 10 s).
 enum UnaLlamada {
     static let vigencia: TimeInterval = 30
+    static let enIPad = "Modo compañero: en el iPad no se abren llamadas; la llamada va en tu teléfono. Apágalo para llamar desde aquí"
     /// nil = puede abrir la llamada aquí; si no, la frase de por qué no (va al registro de la voz).
     /// `telefono`: este dispositivo es el iPhone. `telActivo`: la página dijo que el iPhone está activo.
-    static func motivo(companero: Bool, telefono: Bool = false, porVoz: Bool, otra: String, visto: Date?, ahora: Date, telActivo: Bool = false) -> String? {
+    static func motivo(companero: Bool, ipad: Bool = false, telefono: Bool = false, porVoz: Bool, otra: String, visto: Date?, ahora: Date, telActivo: Bool = false) -> String? {
         if telefono { return nil }
+        if companero && ipad { return enIPad }
         let fresco = visto.map { ahora.timeIntervalSince($0) < vigencia } ?? false
         if porVoz {
             if companero { return "Modo compañero: aquí no se abre una llamada por voz; la llamada es en tu otro dispositivo" }
@@ -73,4 +78,7 @@ enum UnaLlamada {
         guard fresco, !otra.isEmpty else { return nil }
         return (companero ? "Modo compañero" : "Una voz a la vez") + ": la llamada sigue en tu \(otra); aquí no se abre otra"
     }
+    /// ¿Este dispositivo calla sus notificaciones? Solo el iPad con el Modo compañero encendido: no pregunta por avisos al Hub
+    /// (así no se los lleva y le llegan al teléfono), no arma notificaciones y su push queda apagado (PushAlma.callar).
+    static func callaAvisos(companero: Bool, ipad: Bool) -> Bool { companero && ipad }
 }

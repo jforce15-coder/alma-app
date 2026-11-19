@@ -93,9 +93,11 @@ final class Puente: NSObject, WKScriptMessageHandler, ASWebAuthenticationPresent
                 NivelAvisos.poner(t, nivel: n.intValue, por: d["por"] as? String ?? "4h")
             }
             responder("AlmaAvisos.evento", [NivelAvisos.resumen])
-        case "companero":   // Modo compañero (alma/inicio.html): { on, otra, tel } → una sola llamada (UnaLlamada, ColaVivo.swift)
+        case "companero":   // Modo compañero (alma/inicio.html): { on, otra, sonido, tel } → una sola llamada (UnaLlamada, ColaVivo.swift)
             Companero.shared.pagina(on: (d["on"] as? Bool) ?? false, otra: d["otra"] as? String ?? "", tel: (d["tel"] as? Bool) ?? false)   // tel: el iPhone está activo (una voz a la vez)
-            Retransmision.shared.poner(companero: (d["on"] as? Bool) ?? false)   // y con él encendido, la voz del otro suena aquí (Hub #727)
+            // Una sola voz (Juan, 19-nov-2026): la voz del otro suena aquí solo con «Sonido de la llamada aquí» (Hub #727)
+            Retransmision.shared.poner(companero: (d["on"] as? Bool) ?? false, sonido: (d["sonido"] as? Bool) ?? false)
+            Retransmision.shared.alCerca = { [weak self] e in self?.responder("AlmaCompanero.cerca", [e]) }   // y lo que se ve, al momento (19-nov-2026)
         case "voz":
             voz(d)
         case "archivos":   // un archivo nuevo en órbita (Hub archivosorbita.js): la próxima llamada lleva la ficha con él
