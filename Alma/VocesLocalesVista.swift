@@ -122,6 +122,15 @@ struct VocesLocalesVista: View {
         let a = v.ajustes(p)
         let poner = { (cambio: (inout VozKokoroReglas.Ajustes) -> Void) in var b = a; cambio(&b); v.poner(b, para: p) }
         return Section {
+            if p == .maricarmen {   // su voz de ElevenLabs, a prueba (Juan, 19-nov-2026: «Maricarmen es 2»; MaricarmenReglas.vozElevenLabs)
+                Toggle(isOn: $v.maricarmenElevenLabs) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Voz de ElevenLabs: " + MaricarmenReglas.vozElevenLabs).font(Tipo.sans(15, .medium))
+                        Text("A prueba, en la llamada. Usa internet y créditos de ElevenLabs; si falla, habla la de abajo. Apágala para volver a la voz local.")
+                            .font(Tipo.sans(12)).foregroundStyle(Tinta.suave)
+                    }
+                }
+            }
             Picker("Motor", selection: Binding(get: { a.motor }, set: { m in poner { $0.motor = m } })) {
                 Text("Gratis").tag(VozKokoroReglas.Motor.pocket)
                 Text("Kokoro").tag(VozKokoroReglas.Motor.kokoro)

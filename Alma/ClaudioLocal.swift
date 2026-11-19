@@ -125,7 +125,7 @@ final class ClaudioLocal: NSObject {
             return v.name + " · " + v.language + " · " + (v.gender == .male ? "hombre" : v.gender == .female ? "mujer" : "sin género") + " · " + calidad
         } ?? "la de por defecto"
         let lv = vozLocal.isEmpty || vozLocal == "voz del iPhone" ? v : vozLocal + " (respaldo: " + v + ")"
-        if modo == .maricarmen { return "Maricarmen · " + lv + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple") }
+        if modo == .maricarmen { return "Maricarmen · " + (vozES ? "voz de ElevenLabs " + MaricarmenReglas.vozElevenLabs + " (respaldo: " + lv + ")" : lv) + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple") }
         if modo == .respaldo { return "voz de respaldo de Alma · " + v + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple") }
         return (saludoAudio != nil ? "voz de ElevenLabs (respaldo: " + lv + ")" : lv) + (reconocedor.supportsOnDeviceRecognition ? " · dictado en el teléfono" : " · dictado de Apple")
     }
@@ -151,7 +151,7 @@ final class ClaudioLocal: NSObject {
         paso?(modo == .respaldo ? "Alma con la voz de respaldo · " + descripcion : modo == .maricarmen ? "Con " + descripcion : "Claudio local · " + descripcion)
         historial = ClaudioLocalReglas.sumar(historial, .init(deClaudio: true, texto: saludo))
         habla.paso = { [weak self] t in self?.paso?(t) }
-        decir(saludo, audio: saludoAudio)
+        if vozES { conVozES(saludo) { [weak self] a in self?.decir(self?.saludo ?? "", audio: a) } } else { decir(saludo, audio: saludoAudio) }
         reloj = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.revisar() }
     }
 
@@ -318,7 +318,9 @@ final class ClaudioLocal: NSObject {
         // Maricarmen (Hub #666): «pásame con Alma» vuelve a la voz de siempre; «pásame con Maricarmen» desde la voz de respaldo
         // la llama. Lo decide la app (VozNativa, evento «maricarmen»), sin ir al Hub.
         if modo == .maricarmen, MaricarmenReglas.pideVolver(t) {
-            decir(MaricarmenReglas.despedida) { [weak self] in self?.emitir(["type": "maricarmen", "hacer": "volver"]) }; return
+            let volver: (Data?) -> Void = { [weak self] a in self?.decir(MaricarmenReglas.despedida, audio: a) { [weak self] in self?.emitir(["type": "maricarmen", "hacer": "volver"]) } }
+            if vozES { ocupadoHasta = .distantFuture; soltarPedido(); conVozES(MaricarmenReglas.despedida, volver) } else { volver(nil) }
+            return
         }
         if modo == .respaldo, MaricarmenReglas.pideIr(t) { emitir(["type": "maricarmen", "hacer": "ir"]); return }
         let conNotas = notas.isEmpty ? t : t + "\n(Nota de la app: " + notas.joined(separator: " · ") + ")"
@@ -332,7 +334,7 @@ final class ClaudioLocal: NSObject {
         emitir(["type": "agent_tool_request", "agent_tool_request": ["tool_name": "respaldo"]])   // trabaja: no se cuelga por silencio
         var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type"); r.timeoutInterval = 30
         r.httpBody = try? JSONSerialization.data(withJSONObject: RespaldoReglas.pedido(token: token, sesion: sesion, texto: conNotas,
-                                                                                alter: modo == .maricarmen ? MaricarmenReglas.alter : nil))
+                                                                                alter: modo == .maricarmen ? MaricarmenReglas.alter : nil, vozMaricarmen: vozES))
         llamadas += 1; let mia = llamadas, t0 = Date()
         URLSession.shared.dataTask(with: r) { [weak self] data, _, err in
             let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
@@ -347,11 +349,36 @@ final class ClaudioLocal: NSObject {
                 guard let res = RespaldoReglas.respuesta(j) else {
                     self.paso?("Voz de respaldo: " + (err?.localizedDescription ?? "sin respuesta del Hub")); self.decir(RespaldoReglas.fraseSinRespuesta); return
                 }
-                self.decir(res.hablar) { [weak self] in
+                if self.vozES { self.paso?(res.audio != nil ? "Maricarmen: con su voz de ElevenLabs" : "Maricarmen: sin su voz de ElevenLabs, sigue la local") }
+                self.decir(res.hablar, audio: res.audio) { [weak self] in
                     guard let self, res.claudio else { return }
                     // «Quiero hablar con Claudio»: como la herramienta de Alma (Claudio local tampoco usa ElevenLabs).
                     self.emitir(["type": "client_tool_call", "client_tool_call": ["tool_call_id": "respaldo_claudio", "tool_name": "hablar_con_claudio", "parameters": ["motivo": t]]])
                 }
+            }
+        }.resume()
+    }
+
+    /// Maricarmen con su voz de ElevenLabs (a prueba; MaricarmenReglas.vozElevenLabs): el interruptor de Voces locales.
+    private var vozES: Bool { modo == .maricarmen && VocesLocales.shared.maricarmenElevenLabs }
+
+    /// Una frase fija (el saludo, la despedida) con su voz de ElevenLabs, por calleVoz del Hub. Sin red, sin sesión, si tarda
+    /// más de MaricarmenReglas.esperaVoz o no llega: nil (la dice su voz local).
+    private func conVozES(_ t: String, _ listo: @escaping (Data?) -> Void) {
+        ocupadoHasta = .distantFuture
+        guard Senal.shared.hayRed, let url = Llave.leer("voz_url"), let token = Llave.leer("voz_token"), let sesion = Llave.leer("voz_sesion"),
+              let u = URL(string: url) else { listo(nil); return }
+        var r = URLRequest(url: u); r.httpMethod = "POST"; r.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
+        r.timeoutInterval = MaricarmenReglas.esperaVoz
+        r.httpBody = try? JSONSerialization.data(withJSONObject: ["hub": 1, "action": "calleVoz", "app": "alma", "token": token, "session": sesion,
+                                                                  "texto": t, "alter": MaricarmenReglas.alter, "voz_maricarmen": true])
+        URLSession.shared.dataTask(with: r) { [weak self] data, _, _ in
+            let j = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            DispatchQueue.main.async {
+                guard let self, self.vivo else { return }
+                let a = RespaldoReglas.audio(j, hz: MaricarmenReglas.hzVoz)
+                if a == nil { self.paso?("Maricarmen: su voz de ElevenLabs no llegó (" + String(j?["motivo"] as? String ?? "sin respuesta del Hub") + "); sigue la local") }
+                listo(a)
             }
         }.resume()
     }
@@ -389,7 +416,7 @@ final class ClaudioLocal: NSObject {
         emitir(["type": "agent_response", "agent_response_event": ["agent_response": t]])
         if let a = audio {
             for d in ClaudioLocalReglas.trozos(a) { emitir(["type": "audio", "audio_event": ["audio_base_64": d.base64EncodedString()]]) }
-            let fin = Date().addingTimeInterval(ClaudioLocalReglas.duracion(a) + 0.45)
+            let fin = Date().addingTimeInterval(ClaudioLocalReglas.duracion(a, hz: hz) + 0.45)
             ocupadoHasta = fin
             DispatchQueue.main.asyncAfter(deadline: .now() + max(0, fin.timeIntervalSinceNow)) { [weak self] in
                 guard let self, self.vivo else { return }

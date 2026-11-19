@@ -84,7 +84,7 @@ enum ClaudioLocalReglas {
         stride(from: 0, to: a.count, by: bytes).map { a.subdata(in: a.index(a.startIndex, offsetBy: $0)..<a.index(a.startIndex, offsetBy: min(a.count, $0 + bytes))) }
     }
     /// Cuánto suena (segundos).
-    static func duracion(_ a: Data) -> Double { Double(a.count / 2) / Double(hz) }
+    static func duracion(_ a: Data, hz: Int = hz) -> Double { Double(a.count / 2) / Double(max(1, hz)) }
 
     // MARK: - El tecleo mientras piensa (Hub #651)
 
