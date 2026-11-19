@@ -527,6 +527,15 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
 
     /// «Terminar» en la pantalla: cierra la conversación (el doble toque, en cambio, pausa).
     func colgar() { if estado == .hablando || estado == .conectando { motivoFin = "tocaste Terminar"; terminar() } }
+    /// Una sola voz (Juan, 19-nov-2026: «solo debería haber un agente por voz activo; si está activado el teléfono,
+    /// por default el agente del teléfono»): el Hub (vivoPublicar) avisó que la llamada sigue en el iPhone. Esta se cierra
+    /// sin pasar al modo conferencia y la página muestra la del teléfono (Modo compañero) o dice dónde sigue.
+    func cederAlTelefono(_ otra: String) {
+        guard estado == .hablando || estado == .conectando else { return }
+        let m = "Una sola voz: la llamada sigue en tu " + (otra.isEmpty ? "iPhone" : otra)
+        emitir(["tipo": "companero", "mensaje": m])
+        aConferencia = false; motivoFin = m; terminar()
+    }
 
     var resumen: [String: Any] {
         var r: [String: Any] = ["tipo": "estado", "estado": estado.rawValue, "modoAnillo": modoAnillo, "pausada": pausada, "ultimoError": UserDefaults.standard.string(forKey: "voz_ultimo_error") ?? "",

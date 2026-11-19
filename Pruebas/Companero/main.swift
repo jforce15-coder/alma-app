@@ -43,6 +43,14 @@ revisa(UnaLlamada.motivo(companero: false, ipad: true, porVoz: false, otra: "iPh
 revisa(UnaLlamada.motivo(companero: true, ipad: false, porVoz: false, otra: "", visto: nil, ahora: t0) == nil, "teléfono con el modo encendido: a mano sí, como antes")
 revisa(UnaLlamada.callaAvisos(companero: true, ipad: true), "iPad compañero: sin notificaciones")
 revisa(!UnaLlamada.callaAvisos(companero: true, ipad: false) && !UnaLlamada.callaAvisos(companero: false, ipad: true), "el teléfono, o el iPad sin el modo: notificaciones como siempre")
+// Una sola voz (Juan, 19-nov-2026): el del teléfono manda
+revisa(UnaLlamada.motivo(companero: true, telefono: true, porVoz: true, otra: "", visto: nil, ahora: t0) == nil, "el iPhone con Modo compañero sí abre por voz")
+revisa(UnaLlamada.motivo(companero: true, telefono: true, porVoz: false, otra: "iPad", visto: t0, ahora: t0) == nil, "el iPhone abre aunque la llamada esté en el iPad (el iPad cede)")
+var l = ColaVivo(); l.empezo("conv-9"); _ = l.sacar(t0)
+revisa(l.sacar(t0.addingTimeInterval(3)) == nil, "sin nada nuevo, no se manda enseguida")
+revisa(l.sacar(t0.addingTimeInterval(ColaVivo.latido)) != nil, "pero cada pocos segundos se avisa que la llamada sigue (para saber si hay que ceder)")
+l.cambiar("fin"); _ = l.sacar(t0.addingTimeInterval(7))
+revisa(l.sacar(t0.addingTimeInterval(20)) == nil, "después de terminar, ya no hay latido")
 
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallaron.")
 exit(fallos == 0 ? 0 : 1)
