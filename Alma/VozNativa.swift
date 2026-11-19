@@ -493,7 +493,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// y el halo naranja. Al colgar vuelve Alma (terminar). false si no pudo empezar (ya hay una llamada o falta la sesión).
     @discardableResult
     func hablarConClaudio(ficha: [String: Any]) -> Bool {
-        guard estado == .lista || estado == .apagada, ficha["signed_url"] is String, companeroDeja(porVoz: true) else { return false }
+        guard estado == .lista || estado == .apagada, ficha["signed_url"] is String, ClaudioLocal.falta(ficha) == nil, companeroDeja(porVoz: true) else { return false }
         desdePantalla = true; textoInicial = nil; conferencia = nil; porAviso = nil
         agente = .claudio
         fichaLista = (ficha, Date())   // hablar() la usa en vez de pedir la de Alma
@@ -915,9 +915,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if !arrancarRespaldo(frase: RespaldoReglas.fraseAlEmpezar) { fallo("No hay internet y la voz de respaldo no está lista: falta el permiso del dictado (Ajustes del iPhone → Alma → Reconocimiento de voz).", conexion: true) }
             return
         }
-        // Claudio local (Hub #629): si el Hub lo trae y el dictado del iPhone está listo, Claudio va sin ElevenLabs (sin créditos
-        // de voz). Si no, sigue con su agente de ElevenLabs como siempre.
-        if self.agente == .claudio, (ficha["local"] as? Bool) == true {
+        // Claudio local (Hub #629): Claudio va sin ElevenLabs (sin créditos de voz). Juan, 19-nov-2026: «Claudio y Maricarmen
+        // solo deben trabajar con voz local»: si Claudio local no está listo, ya no se abre su agente de ElevenLabs.
+        if self.agente == .claudio {
             if let l = ClaudioLocal(ficha: ficha) {
                 local = l
                 l.paso = { [weak self] t in self?.paso(t) }
@@ -929,7 +929,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 l.empezar()
                 return
             }
-            paso("Claudio local no está listo (falta el permiso del dictado o no está disponible): sigue con ElevenLabs")
+            fallo(ClaudioLocal.falta(ficha) ?? "Claudio local no está listo, y Claudio solo habla con voz local."); return
         }
         // Saludos grabados (Hub #724): la ficha trae su versión; si cambió o faltan, se bajan después, sin estorbar la llamada.
         if let v = ficha["saludos_grabados"] as? String { DispatchQueue.main.asyncAfter(deadline: .now() + 30) { SaludosGrabados.shared.actualizar(versionHub: v) } }
@@ -1757,6 +1757,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             }
             guard let f = ficha, AgenteVoz.listo(finVoz: self.finVozAlma, pedido: pedido, ahora: Date()) else { return }
             t.invalidate()
+            // Solo voz local (Juan, 19-nov-2026): sin Claudio local no se abre su agente de ElevenLabs; sigue Alma y dice qué falta.
+            if nuevo == .claudio, let falta = ClaudioLocal.falta(f) {
+                self.cambiando = false; self.paso("Claudio local no está listo: sigue Alma, sin ElevenLabs (" + falta + ")")
+                self.mandar(["type": "contextual_update", "text": "No se pudo pasar con Claudio: Claudio solo habla con voz local y ahora no está lista. Díselo a Juan en una frase: «" + falta + "» y sigue tú."])
+                return
+            }
             self.reconectar(nuevo, ficha: f)
         }
     }

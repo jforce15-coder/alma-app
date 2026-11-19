@@ -89,5 +89,12 @@ revisa(R.tecleoTrozo <= R.tecleoCada && R.tecleoTras > 0, "cada trozo dura menos
 revisa(R.tiempos(total: 4.2, ["ms_ia": 1500, "ms_voz": 900]) == "Claudio local contestó en 4.2 s (IA 1.5 s · voz 0.9 s · lo demás 1.8 s)", "el registro dice dónde se va el tiempo")
 revisa(R.tiempos(total: 3, nil) == "Claudio local contestó en 3.0 s", "sin los tiempos del Hub, solo el total")
 
+// Solo voz local (Juan, 19-nov-2026): sin Claudio local no se abre su agente de ElevenLabs; Alma dice qué falta
+revisa(R.falta(local: true, conv: "conv_local_x", permiso: true, disponible: true) == nil, "todo listo: Claudio local")
+revisa(R.falta(local: false, conv: nil, permiso: true, disponible: true)?.contains("CLAUDIO_LOCAL") == true, "CLAUDIO_LOCAL = 0: no se abre ElevenLabs, dice qué falta")
+revisa(R.falta(local: true, conv: "conv_otra", permiso: true, disponible: true) != nil, "una conversación que no es local tampoco")
+revisa(R.falta(local: true, conv: "conv_local_x", permiso: false, disponible: true)?.contains("permiso del dictado") == true, "sin permiso del dictado: lo dice")
+revisa(R.falta(local: true, conv: "conv_local_x", permiso: true, disponible: false)?.contains("no está disponible") == true, "dictado no disponible: lo dice")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien: Claudio local.")
