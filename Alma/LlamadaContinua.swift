@@ -33,6 +33,9 @@ enum LlamadaContinua {
     /// Ahora, `margenDuro` s después del tope (90 s sin que Alma hable ni trabaje, de fábrica), cierra en una pausa de 3 s
     /// aunque sigan hablando. La conferencia sigue escuchando y, si vuelven a decir «Alma», ella sabe de qué iban.
     static let margenDuro: TimeInterval = 30
+    /// Guardia 20-nov-2026: Juan dictando una instrucción larga (SuenoCalle.dictando) no es ruido hasta 6 min, y el tope
+    /// duro no lo corta si se detiene a pensar unos segundos. Pasado esto, cierra igual (cada minuto gasta créditos).
+    static let ruidoDictado: TimeInterval = 360
 
     /// Un número de la ficha del Hub, entre sus límites; si no viene (un Hub de antes), el de fábrica.
     static func segundos(_ valor: Double?, fabrica: TimeInterval, desde: TimeInterval, hasta: TimeInterval) -> TimeInterval {
@@ -48,6 +51,8 @@ enum LlamadaContinua {
         var pausa: TimeInterval = SuenoCalle.oyendo
         /// Tope duro (solo conferencia): sin que Alma hable en tanto tiempo, cierra en la primera pausa corta aunque hablen.
         var duro: TimeInterval? = nil
+        /// Mientras Juan dicta (solo conferencia): la voz sin nada escrito cuenta como Juan hasta esto y no hay tope duro.
+        var dictado: TimeInterval? = nil
     }
 
     /// ¿La app cierra sola esta llamada, y con qué segundos? nil: una llamada normal (no la cierra el silencio).
@@ -62,10 +67,12 @@ enum LlamadaContinua {
     }
 
     /// El paso que queda en el registro cuando la app cierra sola (o algo corta el audio): dice el modo y el porqué.
-    static func pasoCierre(_ motivo: String, calle: Bool, conferencia: Bool) -> String {
-        if calle { return "Modo calle: cuelga (" + motivo + ") y vuelve a esperar «Alma»" }
-        if conferencia { return "Conferencia: la llamada se cierra sola (" + motivo + ") y vuelve a escuchar «Alma»" }
-        return "Alma abre: cuelga (" + motivo + ") y vuelve a escuchar"
+    /// `hablando`: sonaba alguien al cerrar (guardia 20-nov-2026: así se ve en la guardia si se cortó a Juan a media frase).
+    static func pasoCierre(_ motivo: String, calle: Bool, conferencia: Bool, hablando: Bool = false) -> String {
+        let m = hablando ? motivo + ", cerró con Juan hablando" : motivo
+        if calle { return "Modo calle: cuelga (" + m + ") y vuelve a esperar «Alma»" }
+        if conferencia { return "Conferencia: la llamada se cierra sola (" + m + ") y vuelve a escuchar «Alma»" }
+        return "Alma abre: cuelga (" + m + ") y vuelve a escuchar"
     }
 
     /// Lo que se habló en la llamada pasa al contexto de la conferencia: si vuelven a decir «Alma», ella sabe de qué iban.

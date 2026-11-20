@@ -229,7 +229,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         LlamadaContinua.tiempos(calle: desdeCalle, conferencia: conferencia != nil, porAviso: porAviso != nil, juanHablo: vozJuanCalle != .distantPast, claudio: agente == .claudio,
                                 deCalle: .init(silencio: calleSilencio, tope: calleTope),
                                 deConferencia: .init(silencio: confSilencio, tope: confTope, ruido: LlamadaContinua.ruidoConferencia, pausa: LlamadaContinua.pausaConferencia,
-                                                     duro: confTope + LlamadaContinua.margenDuro))
+                                                     duro: confTope + LlamadaContinua.margenDuro, dictado: LlamadaContinua.ruidoDictado))
     }
     /// Cada intento de conexión lleva su número: el reloj de «no contestó» de un intento anterior no corta el de ahora.
     private var intentoConexion = 0
@@ -239,7 +239,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var reabierta: (frase: String, charla: [String], porClaudio: Bool)?
     /// Por qué termina la llamada (queda en el paso «Llamada terminada»).
     private var motivoFin: String?
-    private var vozJuanCalle = Date.distantPast, sonidoCalle = Date.distantPast
+    private var vozJuanCalle = Date.distantPast
+    /// El último sonido de Juan (o de alguien) y desde cuándo suena casi sin parar (SuenoCalle.dictando: Juan dictando).
+    private var sonidoCalle = Date.distantPast {
+        didSet { if sonidoCalle != .distantPast, sonidoCalle.timeIntervalSince(oldValue) >= SuenoCalle.huecoDictado { sonidoDesdeCalle = sonidoCalle } }
+    }
+    private var sonidoDesdeCalle = Date.distantPast
     /// Cómo terminó la última llamada (el Modo calle lo suma a su uso): segundos conectada a ElevenLabs y si colgó el sueño.
     var ultimaLlamada: (seg: Double, motivo: SuenoCalle.Motivo?) = (0, nil)
     /// Tres toques a la roca del navegador (hablarSobrePantalla): la página que se ve («título» (dirección)). La lectura de la
@@ -2017,21 +2022,24 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// Cada medio segundo, en una llamada que abrió el Modo calle (o un aviso, Hub #509 T4): ¿ya hay que colgar? (las reglas, en SuenoCalle).
     private func vigilarCalle() {
         vigiaCalle?.invalidate()
-        vozJuanCalle = .distantPast; sonidoCalle = .distantPast
+        vozJuanCalle = .distantPast; sonidoCalle = .distantPast; sonidoDesdeCalle = .distantPast
         vigiaCalle = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] t in
             guard let self else { t.invalidate(); return }
             guard self.estado == .hablando, let tc = self.tiemposCierre else { t.invalidate(); if self.vigiaCalle === t { self.vigiaCalle = nil }; return }
             guard !self.enChat, !self.mudo else { return }   // modo chat o mudo con la pantalla a la vista: no se cuelga sola
             let m = SuenoCalle.Momentos(conectada: self.conectadaDesde, finVozAlma: self.finVozAlma, vozJuan: self.vozJuanCalle,
-                                        sonido: self.sonidoCalle, herramientaDesde: self.herramientaDesde, finHerramienta: self.finHerramienta)
-            if let motivo = SuenoCalle.decidir(m, ahora: Date(), silencio: tc.silencio, tope: tc.tope, ruido: tc.ruido, pausa: tc.pausa, duro: tc.duro) { self.colgarCalle(motivo) }
+                                        sonido: self.sonidoCalle, herramientaDesde: self.herramientaDesde, finHerramienta: self.finHerramienta,
+                                        sonidoDesde: self.sonidoDesdeCalle)
+            if let motivo = SuenoCalle.decidir(m, ahora: Date(), silencio: tc.silencio, tope: tc.tope, ruido: tc.ruido, pausa: tc.pausa, duro: tc.duro,
+                                               dictado: tc.dictado) { self.colgarCalle(motivo) }
         }
     }
 
     /// Cuelga la llamada del Modo calle sin despedida (solo el sonido de fin): el Modo calle vuelve a esperar «Alma».
     private func colgarCalle(_ m: SuenoCalle.Motivo) {
         guard estado == .hablando || estado == .conectando else { return }
-        paso(LlamadaContinua.pasoCierre(m.rawValue, calle: desdeCalle, conferencia: conferencia != nil))
+        let hablando = m != .cierre && Date().timeIntervalSince(sonidoCalle) < SuenoCalle.pausaDura   // cerró con alguien sonando
+        paso(LlamadaContinua.pasoCierre(m.rawValue, calle: desdeCalle, conferencia: conferencia != nil, hablando: hablando))
         motivoCalle = m
         terminar()
     }

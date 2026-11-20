@@ -24,6 +24,8 @@ enum SuenoCalle {
         var sonido: Date                  // el último sonido fuerte del micrófono fuera de la voz de Alma (puede ser ruido)
         var herramientaDesde: Date?       // Alma trabaja con una herramienta desde… (nil = no trabaja)
         var finHerramienta: Date          // cuando terminó la última herramienta
+        /// Desde cuándo suena el micrófono casi sin parar (sin huecos de `huecoDictado` s): el inicio del sonido de ahora.
+        var sonidoDesde: Date = .distantPast
     }
 
     static let silencioDeFabrica: TimeInterval = 6
@@ -44,17 +46,35 @@ enum SuenoCalle {
     /// siempre hay alguien hablando y llegan sus palabras, así que la pausa de `pausa` s casi nunca llega y la llamada quedaba
     /// abierta sin fin. Tras `duro` s sin que Alma hable ni trabaje, se cierra en la primera pausa corta (`pausaDura` s).
     static let pausaDura: TimeInterval = 3
+    /// `dictado` (solo conferencia; guardia 20-nov-2026): mientras Juan le dicta a Alma una instrucción larga (`dictando`),
+    /// la voz sin nada escrito cuenta como alguien hablando hasta `dictado` s (no `ruido`) y no se usa el tope duro.
     static func decidir(_ m: Momentos, ahora: Date, silencio: TimeInterval, tope: TimeInterval,
-                        ruido: TimeInterval = soloRuido, pausa: TimeInterval = oyendo, duro: TimeInterval? = nil) -> Motivo? {
+                        ruido: TimeInterval = soloRuido, pausa: TimeInterval = oyendo, duro: TimeInterval? = nil,
+                        dictado: TimeInterval? = nil) -> Motivo? {
         if let h = m.herramientaDesde { return ahora.timeIntervalSince(h) > topeHerramienta ? .tope : nil }
         let alma = max(m.conectada, m.finVozAlma, m.finHerramienta)
-        if let d = duro, ahora.timeIntervalSince(alma) >= d, ahora.timeIntervalSince(m.sonido) >= pausaDura { return .tope }
+        let dicta = dictado != nil && dictando(m, ahora: ahora)
+        if !dicta, let d = duro, ahora.timeIntervalSince(alma) >= d, ahora.timeIntervalSince(m.sonido) >= pausaDura { return .tope }
         let palabras = max(alma, m.vozJuan)
-        let esVoz = ahora.timeIntervalSince(palabras) < ruido   // la voz sin nada escrito por mucho rato es ruido de fondo
+        let limite = dicta ? max(ruido, dictado ?? 0) : ruido
+        let esVoz = ahora.timeIntervalSince(palabras) < limite   // la voz sin nada escrito por mucho rato es ruido de fondo
         if esVoz && ahora.timeIntervalSince(m.sonido) < pausa { return nil }   // alguien habla (o hace una pausa corta): no se corta
         if ahora.timeIntervalSince(alma) >= tope { return .tope }
         let callado = ahora.timeIntervalSince(esVoz ? max(palabras, m.sonido) : palabras)
         return callado < silencio ? nil : .silencio
+    }
+
+    /// Guardia 20-nov-2026 (conferencia): Juan dictó 3 min seguidos una instrucción para Alma; ElevenLabs no cerró su turno
+    /// (no llegó nada escrito) y a los 180 s la app tomó su voz como ruido y colgó a media frase. ¿Juan le está dictando a
+    /// Alma? El sonido de ahora sigue casi sin parar (huecos de menos de `huecoDictado` s), empezó cerca de lo último escrito
+    /// (un turno de Juan o lo que Alma dijo, `arranqueDictado` s antes o después) y desde entonces no llegó nada escrito. En
+    /// una reunión sí llegan las palabras de los demás mientras suenan: eso no es dictado y el tope duro sigue igual.
+    static let huecoDictado: TimeInterval = 6
+    static let arranqueDictado: TimeInterval = 15
+    static func dictando(_ m: Momentos, ahora: Date) -> Bool {
+        guard m.sonidoDesde != .distantPast, ahora.timeIntervalSince(m.sonido) < huecoDictado else { return false }
+        let escrito = max(m.conectada, m.finVozAlma, m.finHerramienta, m.vozJuan)
+        return abs(escrito.timeIntervalSince(m.sonidoDesde)) <= arranqueDictado
     }
 
     /// ¿Alguien está hablando ahora? Hubo voz hace menos de `oyendo` s y no es solo ruido.
