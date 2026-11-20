@@ -5,6 +5,7 @@
 #   ASC_KEY_ID     Key ID de la llave de App Store Connect
 #   ASC_ISSUER_ID  Issuer ID
 #   ASC_KEY_P8     contenido completo del archivo AuthKey_XXXX.p8 (con BEGIN/END)
+#   GOOGLE_MAPS_IOS_KEY  (opcional) llave de Google Maps para iOS, limitada a com.spacioam.alma; sin ella, el mapa es de Apple
 
 name: TestFlight
 
@@ -419,6 +420,9 @@ jobs:
             || { echo "::error::NotifAlma.appex no es una extensión de notificaciones."; exit 1; }
           test -s "$EXT/alma-foto.png" || { echo "::error::NotifAlma.appex no trae la foto de Alma (alma-foto.png)."; exit 1; }
           test -d "$APP/Frameworks/OneSignalFramework.framework" || { echo "::error::Alma.app no trae OneSignalFramework."; exit 1; }
+          # El mapa de Google Maps (Juan, 20-nov-2026): el SDK necesita su paquete de recursos (GoogleMaps.bundle) dentro de la app.
+          test -n "$(find "$APP" -maxdepth 3 -name GoogleMaps.bundle)" || { echo "::error::Alma.app no trae GoogleMaps.bundle (los recursos del mapa de Google)."; exit 1; }
+          /usr/libexec/PlistBuddy -c 'Print :GoogleMapsKey' "$APP/Info.plist" >/dev/null || { echo "::error::El Info.plist no trae GoogleMapsKey."; exit 1; }
           # Manifiesto de privacidad (ITMS-91053): sin él Apple manda el correo de «Missing API declaration» en cada subida.
           for m in "$APP/PrivacyInfo.xcprivacy" "$EXT/PrivacyInfo.xcprivacy"; do
             plutil -lint "$m" || { echo "::error::Falta o está mal $m (manifiesto de privacidad)."; exit 1; }
@@ -442,14 +446,17 @@ jobs:
         env:
           KID: ${{ secrets.ASC_KEY_ID }}
           ISS: ${{ secrets.ASC_ISSUER_ID }}
+          GMAPS: ${{ secrets.GOOGLE_MAPS_IOS_KEY }}
         run: |
           set -o pipefail
+          # El mapa de Google Maps (MapaGoogle.swift): la llave entra al Info.plist al compilar; sin secreto, Apple Maps.
+          if [ -z "$GMAPS" ]; then echo "::warning::Falta el secreto GOOGLE_MAPS_IOS_KEY: el mapa de la Guía de camino sale con Apple Maps."; fi
           AUTH="-allowProvisioningUpdates -authenticationKeyPath $ASC_KEY_PATH -authenticationKeyID $KID -authenticationKeyIssuerID $ISS"
           # Se archiva sin firmar (la firma de desarrollo pide un iPhone registrado) y la exportación firma para
           # distribución con el certificado que Apple guarda en la nube.
           xcodebuild -project Alma.xcodeproj -scheme Alma -configuration Release \
             -destination 'generic/platform=iOS' -archivePath build/Alma.xcarchive archive \
-            CURRENT_PROJECT_VERSION=${{ github.run_number }} CODE_SIGNING_ALLOWED=NO | tail -40
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} GOOGLE_MAPS_IOS_KEY="$GMAPS" CODE_SIGNING_ALLOWED=NO | tail -40
           # sherpa-onnx y onnxruntime (Modo calle) son estáticos: su código ya va dentro de Alma, pero Xcode copia sus
           # carpetas a Alma.app/Frameworks y Apple rechaza la subida porque no se pueden firmar («Invalid Signature»).
           bash .github/quitar-frameworks-estaticos.sh build/Alma.xcarchive/Products/Applications/Alma.app

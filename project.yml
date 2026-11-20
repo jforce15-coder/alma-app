@@ -25,6 +25,11 @@ packages:
   OneSignal:
     url: https://github.com/OneSignal/OneSignal-XCFramework
     exactVersion: 5.8.0
+  # El mapa de la Guía de camino es de Google Maps (Juan, 20-nov-2026): el SDK de Google Maps para iOS, versión fija.
+  # Su llave va en el secreto GOOGLE_MAPS_IOS_KEY (testflight.yml); sin ella, el mapa sale con Apple Maps como antes.
+  GoogleMaps:
+    url: https://github.com/googlemaps/ios-maps-sdk
+    exactVersion: 11.4.0
 targets:
   Alma:
     type: application
@@ -46,6 +51,8 @@ targets:
       # como mensaje de Alma (NotifAlma), dentro de la app en PlugIns.
       - package: OneSignal
         product: OneSignalFramework
+      - package: GoogleMaps
+        product: GoogleMaps
       - target: NotifAlma
     settings:
       base:
@@ -79,6 +86,8 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
+        # La llave del SDK de Google Maps (MapaGoogle.swift): el robot la pone al compilar desde el secreto GOOGLE_MAPS_IOS_KEY.
+        GoogleMapsKey: $(GOOGLE_MAPS_IOS_KEY)
         # Las letras de Alma (Health nativo): Cormorant Garamond y Montserrat, dentro de la app
         UIAppFonts:
           - CormorantGaramond.ttf
