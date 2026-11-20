@@ -35,6 +35,15 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
     @Published private(set) var faltan = ""
     @Published private(set) var aviso = ""
     @Published private(set) var llego = false
+    // La pantalla estilo carro (Juan, 20-nov-2026): la flecha del próximo paso, el «Luego», lo que falta y la llegada.
+    @Published private(set) var modo = ""
+    @Published private(set) var giro = "recto"
+    @Published private(set) var luego = ""
+    @Published private(set) var luegoGiro = ""
+    @Published private(set) var restante = ""
+    @Published private(set) var minutosFaltan = 0
+    @Published private(set) var llegada = ""
+    @Published private(set) var posicion: CLLocation?
 
     private let gps = CLLocationManager()
     private var reglas: GuiaCaminoReglas?
@@ -48,6 +57,8 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
     private var reproductor: AVAudioPlayer?
     private let iphone = AVSpeechSynthesizer()
     private var sesionPropia = false
+    private var metrosTotal = 0.0
+    private static let hora: DateFormatter = { let f = DateFormatter(); f.locale = Locale(identifier: "es_GT"); f.dateFormat = "H:mm"; return f }()
 
     private override init() {
         super.init()
@@ -110,7 +121,7 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
     private func empezar(_ j: [String: Any], destino pedido: String, modo: String) -> Bool {
         let ps: [GuiaPaso] = (j["pasos"] as? [[String: Any]] ?? []).compactMap { d in
             guard let t = d["texto"] as? String, let lat = GuiaCamino.num(d["lat"]), let lng = GuiaCamino.num(d["lng"]) else { return nil }
-            return GuiaPaso(texto: t, punto: GuiaPunto(lat: lat, lng: lng), antes: GuiaCamino.num(d["antes"]))
+            return GuiaPaso(texto: t, punto: GuiaPunto(lat: lat, lng: lng), antes: GuiaCamino.num(d["antes"]), giro: d["giro"] as? String ?? "")
         }
         guard !ps.isEmpty, let f = j["fin"] as? [String: Any], let flat = GuiaCamino.num(f["lat"]), let flng = GuiaCamino.num(f["lng"]) else { return false }
         let m = j["modo"] as? String ?? "caminando"
@@ -123,8 +134,11 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
         minutos = (j["minutos"] as? NSNumber)?.intValue ?? 0
         linea = reglas?.linea ?? []
         fin = GuiaPunto(lat: flat, lng: flng)
-        proximo = ps.count > 1 ? ps[1].texto : "Llegar a " + destino
+        self.modo = m
+        metrosTotal = (j["metros"] as? NSNumber)?.doubleValue ?? 0
+        if metrosTotal <= 0, let a = linea.first { metrosTotal = GuiaCaminoReglas.restante(a, linea) }
         faltan = ""; aviso = ""; llego = false
+        pantalla(desde: nil)
         activa = true
         audios = [:]
         gps.activityType = m == "carro" ? .automotiveNavigation : (m == "bus" ? .otherNavigation : .fitness)
@@ -159,12 +173,12 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
     func terminar(llegando: Bool = false) {
         guard activa else { return }
         if llegando {
-            llego = true; proximo = "Llegaste a " + destino; faltan = ""
+            llego = true; proximo = "Llegaste a " + destino; faltan = ""; giro = "llegar"; luego = ""; restante = ""
             DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in if self?.llego == true { self?.terminar() } }
             gps.stopUpdatingLocation(); gps.allowsBackgroundLocationUpdates = false
             return
         }
-        activa = false; llego = false; reglas = nil; pendiente = nil; audios = [:]
+        activa = false; llego = false; reglas = nil; pendiente = nil; audios = [:]; posicion = nil
         gps.stopUpdatingLocation()
         gps.allowsBackgroundLocationUpdates = false
         UIApplication.shared.isIdleTimerDisabled = false
@@ -225,7 +239,8 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
         let ev = r.ubicacion(p, precision: l.horizontalAccuracy)
         reglas = r
         faltan = r.faltan(desde: p).map(GuiaCaminoReglas.textoDistancia) ?? ""
-        proximo = r.proximoTexto ?? "Llegar a " + destino
+        posicion = l
+        pantalla(desde: p)
         if aviso == "Recalculando…" && !recalculando { aviso = "" }
         decirPendiente()
         switch ev {
@@ -234,6 +249,20 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
         case .recalcular?: recalcular(desde: l)
         case nil: break
         }
+    }
+
+    /// Lo que muestra la pantalla: el próximo paso (sin «en media cuadra»: la distancia va en grande), su flecha, el
+    /// «Luego», lo que falta por el camino, los minutos y la hora de llegada.
+    private func pantalla(desde p: GuiaPunto?) {
+        guard let r = reglas else { return }
+        proximo = r.proximoTexto.map(GuiaCaminoReglas.textoPantalla) ?? "Llegar a " + destino
+        giro = r.proximoGiro
+        luego = r.luegoTexto.map(GuiaCaminoReglas.textoPantalla) ?? (r.proximoTexto == nil ? "" : "Llegar a " + destino)
+        luegoGiro = r.luegoGiro
+        let falta = p.map { GuiaCaminoReglas.restante($0, r.linea) } ?? metrosTotal
+        restante = falta > 0 ? GuiaCaminoReglas.textoDistancia(falta) : ""
+        minutosFaltan = metrosTotal > 0 ? max(1, Int((Double(minutos) * min(1, falta / metrosTotal)).rounded())) : minutos
+        llegada = GuiaCamino.hora.string(from: Date().addingTimeInterval(Double(minutosFaltan) * 60))
     }
 
     // MARK: - La voz

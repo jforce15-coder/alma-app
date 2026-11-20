@@ -16,7 +16,8 @@ struct GuiaPunto: Equatable {
 struct GuiaPaso: Equatable {
     var texto: String
     var punto: GuiaPunto
-    var antes: Double?   // metros antes del punto en que se avisa (bajarse del bus); nil = el del medio
+    var antes: Double?   // metros antes del punto en que se avisa (la anticipación del Hub o bajarse del bus); nil = el del medio
+    var giro = ""        // la flecha de la pantalla: izquierda | derecha | vuelta | rotonda | recto | bus | bajar (el Hub)
 }
 
 enum GuiaEvento: Equatable {
@@ -83,6 +84,53 @@ struct GuiaCaminoReglas {
         siguiente < pasos.count ? GuiaCaminoReglas.distancia(p, pasos[siguiente].punto) : GuiaCaminoReglas.distancia(p, fin)
     }
     var proximoTexto: String? { siguiente < pasos.count ? pasos[siguiente].texto : nil }
+    var proximoGiro: String { siguiente < pasos.count ? pasos[siguiente].giro : "llegar" }
+    /// El paso que viene después del próximo (el «Luego» de la pantalla).
+    var luegoTexto: String? { siguiente + 1 < pasos.count ? pasos[siguiente + 1].texto : nil }
+    var luegoGiro: String { siguiente + 1 < pasos.count ? pasos[siguiente + 1].giro : "llegar" }
+
+    // MARK: - La pantalla (estilo carro, Juan 20-nov-2026)
+
+    /// En la pantalla la distancia ya va en grande: «En media cuadra, en la tienda Polo, cruza…» → «En la tienda Polo, cruza…».
+    static func textoPantalla(_ t: String) -> String {
+        var s = t
+        for p in ["En una cuadra, ", "En media cuadra, ", "Ahora, ", "Ahora: "] where s.hasPrefix(p) {
+            s = String(s.dropFirst(p.count)); break
+        }
+        return s.prefix(1).uppercased() + s.dropFirst()
+    }
+
+    /// El símbolo (SF Symbols) de cada flecha.
+    static func simbolo(_ giro: String) -> String {
+        switch giro {
+        case "izquierda": return "arrow.turn.up.left"
+        case "derecha": return "arrow.turn.up.right"
+        case "vuelta": return "arrow.uturn.down"
+        case "rotonda": return "arrow.triangle.2.circlepath"
+        case "bus": return "bus.fill"
+        case "bajar": return "figure.walk.departure"
+        case "llegar": return "flag.checkered"
+        default: return "arrow.up"
+        }
+    }
+
+    /// Metros que faltan por el camino (desde el punto de la línea más cercano a p hasta el final).
+    static func restante(_ p: GuiaPunto, _ l: [GuiaPunto]) -> Double {
+        guard l.count >= 2 else { return l.last.map { distancia(p, $0) } ?? 0 }
+        let k = cos(p.lat * Double.pi / 180) * 111_320.0, m = 110_540.0
+        var mejor = Double.infinity, seg = 0, tt = 0.0
+        for i in 0..<(l.count - 1) {
+            let ax = (l[i].lng - p.lng) * k, ay = (l[i].lat - p.lat) * m
+            let bx = (l[i + 1].lng - p.lng) * k, by = (l[i + 1].lat - p.lat) * m
+            let dx = bx - ax, dy = by - ay, d2 = dx * dx + dy * dy
+            let t = d2 > 0 ? max(0, min(1, -(ax * dx + ay * dy) / d2)) : 0
+            let x = ax + t * dx, y = ay + t * dy, d = x * x + y * y
+            if d < mejor { mejor = d; seg = i; tt = t }
+        }
+        var total = distancia(l[seg], l[seg + 1]) * (1 - tt)
+        for i in (seg + 1)..<(l.count - 1) { total += distancia(l[i], l[i + 1]) }
+        return total
+    }
 
     // MARK: - Geometría
 
