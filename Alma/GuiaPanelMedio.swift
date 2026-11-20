@@ -23,9 +23,12 @@ struct GuiaPanelMedio: View {
     @ObservedObject var guia: GuiaCamino
     var distribucion: GuiaPantalla.Distribucion
     var bordes: EdgeInsets
+    /// Pantalla alta (iPad): en B también lleva el título y los nombres del selector.
+    var amplio = false
     var bajar: () -> Void
 
     private var a: Bool { distribucion == .dividido }
+    private var conNombres: Bool { a || amplio }
     private var medio: String { guia.medio.isEmpty ? GuiaPantalla.medioVisto(hub: guia.modo, elegido: "") : guia.medio }
     private var ms: Double { max(0, guia.posicion?.speed ?? 0) }
 
@@ -33,7 +36,7 @@ struct GuiaPanelMedio: View {
         ZStack(alignment: .topLeading) {
             EscenaMedio(medio: medio, horizonte: a ? 0.5 : 0.56, fuga: a ? 0.62 : 0.5)
             VStack(alignment: .leading, spacing: a ? 10 : 8) {
-                if a {
+                if conNombres {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text("GUÍA DE CAMINO").font(.custom("Montserrat", size: 12).weight(.semibold)).tracking(1.6).foregroundStyle(GuiaColor.tinta3)
                         Text("· te llevo " + GuiaPanelMedio.dicho(medio)).font(.custom("Montserrat", size: 15).weight(.bold)).foregroundStyle(GuiaColor.tinta)
@@ -70,14 +73,14 @@ struct GuiaPanelMedio: View {
                 let si = m == medio
                 Button { if !si { guia.cambiarMedio(m) } } label: {
                     VStack(spacing: 3) {
-                        Image(systemName: GuiaPanelMedio.icono(m)).font(.system(size: a ? 19 : 17, weight: .medium))
+                        Image(systemName: GuiaPanelMedio.icono(m)).font(.system(size: conNombres ? 19 : 17, weight: .medium))
                             .foregroundStyle(si ? GuiaColor.coral : GuiaColor.tinta3)
-                        if a {
+                        if conNombres {
                             Text(GuiaPanelMedio.nombre(m)).font(.custom("Montserrat", size: 11).weight(.semibold))
                                 .foregroundStyle(si ? GuiaColor.tinta : GuiaColor.tinta3).lineLimit(1).minimumScaleFactor(0.8)
                         }
                     }
-                    .frame(maxWidth: .infinity).padding(.vertical, a ? 7 : 9)
+                    .frame(maxWidth: .infinity).padding(.vertical, conNombres ? 7 : 9)
                     .background {
                         if si { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(GuiaColor.tarjeta).shadow(color: GuiaColor.tinta.opacity(0.18), radius: 6, y: 3) }
                     }

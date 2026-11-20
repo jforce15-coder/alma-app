@@ -36,11 +36,11 @@ struct MapaCaminoVista: View {
                     .clipped()
                     .offset(x: m.mapa.minX, y: m.mapa.minY)
 
-                GuiaPanelMedio(guia: guia, distribucion: d, bordes: m.bordesPanel, bajar: { cerrar() })
+                GuiaPanelMedio(guia: guia, distribucion: d, bordes: m.bordesPanel, amplio: m.amplio, bajar: { cerrar() })
                     .frame(width: m.panel.width, height: m.panel.height)
                     .offset(x: m.panel.minX, y: m.panel.minY)
 
-                tarjetaGiro(d)
+                tarjetaGiro(d, luego: d == .dividido || m.amplio)
                     .frame(width: m.giroAncho)
                     .alignmentGuide(.top) { v in d == .dividido ? v[VerticalAlignment.center] : v[.top] }
                     .frame(width: geo.size.width, height: geo.size.height, alignment: d == .dividido ? .top : .topLeading)
@@ -85,12 +85,14 @@ struct MapaCaminoVista: View {
     struct Medidas {
         var panel: CGRect, mapa: CGRect
         var bordesPanel: EdgeInsets
+        var amplio: Bool
         var giroAncho: CGFloat, giroArriba: CGFloat
         var llegadaAncho: CGFloat, derecha: CGFloat, abajo: CGFloat
         /// Lo que tapan las tarjetas sobre el mapa (Google centra la cámara en lo que queda libre).
         var margen: UIEdgeInsets
 
         init(_ d: GuiaPantalla.Distribucion, _ s: CGSize, _ i: EdgeInsets) {
+            amplio = s.height >= 600
             switch d {
             case .dividido:
                 let alto = min(max(s.height * 0.4, 300), 470)
@@ -146,8 +148,8 @@ struct MapaCaminoVista: View {
 
     // MARK: - La tarjeta del giro
 
-    private func tarjetaGiro(_ d: GuiaPantalla.Distribucion) -> some View {
-        let t = GuiaPantalla.tarjeta(faltan: guia.faltan, proximo: guia.proximo, luego: d == .dividido ? guia.luego : "", llego: guia.llego)
+    private func tarjetaGiro(_ d: GuiaPantalla.Distribucion, luego: Bool) -> some View {
+        let t = GuiaPantalla.tarjeta(faltan: guia.faltan, proximo: guia.proximo, luego: luego ? guia.luego : "", llego: guia.llego)
         let grande = d == .dividido
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 14) {
