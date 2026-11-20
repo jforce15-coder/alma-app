@@ -138,6 +138,24 @@ enum LlamadaContinua {
         continua && !telefono && motivo != 1
     }
 
+    /// Guardia 20-nov-2026 (Maricarmen): por qué una interrupción colgó en el acto, para el registro ("" si se espera).
+    /// La espera vale igual con ElevenLabs y con la voz local (voz de respaldo, Maricarmen, Claudio local): las dos van
+    /// con la llamada en estado «hablando».
+    static func porQueNoEspera(hablando: Bool, continua: Bool, motivo: UInt?, telefono: Bool) -> String {
+        if !hablando { return "la llamada todavía no estaba conectada" }
+        if !continua { return "no es conferencia ni Modo calle" }
+        if telefono { return "hay una llamada de teléfono" }
+        if motivo == 1 { return "iOS suspendió la app" }
+        return ""
+    }
+
+    /// Con la voz local la frase que se dijo mientras iOS tenía el audio no sonó (VozNativa la tira): al volver el audio se
+    /// repite si empezó durante la interrupción o todavía sonaba cuando empezó. Una frase que ya había terminado, no.
+    static func repetirTrasInterrupcion(empezoDecir: Date?, finVoz: Date?, interrumpida: Date) -> Bool {
+        guard let e = empezoDecir else { return false }
+        return e >= interrumpida || (finVoz ?? .distantFuture) > interrumpida
+    }
+
     /// La conexión se cayó mientras el audio estaba interrumpido y la llamada se reabrió: Alma no saluda con frase fija.
     static let pedidoTrasInterrupcion = "(Otra app tomó el audio un momento y la llamada se reabrió. Si me estabas respondiendo algo, termínalo en una frase corta; si no, no digas nada y sigue escuchando.)"
 
