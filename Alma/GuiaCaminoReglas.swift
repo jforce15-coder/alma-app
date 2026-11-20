@@ -179,6 +179,39 @@ struct GuiaCaminoReglas {
         return out
     }
 
+    // MARK: - Lo que sabe Alma en la llamada (Hub #946, Juan 20-nov-2026)
+    // En «guíame a casa» Alma inventaba los giros y dijo «ya llegaste» sin que el GPS lo confirmara: no sabía en qué paso
+    // iba Juan. Ahora lo pregunta (guiar_camino con donde: true) y, con la llamada abierta, cada paso que dice el GPS le
+    // llega como contexto. Lo que no sale de aquí, Alma no lo afirma.
+
+    /// guiar_camino { donde: true } → el estado real de la guía para Alma.
+    static func estadoParaAlma(activa: Bool, llego: Bool, destino: String, medio: String, proximo: String, faltan: String,
+                               restante: String, minutosFaltan: Int, aviso: String) -> [String: Any] {
+        guard activa else {
+            return ["en_curso": false, "instruccion": "No hay una guía en curso: no digas giros ni que ya llegó. Si Juan quiere, empieza una con su destino."]
+        }
+        if llego {
+            return ["en_curso": true, "llego": true, "destino": destino, "instruccion": "El GPS confirmó que llegó: díselo en una frase."]
+        }
+        var r: [String: Any] = ["en_curso": true, "llego": false, "destino": destino, "medio": medio, "minutos_faltan": minutosFaltan,
+                                "instruccion": "Todavía NO llegó: nunca digas «ya llegaste». Dile en UNA frase el próximo paso y cuánto falta, solo con estos datos."]
+        if !proximo.isEmpty { r["proximo_paso"] = proximo }
+        if !faltan.isEmpty { r["proximo_paso_a"] = faltan }
+        if !restante.isEmpty { r["falta_para_llegar"] = restante }
+        if !aviso.isEmpty { r["nota"] = aviso }
+        return r
+    }
+
+    /// Un paso (o la llegada) que el GPS dispara con la llamada abierta: el contexto que recibe Alma. La voz de la guía
+    /// espera a que cuelgue, así que Alma lo dice en su próximo turno.
+    static func avisoEnLlamada(_ texto: String, llego: Bool) -> String {
+        if llego { return "GUÍA DE CAMINO · EL GPS CONFIRMÓ QUE JUAN LLEGÓ. En tu próximo turno díselo en una frase («Llegaste»)." }
+        return "GUÍA DE CAMINO · PASO NUEVO DEL GPS: «" + texto + "». En tu próximo turno díselo tal cual, en una frase. Es el único giro que puedes decir; no inventes otros."
+    }
+
+    /// Las reglas de Alma mientras va la guía (en la respuesta de guiar_camino y en la ficha).
+    static let reglasLlamada = "Mientras va la guía: no inventes giros ni digas «vas perfecto» o «ya llegaste» por tu cuenta; los pasos los dice la app (y te llegan como PASO NUEVO DEL GPS) y la llegada solo cuando el GPS la confirme. Si Juan pregunta «¿voy bien?», «¿cuánto falta?» o «¿ya llegué?», usa guiar_camino con donde: true y contesta con eso. Un turno «...», ruido de la calle o silencio no es Juan hablando: usa skip_turn y no repitas preguntas; si hay un PASO NUEVO DEL GPS sin decir, dilo. Si Juan no tiene nada más, dile que puede colgar: la app le dice cada cruce al oído."
+
     /// «a 120 m» · «a 1,4 km» (para la pantalla).
     static func textoDistancia(_ m: Double) -> String {
         if m < 1000 { return "\(max(10, Int((m / 10).rounded()) * 10)) m" }

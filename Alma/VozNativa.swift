@@ -506,6 +506,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         mandar(["type": "contextual_update", "text": m?.paraAlma
             ?? "FIN DE LA PAUSA DE PRIVACIDAD: Juan terminó lo privado; puedes volver a leer la página si hace falta."])
     }
+    /// Guía de camino (Hub #946): el paso o la llegada que confirmó el GPS, como contexto para Alma (solo con la llamada abierta).
+    func avisarGuia(_ t: String) {
+        guard estado == .hablando else { return }
+        paso("La guía le avisa a Alma un paso del GPS")
+        mandar(["type": "contextual_update", "text": t])
+    }
     /// ¿Ya tiene cómo pedir la ficha al Hub? (la guarda el inicio la primera vez que se abre la app con sesión)
     var puedeHablar: Bool { Llave.leer("voz_url") != nil && Llave.leer("voz_token") != nil && Llave.leer("voz_sesion") != nil }
     func hablarDesdeConferencia(contexto: String, texto: String) {
