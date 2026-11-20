@@ -218,5 +218,38 @@ revisa(C.notaRuta(cambio: tJ, motivo: 4, salida: "Speaker", ahora: tJ.addingTime
 revisa(C.notaRuta(cambio: tJ, motivo: 4, salida: "Speaker", ahora: tJ.addingTimeInterval(40)).isEmpty, "un cambio de ruta viejo no se anota")
 revisa(C.notaRuta(cambio: nil, motivo: 0, salida: "", ahora: tJ).isEmpty, "sin cambio de ruta: nada")
 
+// MARK: - Juan dictando en conferencia (guardia 20-nov-2026: colgó a Juan a media instrucción de 3 min, «tope» a los 180 s)
+// conv_4601…: Alma terminó de hablar a los 88 s (lo último escrito, 00:19:13); Juan dictó sin parar y ElevenLabs no cerró su
+// turno. A los 268 s (00:22:13, 180 s después) la app tomó su voz como ruido y colgó.
+func dictado(sonido: TimeInterval, desde: TimeInterval = 86, juan: TimeInterval? = 87) -> SuenoCalle.Momentos {
+    var m = momentos(alma: 88, juan: juan, sonido: sonido); m.sonidoDesde = t0.addingTimeInterval(desde); return m
+}
+func decideConf(_ m: SuenoCalle.Momentos, a s: TimeInterval, conDictado: Bool = true) -> SuenoCalle.Motivo? {
+    SuenoCalle.decidir(m, ahora: t0.addingTimeInterval(s), silencio: conf.silencio, tope: conf.tope, ruido: conf.ruido, pausa: conf.pausa,
+                       duro: duro, dictado: conDictado ? C.ruidoDictado : nil)
+}
+revisa(decideConf(dictado(sonido: 267.7), a: 268, conDictado: false) == .tope, "antes: a los 180 s sin nada escrito la voz de Juan era «ruido» y colgaba (00:22:13)")
+var dicta: [SuenoCalle.Motivo?] = []
+for s in stride(from: 89.0, through: 300.0, by: 0.5) { dicta.append(decideConf(dictado(sonido: s - 0.3), a: s)) }
+revisa(dicta.allSatisfy { $0 == nil }, "ahora: Juan dicta sin parar de 00:19:13 a 00:22:13 y más: la llamada NO se cierra")
+revisa(SuenoCalle.dictando(dictado(sonido: 267.7), ahora: t0.addingTimeInterval(268)), "lo reconoce como Juan dictando")
+revisa(decideConf(dictado(sonido: 150), a: 154) == nil, "se detiene 4 s a pensar a media instrucción: el tope duro no lo corta")
+revisa(decideConf(dictado(sonido: 150), a: 158) == .tope, "se calló 8 s pasado el tope: ya terminó, cierra como siempre")
+revisa(decideConf(dictado(sonido: 88 + C.ruidoDictado + 0.7), a: 88 + C.ruidoDictado + 1) == .tope, "6 min de sonido sin nada escrito: cierra igual (créditos)")
+revisa(C.ruidoDictado == 360, "el dictado cuenta como Juan hasta 6 min")
+revisa(!SuenoCalle.dictando(dictado(sonido: 200, desde: 150), ahora: t0.addingTimeInterval(201)), "un sonido que empezó 1 min después de lo último escrito no es dictado (es ruido)")
+revisa(!SuenoCalle.dictando(dictado(sonido: 200, juan: 180), ahora: t0.addingTimeInterval(201)), "si siguen llegando palabras mientras suena (una reunión) no es dictado")
+revisa(!SuenoCalle.dictando(momentos(alma: 88, sonido: 200), ahora: t0.addingTimeInterval(201)), "sin saber desde cuándo suena: no es dictado")
+var reunion2: [SuenoCalle.Motivo?] = []   // la reunión de antes, ahora sabiendo desde cuándo suena: el tope duro sigue cerrando
+for s in stride(from: 6.0, through: 300.0, by: 0.5) {
+    let resto = s.truncatingRemainder(dividingBy: 6)
+    var m = momentos(alma: 5, juan: s - 1, sonido: resto < 4 ? s - resto : s - 0.3); m.sonidoDesde = t0.addingTimeInterval(6)
+    reunion2.append(decideConf(m, a: s))
+}
+revisa(reunion2.contains(SuenoCalle.Motivo.tope), "una reunión (llegan sus palabras) se sigue cerrando con el tope duro")
+revisa(SuenoCalle.decidir(dictado(sonido: 267.7), ahora: t0.addingTimeInterval(268), silencio: 6, tope: 45, ruido: SuenoCalle.soloRuido) == .tope, "el Modo calle no cambia (sin dictado)")
+revisa(C.pasoCierre("tope", calle: false, conferencia: true, hablando: true).contains("(tope, cerró con Juan hablando)"), "si cierra con Juan sonando, el paso lo dice para la guardia")
+revisa(C.pasoCierre("tope", calle: false, conferencia: true) == "Conferencia: la llamada se cierra sola (tope) y vuelve a escuchar «Alma»", "sin nadie hablando, el paso de siempre")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")
