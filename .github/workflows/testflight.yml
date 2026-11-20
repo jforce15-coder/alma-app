@@ -219,6 +219,13 @@ jobs:
         run: |
           xcrun swiftc Alma/AgenteVoz.swift Pruebas/AgenteVoz/main.swift -o /tmp/agente-voz
           /tmp/agente-voz
+      # Comandos internos (Juan, 20-nov-2026: «no estés diciendo skip turn»): qué respuesta de Alma es solo el nombre de una
+      # herramienta y no debe sonar. Lógica pura.
+      - name: Probar los comandos internos
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/ComandoInterno.swift Pruebas/ComandoInterno/main.swift -o /tmp/comando-interno
+          /tmp/comando-interno
       # Despedida única (Juan, 19-nov-2026): qué es una despedida de Alma y cuándo cuelga la app si nadie responde. Lógica pura.
       - name: Probar la despedida única
         if: env.SUBIR != 'true'

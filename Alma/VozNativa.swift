@@ -118,6 +118,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         paso("Alma iba a preguntar si sigues ahí: no suena (calle o conferencia)")
         mandar(["type": "contextual_update", "text": "No preguntes si Juan sigue ahí ni insistas: en este modo el silencio y el ruido son normales. Quédate en silencio con skip_turn hasta que te llamen."])
     }
+    /// Comandos internos (Juan, 20-nov-2026: «no estés diciendo skip turn»): si Alma iba a decir solo el nombre de una
+    /// herramienta («skip turn», «end call», «nivel weebo dos»), su voz no suena, en cualquier llamada (ComandoInterno).
+    private func callarComando() {
+        sinVozPregunta = true
+        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
+        paso("Alma iba a decir un comando interno en voz alta: no suena")
+        mandar(["type": "contextual_update", "text": "Nunca digas en voz alta el nombre de una herramienta ni un comando (como «skip turn» o «end call»): úsala en silencio, sin decir nada."])
+    }
     // ficha pedida de antemano (la URL firmada de ElevenLabs dura ~15 min; se usa si tiene menos de 9)
     private var fichaLista: (j: [String: Any], t: Date)?
     private var pidiendoFicha = false
@@ -1339,6 +1347,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         case "agent_response":
             let ev = j["agent_response_event"] as? [String: Any] ?? [:]
             if let t = ev["agent_response"] as? String, sinSiguesAhi, LlamadaContinua.esPreguntaDeSilencio(t) { callarPregunta(); break }
+            if let t = ev["agent_response"] as? String, ComandoInterno.callar(t) { callarComando(); break }
             sinVozPregunta = false; textoAlmaCoro = Date()
             if let t = ev["agent_response"] as? String { emitir(["tipo": "alma", "texto": t]); linea(true, t); Companero.shared.sub(alma: true, t) }   // modo compañero (Hub #607)
             // Despedida única (Juan, 19-nov-2026): si Alma se despidió en una llamada normal y nadie habla en unos segundos, la app cuelga.
