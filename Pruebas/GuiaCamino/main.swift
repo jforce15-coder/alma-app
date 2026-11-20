@@ -52,5 +52,21 @@ do {
     revisa(b.ubicacion(en(14.0072), precision: 5) == .decir(1, "Prepárate para bajarte."), "bajarse del bus se avisa unos 300 m antes")
 }
 
+// La pantalla estilo carro (Juan, 20-nov-2026): sin «En media cuadra» (la distancia va en grande), la flecha y lo que falta.
+do {
+    revisa(GuiaCaminoReglas.textoPantalla("En media cuadra, en la tienda Polo, cruza a la izquierda.") == "En la tienda Polo, cruza a la izquierda.", "la pantalla quita «en media cuadra»")
+    revisa(GuiaCaminoReglas.textoPantalla("En una cuadra, gira a la derecha.") == "Gira a la derecha." && GuiaCaminoReglas.textoPantalla("Sigue recto.") == "Sigue recto.", "y «en una cuadra»; lo demás igual")
+    revisa(GuiaCaminoReglas.simbolo("izquierda") == "arrow.turn.up.left" && GuiaCaminoReglas.simbolo("") == "arrow.up", "la flecha de cada giro")
+    let l = [p0, p1, p2, fin]
+    let r = GuiaCaminoReglas.restante(en(14.0015), l)
+    revisa(abs(r - 167) < 3, "faltan unos 167 m por el camino (\(Int(r)))")
+    revisa(GuiaCaminoReglas.restante(en(14.003), l) < 1, "al final no falta nada")
+    let gp = [GuiaPaso(texto: "Camina.", punto: p0, giro: "recto"), GuiaPaso(texto: "En media cuadra, cruza a la izquierda.", punto: p1, antes: 50, giro: "izquierda"), GuiaPaso(texto: "Cruza a la derecha.", punto: p2, giro: "derecha")]
+    var g = GuiaCaminoReglas(pasos: gp, fin: fin, modo: "caminando", linea: [])
+    revisa(g.proximoGiro == "izquierda" && g.luegoGiro == "derecha", "el próximo giro y el de luego")
+    revisa(g.ubicacion(en(14.0006), precision: 5) == .decir(1, "En media cuadra, cruza a la izquierda."), "con anticipación del Hub: se dice a ~50 m del cruce")
+    revisa(g.proximoGiro == "derecha" && g.luegoGiro == "llegar", "después: el siguiente y luego llegar")
+}
+
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallo(s).")
 exit(fallos == 0 ? 0 : 1)
