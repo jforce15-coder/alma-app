@@ -1,5 +1,5 @@
 // Pruebas de la lógica pura de la Guía de camino (Alma/GuiaCaminoReglas.swift). Corren solas, sin iOS:
-//   swiftc Alma/GuiaCaminoReglas.swift Pruebas/GuiaCamino/main.swift -o /tmp/guia-camino && /tmp/guia-camino
+//   swiftc Alma/GuiaCaminoReglas.swift Alma/GuiaPantallaReglas.swift Pruebas/GuiaCamino/main.swift -o /tmp/guia-camino && /tmp/guia-camino
 // Las corre el robot en cada PR (testflight.yml, «Probar la Guía de camino»).
 import Foundation
 
@@ -66,6 +66,40 @@ do {
     revisa(g.proximoGiro == "izquierda" && g.luegoGiro == "derecha", "el próximo giro y el de luego")
     revisa(g.ubicacion(en(14.0006), precision: 5) == .decir(1, "En media cuadra, cruza a la izquierda."), "con anticipación del Hub: se dice a ~50 m del cruce")
     revisa(g.proximoGiro == "derecha" && g.luegoGiro == "llegar", "después: el siguiente y luego llegar")
+}
+
+// La pantalla de dos paneles (Juan, 20-nov-2026: «A teléfono, A iPad y B teléfono girado»; luz de rumbo más ancha).
+do {
+    typealias P = GuiaPantalla
+    revisa(P.distribucion(ancho: 390, alto: 844) == .dividido, "teléfono en vertical: A (dividido)")
+    revisa(P.distribucion(ancho: 820, alto: 1180) == .dividido, "iPad en vertical: A")
+    revisa(P.distribucion(ancho: 844, alto: 390) == .ladoALado, "teléfono girado: B (lado a lado)")
+    revisa(P.distribucion(ancho: 1180, alto: 820) == .ladoALado, "iPad acostado: B")
+    revisa(P.distribucion(ancho: 500, alto: 320) == .dividido, "una ventana angosta acostada se queda en A")
+
+    revisa(P.apertura >= 80, "la luz de rumbo abre \(Int(P.apertura))° (Juan la pidió más ancha; ≥ 80°)")
+    revisa(P.rumbo(verdadero: 12, magnetico: 15) == 12, "usa el rumbo verdadero si lo hay")
+    revisa(P.rumbo(verdadero: -1, magnetico: 15) == 15 && P.rumbo(verdadero: -1, magnetico: -1) == nil, "si no, el magnético; sin ninguno, nada")
+    revisa(P.diferencia(de: 359, a: 1) == 2 && P.diferencia(de: 1, a: 359) == -2, "de 359° a 1° son 2° (el camino corto)")
+    let s = P.suavizar(359, hacia: 1, k: 0.5)
+    revisa(abs(s - 360) < 1e-9, "suavizado de 359° hacia 1°: pasa por 360°, no da la vuelta (\(s))")
+    var a = 350.0
+    for _ in 0..<60 { a = P.suavizar(a, hacia: 10, k: 0.2) }
+    revisa(abs(P.normal(a) - 10) < 0.01 && a > 359, "llega a 10° avanzando por el norte (\(a))")
+    revisa(P.suavizar(.nan, hacia: 370, k: 0.2) == 10, "sin rumbo anterior, toma el nuevo")
+    revisa(P.luzEnPantalla(rumbo: 10, mapa: 350) == 20, "con el mapa girado, la luz se corrige")
+
+    let t = P.tarjeta(faltan: "80 m", proximo: "En la farmacia, gira a la derecha.", luego: "En la iglesia, cruza a la izquierda.", llego: false)
+    revisa(t == P.Tarjeta(titulo: "En 80 m", frase: "gira a la derecha en la farmacia", luego: "Luego, a la izquierda en la iglesia"), "la tarjeta del giro con su punto de referencia: \(t)")
+    revisa(P.frase("En media cuadra, en la tienda Polo, cruza a la izquierda hacia 6a Calle.") == "cruza a la izquierda en la tienda Polo hacia 6a Calle", "la referencia va pegada al giro, la calle al final")
+    revisa(P.frase("Sigue recto hasta la farmacia; ahí cruzas a la izquierda. Yo te aviso.") == "sigue recto hasta la farmacia; ahí cruzas a la izquierda", "el aviso sin «Yo te aviso»")
+    revisa(P.frase("Gira a la derecha en 5a Av.") == "gira a la derecha en 5a Av", "sin referencia, como viene")
+    revisa(P.tarjeta(faltan: "", proximo: "Toma el bus 101 hacia Centro.", luego: "", llego: false) == P.Tarjeta(titulo: "Ahora", frase: "toma el bus 101 hacia Centro", luego: ""), "sin distancia: «Ahora»; sin luego, nada")
+    revisa(P.tarjeta(faltan: "", proximo: "Llegaste a Plaza Berlín", luego: "x", llego: true).titulo == "Llegaste", "al llegar: «Llegaste»")
+
+    revisa(P.velocidad(4.8 / 3.6) == "4,8" && P.velocidad(38 / 3.6) == "38" && P.velocidad(-1) == "0", "la velocidad en km/h")
+    revisa(P.ritmo(1000.0 / 750) == "12:30" && P.ritmo(0.1) == nil, "a pie, el ritmo por km")
+    revisa(P.medioVisto(hub: "bus", elegido: "metro") == "metro" && P.medioVisto(hub: "bus", elegido: "") == "bus" && P.medioVisto(hub: "x", elegido: "") == "caminando", "el medio del selector (metro va como transporte público)")
 }
 
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallo(s).")
