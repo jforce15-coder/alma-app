@@ -70,11 +70,12 @@ jobs:
           xcrun swiftc Alma/LimpiezaVoz.swift Pruebas/LimpiezaVoz/main.swift -o /tmp/limpieza-voz
           /tmp/limpieza-voz
 
-      # La Guía de camino (Hub #661): cada paso justo a tiempo, «llegaste» una vez y recalcular fuera del camino. Lógica pura.
+      # La Guía de camino (Hub #661): cada paso justo a tiempo, «llegaste» una vez y recalcular fuera del camino; la pantalla de
+      # dos paneles (distribución, luz de rumbo, tarjeta del giro). Lógica pura.
       - name: Probar la Guía de camino
         if: env.SUBIR != 'true'
         run: |
-          xcrun swiftc Alma/GuiaCaminoReglas.swift Pruebas/GuiaCamino/main.swift -o /tmp/guia-camino
+          xcrun swiftc Alma/GuiaCaminoReglas.swift Alma/GuiaPantallaReglas.swift Pruebas/GuiaCamino/main.swift -o /tmp/guia-camino
           /tmp/guia-camino
 
       # El Navegador de Alma en sus modos (Hub #773): la pausa de privacidad (contraseña, código, tarjeta,

@@ -86,8 +86,8 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .abrirWearables)) { n in
                 llamadaOculta = true; wearableInicial = n.object as? String; wearables = true
             }
-            // Guía de camino: el mapa con el camino y el próximo paso; la llamada se baja (sigue en la roca).
-            .background { Color.clear.sheet(isPresented: $mapaCamino) { MapaCaminoVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
+            // Guía de camino: la pantalla de dos paneles a pantalla completa (se baja con la flecha; la guía sigue por voz); la llamada se baja.
+            .background { Color.clear.fullScreenCover(isPresented: $mapaCamino) { MapaCaminoVista() } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirGuiaCamino)) { _ in llamadaOculta = true; mapaCamino = true }
             .background { Color.clear.sheet(isPresented: $tarjetasClub) { TarjetasClubVista().presentationDragIndicator(.visible).presentationCornerRadius(28) } }
             .onReceive(NotificationCenter.default.publisher(for: .abrirTarjetasClub)) { _ in llamadaOculta = true; tarjetasClub = true }

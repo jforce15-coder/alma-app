@@ -19,7 +19,7 @@ extension Notification.Name {
 ///     antes para que ya esté lista); si no llega en 3 s, la dice la voz de mujer del iPhone (VozIphone) para no llegar
 ///     tarde. Si hay una llamada en curso, el paso espera a que cuelgue (90 s como mucho).
 ///   · Fuera del camino: se vuelve a pedir la ruta (20 s entre una y otra) y Alma dice «Te recalculé el camino…».
-///   · El mapa (MapaCamino.swift): la línea, el punto de Juan, el destino, el próximo paso y «Terminar».
+///   · La pantalla (MapaCamino.swift): dos paneles, el del medio y el mapa con la roca y su luz de rumbo.
 ///   · Ubicación: la primera vez iOS pregunta. Con el teléfono bloqueado solo se puede empezar si el permiso es «Siempre»;
 ///     si no, Alma le dice que desbloquee un momento.
 final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
@@ -44,6 +44,9 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
     @Published private(set) var minutosFaltan = 0
     @Published private(set) var llegada = ""
     @Published private(set) var posicion: CLLocation?
+    /// El medio que muestra el selector de la pantalla (carro · bici · bus · metro · caminando). Tocar otro pide la ruta
+    /// otra vez con ese medio (cambiarMedio).
+    @Published private(set) var medio = ""
 
     private let gps = CLLocationManager()
     private var reglas: GuiaCaminoReglas?
@@ -58,6 +61,8 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
     private let iphone = AVSpeechSynthesizer()
     private var sesionPropia = false
     private var metrosTotal = 0.0
+    private var medioElegido = ""
+    private var rumboEncendido = false
     private static let hora: DateFormatter = { let f = DateFormatter(); f.locale = Locale(identifier: "es_GT"); f.dateFormat = "H:mm"; return f }()
 
     private override init() {
@@ -135,6 +140,7 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
         linea = reglas?.linea ?? []
         fin = GuiaPunto(lat: flat, lng: flng)
         self.modo = m
+        medio = GuiaPantalla.medioVisto(hub: m, elegido: medioElegido)
         metrosTotal = (j["metros"] as? NSNumber)?.doubleValue ?? 0
         if metrosTotal <= 0, let a = linea.first { metrosTotal = GuiaCaminoReglas.restante(a, linea) }
         faltan = ""; aviso = ""; llego = false
@@ -169,6 +175,27 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
         }
     }
 
+    /// El selector del medio en la pantalla (Juan, 20-nov-2026): la misma ruta con otro medio. «metro» va al Hub como
+    /// «metro» (lo toma como transporte público) y en la pantalla se queda el metro. Alma dice el primer paso nuevo.
+    func cambiarMedio(_ m: String) {
+        guard activa, !llego, m != medio, !recalculando, let l = ultima ?? posicion else { return }
+        let antes = medio, antesElegido = medioElegido
+        medioElegido = m; medio = m
+        recalculando = true; recalculado = Date(); aviso = "Cambiando el medio…"
+        pedirRuta(pedido.destino, modo: m, desde: l) { [weak self] j in
+            guard let self else { return }
+            self.recalculando = false
+            guard self.activa else { return }
+            guard let j, (j["ok"] as? Bool) == true, self.empezar(j, destino: self.pedido.destino, modo: m) else {
+                self.medio = antes; self.medioElegido = antesElegido
+                self.aviso = (j?["sin_ruta"] as? Bool) == true ? "No hay ruta con ese medio; sigo con el de antes." : "No pude cambiar el medio; sigo con el de antes."
+                return
+            }
+            self.aviso = ""
+            self.decir("Te llevo " + self.modoTexto + ". " + (self.reglas?.pasos.first?.texto ?? ""))
+        }
+    }
+
     /// Termina la guía. Al llegar, el mapa se queda unos segundos con «Llegaste».
     func terminar(llegando: Bool = false) {
         guard activa else { return }
@@ -178,7 +205,8 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
             gps.stopUpdatingLocation(); gps.allowsBackgroundLocationUpdates = false
             return
         }
-        activa = false; llego = false; reglas = nil; pendiente = nil; audios = [:]; posicion = nil
+        activa = false; llego = false; reglas = nil; pendiente = nil; audios = [:]; posicion = nil; medioElegido = ""
+        rumbo(false)
         gps.stopUpdatingLocation()
         gps.allowsBackgroundLocationUpdates = false
         UIApplication.shared.isIdleTimerDisabled = false
@@ -224,6 +252,31 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
         let st = m.authorizationStatus
         if st == .authorizedAlways || st == .authorizedWhenInUse { if !esperan.isEmpty || activa { m.startUpdatingLocation() } }
         else if st == .denied || st == .restricted { entregar(nil) }
+    }
+
+    // MARK: - El rumbo del teléfono (la luz de rumbo de la roca en el mapa)
+
+    /// Solo mientras la pantalla de la guía está a la vista: la brújula gasta batería.
+    func rumbo(_ encender: Bool) {
+        guard encender != rumboEncendido, CLLocationManager.headingAvailable() else { return }
+        rumboEncendido = encender
+        if encender { gps.headingFilter = 2; gps.startUpdatingHeading() } else { gps.stopUpdatingHeading() }
+    }
+
+    /// Con la pantalla acostada, iOS tiene que saber hacia dónde quedó la parte de arriba para que el rumbo no salga
+    /// girado 90°.
+    func orientarRumbo(_ o: UIInterfaceOrientation) {
+        switch o {
+        case .portraitUpsideDown: gps.headingOrientation = .portraitUpsideDown
+        case .landscapeLeft: gps.headingOrientation = .landscapeRight    // la pantalla a la izquierda = el teléfono girado a la derecha
+        case .landscapeRight: gps.headingOrientation = .landscapeLeft
+        default: gps.headingOrientation = .portrait
+        }
+    }
+
+    func locationManager(_ m: CLLocationManager, didUpdateHeading h: CLHeading) {
+        guard let r = GuiaPantalla.rumbo(verdadero: h.trueHeading, magnetico: h.magneticHeading) else { return }
+        RumboGuia.shared.brujula(r)
     }
 
     func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {
