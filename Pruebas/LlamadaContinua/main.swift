@@ -142,6 +142,8 @@ revisa(C.cierreAlEmpezar(claudio: true, conectada: 3, juanHablo: false), "Claudi
 revisa(!C.cierreAlEmpezar(claudio: true, conectada: 3, juanHablo: true) && !C.cierreAlEmpezar(claudio: true, conectada: 40, juanHablo: false), "si Juan ya le habló o llevaban rato, Claudio colgó de verdad")
 revisa(!C.cierreAlEmpezar(claudio: false, conectada: 3, juanHablo: false), "con Alma no aplica: ella sí puede colgar pronto")
 revisa(!C.cerroPorDuracion(conectada: 300) && C.cerroPorDuracion(conectada: 899), "un cierre a los 15 min no es que Alma colgó: es el tope de ElevenLabs")
+revisa(C.cierreVistoAlEscuchar(codigo: 1000), "Alma colgó (end_call) y la escucha falló antes del aviso de cierre: el socket trae 1000, es un cierre (colgó), no un corte que reabre")
+revisa(!C.cierreVistoAlEscuchar(codigo: 0), "la escucha falló sin código de cierre: es un corte de verdad y se reabre")
 
 revisa(C.vencio(intentoDelReloj: 3, intentoActual: 3, conectando: true), "12 s sin contestar en este intento: no contestó")
 revisa(!C.vencio(intentoDelReloj: 2, intentoActual: 3, conectando: true), "el reloj de un intento anterior no corta la conexión de ahora")
