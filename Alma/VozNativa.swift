@@ -114,7 +114,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var sinSiguesAhi: Bool { desdeCalle || conferencia != nil }
     private func callarPregunta() {
         sinVozPregunta = true
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
+        player.stop(); if engine.isRunning { player.play() }; finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         paso("Alma iba a preguntar si sigues ahí: no suena (calle o conferencia)")
         mandar(["type": "contextual_update", "text": "No preguntes si Juan sigue ahí ni insistas: en este modo el silencio y el ruido son normales. Quédate en silencio con skip_turn hasta que te llamen."])
     }
@@ -122,7 +122,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// herramienta («skip turn», «end call», «nivel weebo dos»), su voz no suena, en cualquier llamada (ComandoInterno).
     private func callarComando() {
         sinVozPregunta = true
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
+        player.stop(); if engine.isRunning { player.play() }; finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         paso("Alma iba a decir un comando interno en voz alta: no suena")
         mandar(["type": "contextual_update", "text": "Nunca digas en voz alta el nombre de una herramienta ni un comando (como «skip turn» o «end call»): úsala en silencio, sin decir nada."])
     }
@@ -243,6 +243,15 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private var intentoConexion = 0
     /// Las veces que esta llamada se reabrió sola (tras un corte, o con Alma si Claudio no conectó).
     private var reabiertas = 0
+    /// Guardia 20-nov-2026 (LlamadaContinua.esperaInterrupcion): desde cuándo iOS tiene interrumpido el audio de una llamada
+    /// en conferencia o en el Modo calle (nil: nada). Mientras, la llamada sigue abierta esperando que vuelva.
+    private var interrumpidaDesde: Date?
+    /// La conexión se cayó durante la interrupción: qué pasó (se decide cuando vuelve el audio).
+    private var corteEnInterrupcion: String?
+    /// El tiempo que se le pide a iOS en segundo plano mientras se espera el audio o sale el aviso de cierre.
+    private var tareaFondo = UIBackgroundTaskIdentifier.invalid
+    /// El último fallo al volver a abrir el micrófono (AnilloVuelve.revivirAlReacomodar: sin bucle fuera de una llamada).
+    private var falloMicrofono = Date.distantPast
     /// La conversación que conecta es una reapertura: la frase con la que Alma abre y lo último que se dijo.
     private var reabierta: (frase: String, charla: [String], porClaudio: Bool)?
     /// Por qué termina la llamada (queda en el paso «Llamada terminada»).
@@ -798,6 +807,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
             guard let self, let t = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt else { return }
             guard t == AVAudioSession.InterruptionType.began.rawValue else {
+                // Terminó a media llamada (conferencia, Modo calle): la misma conversación sigue (guardia 20-nov-2026).
+                if self.interrumpidaDesde != nil { self.volverTrasInterrupcion(); return }
                 // Terminó (Spotify se pausó, colgaste el teléfono): el anillo vuelve a quedar listo (AnilloVuelve).
                 self.anilloVuelve(.interrupcionTermino); return
             }
@@ -805,9 +816,16 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // Modo calle: otra llamada o Siri cortan sin error ni reintento; el Modo calle vuelve a esperar cuando regrese el micrófono.
             // Conferencia (conversación continua): igual, sin error; al terminar la interrupción vuelve a escuchar «Alma».
             // Guardia 19-nov-2026: el motivo de iOS y lo demás (llamada de teléfono, herramienta en curso) quedan en el registro.
-            let motivo = (n.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt).map { " (motivo \($0))" } ?? ""
+            let motivoN = n.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt
+            let motivo = motivoN.map { " (motivo \($0))" } ?? ""
             self.paso("iOS interrumpió el audio de la llamada" + motivo + self.corteNota())
-            if self.tiemposCierre != nil { self.paso("Otra app o una llamada tomó el audio"); self.colgarCalle(.corte) } else { self.fallo("Otra app o una llamada tomó el audio.") }
+            // Guardia 20-nov-2026: en conferencia y en el Modo calle no se cuelga en el acto (la Guía de camino en la calle,
+            // otra app que suena un momento): se espera unos segundos a que iOS devuelva el audio y sigue la misma conversación.
+            let telefono = CXCallObserver().calls.contains { !$0.hasEnded }
+            if self.estado == .hablando, LlamadaContinua.esperaTrasInterrupcion(continua: self.tiemposCierre != nil, motivo: motivoN, telefono: telefono) {
+                self.esperarInterrupcion(); return
+            }
+            if self.tiemposCierre != nil { self.paso("Otra app o una llamada tomó el audio"); self.pedirTiempoFondo(); self.colgarCalle(.corte) } else { self.fallo("Otra app o una llamada tomó el audio.") }
         }
         // Al abrir la app (o al volver a ella) el micrófono queda listo otra vez.
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -832,6 +850,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // También en plena llamada sin el anillo: si iOS apagó el audio, la voz de Alma no sonaba hasta el próximo arreglo.
             let enLlamada = self.estado == .hablando || self.estado == .conectando
             guard self.modoAnillo || (enLlamada && !self.engine.isRunning) else { return }
+            guard self.interrumpidaDesde == nil else { return }   // iOS tiene el audio: se vuelve a abrir cuando lo devuelva
+            // Sin llamada y con otra app dueña del audio, abrirlo falla y iOS vuelve a avisar: sin bucle (guardia 20-nov-2026).
+            guard AnilloVuelve.revivirAlReacomodar(enLlamada: enLlamada, ultimoFallo: self.falloMicrofono, ahora: Date()) else { return }
             self.paso("iOS reacomodó el audio" + (self.engine.isRunning ? "" : " y apagó el micrófono"))
             self.revivirMicrofono()
         }
@@ -1339,7 +1360,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // Cuánta voz de Alma se tiró (lo que faltaba por sonar): si se repite, se ve en el registro por qué no se oyó.
             let tirada = max(0, finVozAlma.timeIntervalSinceNow); cortesVoz += 1
             if tirada > 0.3 { paso(String(format: "ElevenLabs cortó a Alma (oyó voz): %.1f s de su voz no sonaron (corte %d)", tirada, cortesVoz)) }
-            player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
+            player.stop(); if engine.isRunning { player.play() }; finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
             coro.corta()   // Juan interrumpió: el coro se corta
         case "ping":
             let ev = j["ping_event"] as? [String: Any] ?? [:]
@@ -1596,6 +1617,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         finHabla?.cancel()
         let w = DispatchWorkItem { [weak self] in self?.almaHabla = false; self?.nivel = 0; self?.ventanasAlma = [] }
         finHabla = w; DispatchQueue.main.asyncAfter(deadline: .now() + dur + 0.25, execute: w)
+        if interrumpidaDesde != nil { return }   // iOS tiene el audio: lo que llega ahora no puede sonar (sigue al volver)
         if !engine.isRunning, Date().timeIntervalSince(revividoPorVoz) > 2 {
             // iOS apagó el audio (otra app, un cambio de salida): la voz se agendaba pero no sonaba. Se vuelve a abrir.
             revividoPorVoz = Date(); paso("La voz de Alma llegó con el audio apagado: lo vuelvo a abrir"); revivirMicrofono()
@@ -1731,6 +1753,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 return
             }
             if self.pausada { self.ultimaVoz = Date(); return }
+            if self.interrumpidaDesde != nil { self.ultimaVoz = Date(); return }   // iOS tiene el audio: se espera a que lo devuelva
             if Date().timeIntervalSince(self.ultimaVoz) > 3 {
                 self.paso("El micrófono dejó de mandar voz (motor " + (self.engine.isRunning ? "encendido" : "apagado") + ")")
                 if self.desdeCalle && !self.mudo { self.colgarCalle(.corte); return }   // Modo calle: sin reintentar; vuelve a esperar «Alma»
@@ -1753,6 +1776,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     private func revivirMicrofono(segundoIntento: Bool = false) {
         do { try prepararMotor(); paso("Micrófono abierto otra vez"); if estado == .hablando { asegurarSalida("Audio abierto otra vez") } }
         catch {
+            falloMicrofono = Date()
             paso("No pude volver a abrir el micrófono (\((error as NSError).code))" + (segundoIntento ? "" : ": lo intento otra vez"))
             guard estado == .hablando else { return }
             if segundoIntento { fallo("iOS apagó el micrófono y no dejó volver a abrirlo. Abre Alma y vuelve a intentar."); return }
@@ -1792,12 +1816,17 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         UserDefaults.standard.set(false, forKey: "voz_abierta"); sono = false; sinVozPregunta = false
         // Cierre normal de verdad: se deja salir el aviso de cierre antes de soltar la sesión (invalidateAndCancel lo
         // cortaba a veces y ElevenLabs lo anotaba como corte anormal, 1006, aunque hubiera colgado la app).
+        // Guardia 20-nov-2026: en segundo plano iOS suspendía la app antes de que saliera ese aviso (ElevenLabs veía 1006):
+        // se pide un momento para que salga.
+        interrumpidaDesde = nil; corteEnInterrupcion = nil
+        if ws != nil, UIApplication.shared.applicationState == .background { pedirTiempoFondo() }
+        if tareaFondo != .invalid { soltarTiempoFondo(tras: LlamadaContinua.tiempoCierre) }
         ws?.cancel(with: .normalClosure, reason: nil); ws = nil
         local?.parar(); local = nil
         sesionURL?.finishTasksAndInvalidate(); sesionURL = nil
         AudioLlamada.shared.termino()   // suelta el micrófono o la bocina que pidió la llamada
         player.stop()
-        if modoAnillo || unRato { player.play() }   // el micrófono sigue listo para el próximo doble toque
+        if (modoAnillo || unRato) && engine.isRunning { player.play() }   // el micrófono sigue listo para el próximo doble toque
         else { engine.inputNode.removeTap(onBus: 0); if engine.isRunning { engine.stop() } }
         // La señal de salida suena siempre, igual que la de entrada (también en conferencia): así se sabe que Alma colgó
         // o se desconectó (Juan, 16-nov-2026, Hub #575).
@@ -1895,7 +1924,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .normalClosure, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil   // Claudio local se va: vuelve Alma
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
+        player.stop(); if engine.isRunning { player.play() }; finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         inicioEnviado = false; antesDeFicha = []; colaVoz = []; sono = false; sinVozPregunta = false
         idLlamada = nil; idClaudio = nil; reglasTarjeta.terminar(); publicarTarjeta()   // vuelve Alma: el Panel de Claudio se quita
         volviendo = nuevo == .alma
@@ -2051,6 +2080,58 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         paso(LlamadaContinua.pasoCierre(m.rawValue, calle: desdeCalle, conferencia: conferencia != nil, hablando: hablando))
         motivoCalle = m
         terminar()
+    }
+
+    // MARK: - Si iOS interrumpe el audio a media llamada (guardia 20-nov-2026, LlamadaContinua.esperaInterrupcion)
+
+    /// Otra app tomó el audio en conferencia o en el Modo calle: la llamada no cuelga; espera a que iOS lo devuelva.
+    private func esperarInterrupcion() {
+        guard interrumpidaDesde == nil else { return }
+        let desde = Date(), llamada = inicioLlamada
+        interrumpidaDesde = desde
+        pedirTiempoFondo()   // en segundo plano, sin esto iOS suspende la app y el socket se cae (1006)
+        paso(String(format: "Otra app tomó el audio: la llamada sigue y espero hasta %.0f s a que vuelva", LlamadaContinua.esperaInterrupcion))
+        DispatchQueue.main.asyncAfter(deadline: .now() + LlamadaContinua.esperaInterrupcion) { [weak self] in
+            guard let self, self.interrumpidaDesde == desde, self.inicioLlamada == llamada else { return }
+            self.interrumpidaDesde = nil; self.corteEnInterrupcion = nil
+            self.paso(String(format: "iOS no devolvió el audio en %.0f s", LlamadaContinua.esperaInterrupcion))
+            self.colgarCalle(.corte)   // terminar() cierra el socket con 1000 y deja tiempo para que salga
+            self.soltarTiempoFondo(tras: LlamadaContinua.tiempoCierre)
+        }
+    }
+
+    /// iOS devolvió el audio: el micrófono y la voz se vuelven a abrir y sigue la misma conversación. Si la conexión se cayó
+    /// mientras tanto, se reabre (LlamadaContinua.trasCorte con interrumpida).
+    private func volverTrasInterrupcion() {
+        guard let desde = interrumpidaDesde else { return }
+        interrumpidaDesde = nil
+        let caido = corteEnInterrupcion; corteEnInterrupcion = nil
+        guard estado == .hablando || estado == .conectando else { soltarTiempoFondo(tras: 0); return }
+        do { try prepararMotor() } catch {
+            falloMicrofono = Date()
+            paso("Volvió el audio pero no pude abrir el micrófono (\((error as NSError).code))")
+            colgarCalle(.corte); return
+        }
+        ultimaVoz = Date(); finVozAlma = Date()
+        asegurarSalida(String(format: "Volvió el audio a los %.0f s", Date().timeIntervalSince(desde)))
+        soltarTiempoFondo(tras: 0)
+        if let m = caido { corte(m, trasInterrupcion: true) } else { paso("La llamada sigue donde iba") }
+    }
+
+    private func pedirTiempoFondo() {
+        guard tareaFondo == .invalid else { return }
+        var id = UIBackgroundTaskIdentifier.invalid
+        id = UIApplication.shared.beginBackgroundTask(withName: "alma.llamada") { [weak self] in   // se acabó el tiempo: se suelta ya
+            if self?.tareaFondo == id { self?.tareaFondo = .invalid }
+            UIApplication.shared.endBackgroundTask(id)
+        }
+        tareaFondo = id
+    }
+    private func soltarTiempoFondo(tras: TimeInterval) {
+        let t = tareaFondo
+        guard t != .invalid else { return }
+        tareaFondo = .invalid
+        DispatchQueue.main.asyncAfter(deadline: .now() + tras) { UIApplication.shared.endBackgroundTask(t) }
     }
 
     // MARK: - Pausa
@@ -2250,8 +2331,13 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     /// La conexión de la llamada se cayó o no llegó a abrir (falló el socket, ElevenLabs cerró sin colgar, no contestó en
     /// 12 s). Una llamada normal se vuelve a abrir sola; si era Claudio, vuelve Alma y lo dice; en el Modo calle y en
     /// conferencia se cierra sin error y se vuelve a escuchar «Alma». Solo si no hay cómo seguir se dice el error y termina.
-    private func corte(_ m: String, sinCreditos: Bool = false) {
+    private func corte(_ m: String, sinCreditos: Bool = false, trasInterrupcion: Bool = false) {
         guard estado == .conectando || estado == .hablando else { return }
+        // Se cayó con el audio interrumpido por iOS: se decide cuando vuelva el audio (o cuelga si no vuelve).
+        if interrumpidaDesde != nil, !sinCreditos {
+            if corteEnInterrupcion == nil { paso("Se cortó la conexión con el audio interrumpido (" + m + "): espero a que vuelva el audio") }
+            corteEnInterrupcion = m; return
+        }
         let conectada: TimeInterval? = estado == .hablando ? Date().timeIntervalSince(conectadaDesde) : nil
         // Voz de respaldo (Hub #657): sin internet, si ElevenLabs no conectó o si es el segundo corte en 3 min, Alma sigue
         // con la voz del teléfono en vez de volver a abrir (o de colgar con el error).
@@ -2265,7 +2351,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         let esperando = !buscando && agente == .alma && conectada != nil
             && LlamadaContinua.juanEspera(juan: turnoJuan, voz: respuestaVoz, palabras: palabrasTurnoJuan, ahora: Date())
         switch LlamadaContinua.trasCorte(claudio: agente == .claudio, calle: desdeCalle, conferencia: conferencia != nil, conectada: conectada,
-                                         reabiertas: reabiertas, sinCreditos: sinCreditos, buscando: buscando, esperando: esperando) {
+                                         reabiertas: reabiertas, sinCreditos: sinCreditos, buscando: buscando, esperando: esperando,
+                                         interrumpida: trasInterrupcion) {
         case .fallar: fallo(m, conexion: true)
         case .colgar: paso("Se cortó la conexión (" + m + ")"); colgarCalle(.corte)
         case .volverConAlma: reabrir(por: m, frase: LlamadaContinua.fraseSinClaudio(conectado: conectada != nil), porClaudio: true)
@@ -2273,7 +2360,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             // Se cortó buscando: sin frase fija (Alma se quedaría callada esperando); la app le pide que lo diga y lo busque otra vez.
             if buscando { textoInicial = LlamadaContinua.pedidoTrasCorteBuscando; paso("Se cortó mientras Alma usaba " + (herramientaNombre.isEmpty ? "una herramienta" : herramientaNombre) + ": la reabro y lo busca otra vez") }
             if esperando { textoInicial = LlamadaContinua.pedidoTrasCorteEsperando; paso("Se cortó con Juan esperando respuesta: la reabro y Alma lo atiende") }
-            reabrir(por: m, frase: buscando || esperando ? "" : LlamadaContinua.fraseTrasCorte, porClaudio: false)
+            let porInterrupcion = trasInterrupcion && !buscando && !esperando
+            if porInterrupcion { textoInicial = LlamadaContinua.pedidoTrasInterrupcion; paso("Se cortó mientras otra app tenía el audio: la reabro") }
+            reabrir(por: m, frase: buscando || esperando || porInterrupcion ? "" : LlamadaContinua.fraseTrasCorte, porClaudio: false)
         }
     }
 
@@ -2291,7 +2380,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
+        player.stop(); if engine.isRunning { player.play() }; finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         inicioEnviado = false; antesDeFicha = []; colaVoz = []
         cambiando = true   // mientras llega la conversación nueva no se cambia de agente
         estado = .conectando
@@ -2350,7 +2439,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
+        player.stop(); if engine.isRunning { player.play() }; finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
         if !arrancarRespaldo(frase: conectada ? RespaldoReglas.fraseSeFue : RespaldoReglas.fraseAlEmpezar) { fallo(m) }
     }
@@ -2373,7 +2462,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         ws = nil; sesionURL = nil
         viejo?.cancel(with: .goingAway, reason: nil); viejaSesion?.finishTasksAndInvalidate()
         local?.parar(); local = nil
-        player.stop(); player.play(); finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
+        player.stop(); if engine.isRunning { player.play() }; finVozAlma = Date(); ventanasAlma = []; Retransmision.shared.corte(); BocinasGoogle.shared.corte()
         intentoConexion += 1   // el reloj de «no contestó en 12 s» de ese intento ya no cuenta
         local = l
         l.paso = { [weak self] t in self?.paso(t) }
