@@ -1277,6 +1277,11 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                     // Guardia 18-nov-2026: el corte anormal (1006) llega por aquí: el código del error y si Juan esperaba.
                     let ne = e as NSError
                     self.paso("Socket caído: \(ne.domain) \(ne.code)" + (tarea.closeCode.rawValue != 0 ? " · cierre \(tarea.closeCode.rawValue)" : "") + self.cierreNota())
+                    // Guardia 20-nov-2026: si el socket ya trae su código de cierre (Alma colgó con end_call), es un cierre,
+                    // no un corte: sigue la regla del cierre y no se reabre la conversación.
+                    if LlamadaContinua.cierreVistoAlEscuchar(codigo: tarea.closeCode.rawValue) {
+                        self.cerrado(tarea, code: tarea.closeCode, reason: tarea.closeReason); return
+                    }
                     self.corte("La voz se cortó: \(e.localizedDescription)")
                 }
             }
@@ -2334,6 +2339,12 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     }
 
     func urlSession(_ s: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith code: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        cerrado(webSocketTask, code: code, reason: reason)
+    }
+
+    /// El socket se cerró con un código: lo avisa el delegado o lo ve antes la escucha (escuchar()). Lo que llegue segundo no
+    /// hace nada: el socket ya no es el de la llamada (se reabrió) o la llamada ya terminó (guard del estado).
+    private func cerrado(_ webSocketTask: URLSessionWebSocketTask, code: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         let por = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
         guard webSocketTask === ws else { return }   // el socket de antes de cambiar de agente (Hablar con Claudio) no corta la llamada
         guard estado == .conectando || estado == .hablando else { return }

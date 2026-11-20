@@ -164,6 +164,11 @@ enum LlamadaContinua {
     static let duracionMaxima: TimeInterval = 900
     static func cerroPorDuracion(conectada: TimeInterval) -> Bool { conectada >= duracionMaxima - 20 }
 
+    /// Guardia 20-nov-2026: cuando Alma cuelga (end_call), el error de la escucha («El socket no está conectado», 57) a veces
+    /// llega ANTES que el aviso de cierre. Si el socket ya trae su código de cierre (1000 u otro), no es un corte: se decide
+    /// con la misma regla del cierre (colgó, 15 min o Claudio al empezar). Solo sin código (0) es un corte de verdad.
+    static func cierreVistoAlEscuchar(codigo: Int) -> Bool { codigo != 0 }
+
     /// Claudio «colgó» a los pocos segundos de entrar y sin que Juan le dijera nada: no es una despedida, algo cerró su
     /// conversación al empezar (una protección, un permiso). Se trata como un corte: vuelve Alma y lo dice.
     static let claudioRecienEntro: TimeInterval = 10
