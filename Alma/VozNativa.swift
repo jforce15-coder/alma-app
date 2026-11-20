@@ -1350,6 +1350,7 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             relojEspera?.invalidate(); relojEspera = nil
             let rt = j["agent_tool_response"] as? [String: Any] ?? [:]
             coro.termina(rt["tool_call_id"] as? String ?? "")
+            if (rt["tool_name"] as? String) == "skip_turn" { saltoTurno = Date() }   // Alma calló a propósito: la conversación está viva
             if (rt["tool_name"] as? String ?? "") == "secretaria" { pedirTarjeta(intento: 0) }
             if agente == .claudio, (rt["tool_name"] as? String ?? "").hasPrefix("claudio_") { pedirPanelClaudio(intento: 0) }   // lo que dejó la herramienta de Claudio
             // Modo Creator (Hub #770): Claudio cambió el diseño; el Modo Creator sube a pantalla completa y la llamada sigue abajo.
@@ -2069,9 +2070,38 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             let m = SuenoCalle.Momentos(conectada: self.conectadaDesde, finVozAlma: self.finVozAlma, vozJuan: self.vozJuanCalle,
                                         sonido: self.sonidoCalle, herramientaDesde: self.herramientaDesde, finHerramienta: self.finHerramienta,
                                         sonidoDesde: self.sonidoDesdeCalle)
+            let espera = self.atenderSinRespuesta()
+            if self.estado != .hablando { return }   // se reabrió: la vigía vuelve a empezar al conectar
             if let motivo = SuenoCalle.decidir(m, ahora: Date(), silencio: tc.silencio, tope: tc.tope, ruido: tc.ruido, pausa: tc.pausa, duro: tc.duro,
-                                               dictado: tc.dictado) { self.colgarCalle(motivo) }
+                                               dictado: tc.dictado, juanEspera: espera) { self.colgarCalle(motivo) }
         }
+    }
+
+    /// El turno de Juan al que ya se le mandó el recordatorio, cuándo, y la última vez que Alma usó skip_turn.
+    private var recordadoTurno: Date?, recordadoEn = Date.distantPast, saltoTurno = Date.distantPast
+    /// Guardia 20-nov-2026 (LlamadaContinua.sinRespuesta): Juan le contestó a Alma y ella no responde. La app no cuelga:
+    /// a los 10 s le recuerda a Alma y a los 20 s reabre la conversación con lo último dicho. Si tras el recordatorio Alma usó
+    /// skip_turn (decidió que no era para ella; en una reunión pasa), la conversación está viva: no se reabre. true: Alma le
+    /// debe la respuesta (no se cierra todavía).
+    private func atenderSinRespuesta() -> Bool {
+        guard agente == .alma, local == nil, !pausada, !cambiando, finVozAlma <= Date() else { return false }   // Alma habla ahora: ya respondió
+        let hizo: [Date?] = [respuestaVoz, herramientaDesde, finHerramienta == .distantPast ? nil : finHerramienta]
+        let respondio = hizo.compactMap { $0 }.max()   // lo último que hizo Alma: responder o usar una herramienta
+        guard let s = LlamadaContinua.sinRespuesta(juan: turnoJuan, respondio: respondio, alma: max(conectadaDesde, finVozAlma),
+                                                   palabras: palabrasTurnoJuan, ahora: Date(), recordado: turnoJuan != nil && recordadoTurno == turnoJuan,
+                                                   puedeReabrir: reabiertas < LlamadaContinua.maxReabrir && saltoTurno < recordadoEn) else { return false }
+        switch s {
+        case .esperar: break
+        case .recordar:
+            recordadoTurno = turnoJuan; recordadoEn = Date()
+            paso(String(format: "Alma no respondió a Juan en %.0f s: se lo recuerdo (la llamada no se cierra)", LlamadaContinua.recordarTras))
+            mandar(["type": "user_message", "text": LlamadaContinua.recordatorio])
+        case .reabrir:
+            paso(String(format: "Alma sigue sin responder a Juan a los %.0f s: reabro la conversación con lo último dicho", LlamadaContinua.reabrirTras))
+            textoInicial = LlamadaContinua.pedidoTrasCorteEsperando
+            reabrir(por: "Alma no respondió a Juan", frase: "", porClaudio: false)
+        }
+        return true
     }
 
     /// Cuelga la llamada del Modo calle sin despedida (solo el sonido de fin): el Modo calle vuelve a esperar «Alma».
