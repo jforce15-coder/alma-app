@@ -76,7 +76,8 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
 
     // MARK: - La herramienta de Alma
 
-    /// guiar_camino { destino, modo?, detener? } → siempre contesta (texto JSON, ¿es error?).
+    /// guiar_camino { destino, modo?, detener?, donde? } → siempre contesta (texto JSON, ¿es error?). donde: true no cambia
+    /// nada: dice en qué paso va Juan, cuánto falta y si ya llegó (Hub #946: para que Alma no lo adivine).
     func herramienta(_ p: [String: Any], _ listo: @escaping (String, Bool) -> Void) {
         DispatchQueue.main.async { self.correr(p, listo) }
     }
@@ -88,7 +89,9 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
             terminar()
             listo(GuiaCamino.json(habia ? ["ok": true, "detenida": true] : ["ok": true, "nota": "No había una guía en curso."]), false); return
         }
+        let donde = (p["donde"] as? Bool) == true || (p["donde"] as? String) == "true"
         let destino = (p["destino"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if donde && (activa || destino.isEmpty) { listo(GuiaCamino.json(estadoParaAlma), false); return }
         guard !destino.isEmpty else { listo(GuiaCamino.json(["error": "Falta a dónde va: pregúntaselo."]), true); return }
         let modo = (p["modo"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         ubicacion { [weak self] loc in
@@ -105,7 +108,7 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
                 var r: [String: Any] = ["ok": true, "destino": self.destino, "medio": self.modoTexto, "minutos": self.minutos,
                                         "primer_paso": self.reglas?.pasos.first?.texto ?? "", "pasos": self.reglas?.pasos.count ?? 0,
                                         "mapa": UIApplication.shared.applicationState == .active ? "ya está en la pantalla" : "teléfono bloqueado: la guía va solo por voz",
-                                        "instruccion": "Di en UNA frase cuánto tarda y el primer paso. Los demás los dice la app justo a tiempo: no los leas."]
+                                        "instruccion": "Di en UNA frase cuánto tarda y el primer paso. Los demás los dice la app justo a tiempo: no los leas. " + GuiaCaminoReglas.reglasLlamada]
                 if let rec = j["recordado"] as? String {
                     r["recordado"] = rec == "lugar" ? "el medio que eligió la última vez para este lugar" : "el último medio que usó"
                 }
@@ -117,7 +120,13 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
     /// Para la ficha de la llamada: si hay una guía en curso, Alma lo sabe.
     var ficha: String {
         guard activa else { return "" }
-        return "GUÍA DE CAMINO EN CURSO: hacia " + destino + " " + modoTexto + ". Si Juan pide parar, usa guiar_camino con detener: true."
+        return "GUÍA DE CAMINO EN CURSO: hacia " + destino + " " + modoTexto + ". Si Juan pide parar, usa guiar_camino con detener: true. " + GuiaCaminoReglas.reglasLlamada
+    }
+
+    /// El estado real de la guía para Alma (guiar_camino con donde: true).
+    private var estadoParaAlma: [String: Any] {
+        GuiaCaminoReglas.estadoParaAlma(activa: activa, llego: llego, destino: destino, medio: modoTexto, proximo: proximo, faltan: faltan,
+                                        restante: restante, minutosFaltan: minutosFaltan, aviso: aviso)
     }
 
     // MARK: - La ruta
@@ -297,8 +306,8 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
         if aviso == "Recalculando…" && !recalculando { aviso = "" }
         decirPendiente()
         switch ev {
-        case .decir(let i, let t)?: decir(t); prepararVoz(i + 1)
-        case .llegaste?: decir("Llegaste a " + destino + "."); terminar(llegando: true)
+        case .decir(let i, let t)?: avisarLlamada(t, llego: false); decir(t); prepararVoz(i + 1)
+        case .llegaste?: avisarLlamada("", llego: true); decir("Llegaste a " + destino + "."); terminar(llegando: true)
         case .recalcular?: recalcular(desde: l)
         case nil: break
         }
@@ -321,6 +330,13 @@ final class GuiaCamino: NSObject, ObservableObject, CLLocationManagerDelegate, A
     // MARK: - La voz
 
     private var hayLlamada: Bool { VozNativa.shared.estado == .hablando || VozNativa.shared.estado == .conectando }
+
+    /// Con la llamada abierta la voz de la guía espera a que cuelgue: Alma se entera del paso (o de la llegada) que dijo el
+    /// GPS y lo dice ella, en vez de inventarlo (Hub #946).
+    private func avisarLlamada(_ t: String, llego: Bool) {
+        guard hayLlamada else { return }
+        VozNativa.shared.avisarGuia(GuiaCaminoReglas.avisoEnLlamada(t, llego: llego))
+    }
 
     /// Pide de antemano la voz de Alma del paso i (o de «Llegaste», si ya no quedan pasos).
     private func prepararVoz(_ i: Int) {

@@ -102,5 +102,20 @@ do {
     revisa(P.medioVisto(hub: "bus", elegido: "metro") == "metro" && P.medioVisto(hub: "bus", elegido: "") == "bus" && P.medioVisto(hub: "x", elegido: "") == "caminando", "el medio del selector (metro va como transporte público)")
 }
 
+// Lo que sabe Alma en la llamada (Hub #946): «ya llegaste» solo con el GPS, y el próximo paso real.
+do {
+    let R = GuiaCaminoReglas.self
+    let no = R.estadoParaAlma(activa: false, llego: false, destino: "", medio: "", proximo: "", faltan: "", restante: "", minutosFaltan: 0, aviso: "")
+    revisa(no["en_curso"] as? Bool == false && no["llego"] == nil, "sin guía: no hay paso ni llegada que decir")
+    let va = R.estadoParaAlma(activa: true, llego: false, destino: "Casa", medio: "en bici", proximo: "En la iglesia, cruza a la derecha.", faltan: "80 m", restante: "1,2 km", minutosFaltan: 6, aviso: "")
+    revisa(va["llego"] as? Bool == false && va["proximo_paso"] as? String == "En la iglesia, cruza a la derecha." && va["proximo_paso_a"] as? String == "80 m" && va["falta_para_llegar"] as? String == "1,2 km", "en camino: el próximo paso, a cuánto y lo que falta")
+    revisa((va["instruccion"] as? String ?? "").contains("NO llegó"), "en camino le dice a Alma que todavía no llegó")
+    let ya = R.estadoParaAlma(activa: true, llego: true, destino: "Casa", medio: "", proximo: "", faltan: "", restante: "", minutosFaltan: 0, aviso: "")
+    revisa(ya["llego"] as? Bool == true, "llegó solo cuando la app lo marcó")
+    revisa(R.avisoEnLlamada("En media cuadra, cruza a la izquierda.", llego: false).contains("«En media cuadra, cruza a la izquierda.»"), "el paso del GPS le llega a Alma tal cual")
+    revisa(R.avisoEnLlamada("", llego: true).contains("CONFIRMÓ QUE JUAN LLEGÓ"), "la llegada le llega a Alma confirmada")
+    revisa(R.reglasLlamada.contains("skip_turn") && R.reglasLlamada.contains("donde: true"), "las reglas: «...» = skip_turn y «¿voy bien?» = donde")
+}
+
 print(fallos == 0 ? "Todo bien." : "\(fallos) fallo(s).")
 exit(fallos == 0 ? 0 : 1)
