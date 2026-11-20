@@ -53,6 +53,9 @@ final class ClaudioLocal: NSObject {
     private var relojTecleo: Timer?, desdeTurno = Date(), teclas: UInt64 = 0
     private var vivo = true
     private var llamadas = 0
+    /// La última frase que dijo, cuándo empezó y cuándo terminó de sonar (para repetirla si iOS tomó el audio a media frase).
+    private var ultimaFrase: (texto: String, audio: Data?, luego: (() -> Void)?)?
+    private var empezoDecir: Date?, finVoz: Date?
     /// poner_voz (Hub #779; PonerVoz.swift): las voces o el audio del enlace, por el mismo camino que su voz.
     private let poner = PonerVoz()
 
@@ -173,6 +176,21 @@ final class ClaudioLocal: NSObject {
         case "contextual_update": if let t = o["text"] as? String { notas = Array((notas + [String(t.prefix(400))]).suffix(3)) }
         default: break
         }
+    }
+
+    /// iOS devolvió el audio tras una interrupción (VozNativa.volverTrasInterrupcion; guardia 20-nov-2026, Maricarmen).
+    /// Si todavía espera al Hub, su respuesta sonará al llegar. Si dijo algo mientras no había audio (o la cortó a media
+    /// frase), lo repite; si no, vuelve a escuchar con un dictado nuevo (el de antes se quedó sin audio).
+    func trasInterrupcion(desde: Date) {
+        guard vivo, !pensando else { return }
+        if let f = ultimaFrase, LlamadaContinua.repetirTrasInterrupcion(empezoDecir: empezoDecir, finVoz: finVoz, interrumpida: desde) {
+            paso?("Volvió el audio: repito lo que no sonó")
+            habla.cancelar()
+            decir(f.texto, audio: f.audio, luego: f.luego)
+            return
+        }
+        ocupadoHasta = Date()
+        nuevoPedido()
     }
 
     func parar() {
@@ -439,14 +457,17 @@ final class ClaudioLocal: NSObject {
     /// Dice la frase. Con el audio del Hub (su voz de ElevenLabs, PCM 16 kHz) lo suena tal cual; si no, con la voz del iPhone.
     /// El audio sale en trozos de `hz` (24 kHz con la voz del iPhone), como el del socket de ElevenLabs, y VozNativa lo suena en su reproductor (el
     /// halo late con la voz). Al terminar de sonar, vuelve a escuchar.
-    private func decir(_ t: String, audio: Data? = nil, luego: (() -> Void)? = nil) {
+    private func decir(_ t: String, audio: Data? = nil, luego dado: (() -> Void)? = nil) {
         ocupadoHasta = .distantFuture
         texto = ""; soltarPedido()
+        // Lo de después corre una sola vez, aunque la frase se repita tras una interrupción (trasInterrupcion).
+        let una = UnaVez(dado), luego: (() -> Void)? = dado == nil ? nil : { una.correr() }
+        ultimaFrase = (t, audio, luego); empezoDecir = Date(); finVoz = nil
         emitir(["type": "agent_response", "agent_response_event": ["agent_response": t]])
         if let a = audio {
             for d in ClaudioLocalReglas.trozos(a) { emitir(["type": "audio", "audio_event": ["audio_base_64": d.base64EncodedString()]]) }
             let fin = Date().addingTimeInterval(ClaudioLocalReglas.duracion(a, hz: hz) + 0.45)
-            ocupadoHasta = fin
+            ocupadoHasta = fin; finVoz = fin
             DispatchQueue.main.asyncAfter(deadline: .now() + max(0, fin.timeIntervalSinceNow)) { [weak self] in
                 guard let self, self.vivo else { return }
                 luego?()
@@ -462,7 +483,7 @@ final class ClaudioLocal: NSObject {
         }, fin: { [weak self] in
             guard let self, self.vivo else { return }
             let fin = max(self.habla.finCola ?? Date(), Date()).addingTimeInterval(0.45)
-            self.ocupadoHasta = fin
+            self.ocupadoHasta = fin; self.finVoz = fin
             DispatchQueue.main.asyncAfter(deadline: .now() + max(0, fin.timeIntervalSinceNow)) { [weak self] in
                 guard let self, self.vivo else { return }
                 luego?()
@@ -478,4 +499,11 @@ final class ClaudioLocal: NSObject {
     }
 
     private func emitir(_ e: [String: Any]) { alEvento?(e) }
+}
+
+/// Un «después de hablar» que corre una sola vez (la frase repetida tras una interrupción comparte el mismo).
+private final class UnaVez {
+    private var accion: (() -> Void)?
+    init(_ a: (() -> Void)?) { accion = a }
+    func correr() { let a = accion; accion = nil; a?() }
 }

@@ -264,5 +264,16 @@ revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 4
 revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 400, reabiertas: 0, sinCreditos: false) == .colgar, "sin interrupción ni pedido, la conferencia cuelga como antes")
 revisa(C.pedidoTrasInterrupcion.contains("no digas nada y sigue escuchando"), "al reabrir tras la interrupción, si Juan estaba en pausa Alma se queda callada")
 
+// Guardia 20-nov-2026 (Maricarmen): la espera también con la voz local, y lo que no sonó se repite al volver el audio.
+revisa(C.porQueNoEspera(hablando: true, continua: true, motivo: 0, telefono: false).isEmpty, "conferencia con Maricarmen (voz local, hablando): espera")
+revisa(C.porQueNoEspera(hablando: false, continua: true, motivo: 0, telefono: false).contains("no estaba conectada"), "si no espera, el registro dice por qué")
+revisa(C.porQueNoEspera(hablando: true, continua: true, motivo: 1, telefono: false).contains("suspendió"), "motivo 1: lo dice")
+let tI = Date(timeIntervalSince1970: 1_000_000)
+revisa(C.repetirTrasInterrupcion(empezoDecir: tI.addingTimeInterval(3), finVoz: nil, interrumpida: tI), "Maricarmen contestó durante la interrupción: al volver el audio lo repite")
+revisa(C.repetirTrasInterrupcion(empezoDecir: tI.addingTimeInterval(-2), finVoz: tI.addingTimeInterval(1), interrumpida: tI), "la cortó a media frase: la repite")
+revisa(C.repetirTrasInterrupcion(empezoDecir: tI.addingTimeInterval(-2), finVoz: nil, interrumpida: tI), "todavía la estaba diciendo: la repite")
+revisa(!C.repetirTrasInterrupcion(empezoDecir: tI.addingTimeInterval(-9), finVoz: tI.addingTimeInterval(-4), interrumpida: tI), "lo que ya había sonado entero no se repite")
+revisa(!C.repetirTrasInterrupcion(empezoDecir: nil, finVoz: nil, interrumpida: tI), "si no había dicho nada, vuelve a escuchar")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")
