@@ -70,6 +70,14 @@ enum AnilloVuelve {
         return anilloListo && !otraSuena ? .anillo : .mezclar
     }
 
+    /// Guardia 20-nov-2026: con otra app dueña del audio, cada intento de volver a abrir el micrófono fallaba (2003329396),
+    /// iOS reacomodaba el audio y se volvía a intentar: un bucle cada 3 s en el registro. Fuera de una llamada, después de
+    /// un fallo se espera `pausaTrasFallo` s (el anillo vuelve por su cuenta cuando la otra app suelta el audio).
+    static let pausaTrasFallo: TimeInterval = 30
+    static func revivirAlReacomodar(enLlamada: Bool, ultimoFallo: Date, ahora: Date) -> Bool {
+        enLlamada || ahora.timeIntervalSince(ultimoFallo) >= pausaTrasFallo
+    }
+
     static func avisar(activo: Bool, silencio: Bool, microfono: Bool, appActiva: Bool, yaAvisado: Bool) -> Bool {
         guard !appActiva, !yaAvisado else { return false }
         return !activo || !silencio || !microfono

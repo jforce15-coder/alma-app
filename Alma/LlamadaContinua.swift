@@ -110,13 +110,36 @@ enum LlamadaContinua {
     /// calle y en conferencia (sin esto se cerraba y Juan se quedaba sin respuesta).
     /// `esperando`: Juan acababa de pedir algo y Alma todavía no le respondía (`juanEspera`). Juan, 19-nov-2026: en conferencia
     /// pidió algo, la conexión se cayó a los 11 s y la app colgó; Alma nunca contestó y tuvo que volver a abrir.
-    static func trasCorte(claudio: Bool, calle: Bool, conferencia: Bool, conectada: TimeInterval?, reabiertas: Int, sinCreditos: Bool, buscando: Bool = false, esperando: Bool = false) -> TrasCorte {
+    /// `interrumpida`: la conexión se cayó mientras iOS tenía el audio interrumpido y el audio ya volvió (guardia 20-nov-2026):
+    /// Juan no colgó ni se calló; otra app tomó el audio un momento. Se reabre también en conferencia y en el Modo calle.
+    static func trasCorte(claudio: Bool, calle: Bool, conferencia: Bool, conectada: TimeInterval?, reabiertas: Int, sinCreditos: Bool, buscando: Bool = false, esperando: Bool = false, interrumpida: Bool = false) -> TrasCorte {
         if sinCreditos { return .fallar }                                    // sin créditos no hay con quién volver
         if claudio { return reabiertas < maxReabrir ? .volverConAlma : .fallar }
         guard let c = conectada else { return .fallar }                      // Alma nunca contestó: se dice por qué
-        if (calle || conferencia) && !buscando && !esperando { return .colgar }
+        if (calle || conferencia) && !buscando && !esperando && !interrumpida { return .colgar }
         return c >= minimoConectada && reabiertas < maxReabrir ? .reabrir : .fallar
     }
+
+    // MARK: - Si iOS interrumpe el audio a media llamada
+
+    /// Guardia 20-nov-2026: Juan iba en la calle con la Guía de camino y la llamada en conferencia (en pausa); otra app tomó
+    /// el audio un momento (iOS, motivo 0, con la app en segundo plano) y la app colgó en el acto: ElevenLabs lo vio como un
+    /// corte (1006, porque iOS suspendió la app antes de que saliera el cierre). Ahora, en conferencia y en el Modo calle, la
+    /// llamada espera hasta `esperaInterrupcion` s a que iOS devuelva el audio y sigue la misma conversación; si no vuelve,
+    /// cuelga con un cierre limpio (1000) y con tiempo para que salga.
+    static let esperaInterrupcion: TimeInterval = 10
+    /// Tiempo que se le pide a iOS para que el aviso de cierre salga antes de que suspenda la app (en segundo plano).
+    static let tiempoCierre: TimeInterval = 3
+
+    /// ¿Se espera a que vuelva el audio en vez de colgar? Solo en una llamada que la app cierra sola (conferencia, Modo
+    /// calle, la que abrió un aviso). No con una llamada de teléfono (Juan va a hablar por teléfono: se cuelga como antes) ni
+    /// cuando iOS suspendió la app (motivo 1, appWasSuspended: no hay a qué volver).
+    static func esperaTrasInterrupcion(continua: Bool, motivo: UInt?, telefono: Bool) -> Bool {
+        continua && !telefono && motivo != 1
+    }
+
+    /// La conexión se cayó mientras el audio estaba interrumpido y la llamada se reabrió: Alma no saluda con frase fija.
+    static let pedidoTrasInterrupcion = "(Otra app tomó el audio un momento y la llamada se reabrió. Si me estabas respondiendo algo, termínalo en una frase corta; si no, no digas nada y sigue escuchando.)"
 
     /// ElevenLabs cierra la conversación a los 15 min (max_duration_seconds 900) con un cierre normal, igual que cuando Alma
     /// cuelga. Si la llamada llevaba ese tiempo, no colgó ella: se vuelve a abrir.

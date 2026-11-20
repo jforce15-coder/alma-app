@@ -69,5 +69,12 @@ revisa(PasosAnillo.nuevos(muchos, ultimoEnviado: nil) == Array(muchos.prefix(30)
 revisa(PasosAnillo.nuevos(muchos, ultimoEnviado: muchos[29]) == Array(muchos[30..<60]) && PasosAnillo.nuevos(muchos, ultimoEnviado: muchos[59]) == Array(muchos[60...]), "la siguiente vuelta sigue donde quedó, sin perder ninguno")
 revisa(PasosAnillo.limpiar([String(repeating: "a", count: 400)])[0].count == PasosAnillo.largo, "cada paso, corto")
 
+// Guardia 20-nov-2026: bucle «No pude volver a abrir el micrófono (2003329396)» cada 3 s con otra app dueña del audio.
+let fallo0 = Date()
+revisa(!V.revivirAlReacomodar(enLlamada: false, ultimoFallo: fallo0.addingTimeInterval(-3), ahora: fallo0), "sin llamada, 3 s después de un fallo no se vuelve a intentar")
+revisa(V.revivirAlReacomodar(enLlamada: false, ultimoFallo: fallo0.addingTimeInterval(-31), ahora: fallo0), "pasados 30 s, sí")
+revisa(V.revivirAlReacomodar(enLlamada: false, ultimoFallo: .distantPast, ahora: fallo0), "sin fallos antes, sí")
+revisa(V.revivirAlReacomodar(enLlamada: true, ultimoFallo: fallo0, ahora: fallo0), "en una llamada siempre se intenta")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")

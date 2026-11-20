@@ -251,5 +251,18 @@ revisa(SuenoCalle.decidir(dictado(sonido: 267.7), ahora: t0.addingTimeInterval(2
 revisa(C.pasoCierre("tope", calle: false, conferencia: true, hablando: true).contains("(tope, cerró con Juan hablando)"), "si cierra con Juan sonando, el paso lo dice para la guardia")
 revisa(C.pasoCierre("tope", calle: false, conferencia: true) == "Conferencia: la llamada se cierra sola (tope) y vuelve a escuchar «Alma»", "sin nadie hablando, el paso de siempre")
 
+// Guardia 20-nov-2026: en la calle con la Guía de camino otra app tomó el audio (motivo 0) y la conferencia colgó en el acto (1006).
+revisa(C.esperaTrasInterrupcion(continua: true, motivo: 0, telefono: false), "conferencia o calle y otra app toma el audio: espera a que vuelva, no cuelga en el acto")
+revisa(C.esperaTrasInterrupcion(continua: true, motivo: nil, telefono: false), "sin motivo de iOS también espera")
+revisa(!C.esperaTrasInterrupcion(continua: true, motivo: 0, telefono: true), "con una llamada de teléfono cuelga como antes")
+revisa(!C.esperaTrasInterrupcion(continua: true, motivo: 1, telefono: false), "si iOS suspendió la app (motivo 1) no espera")
+revisa(!C.esperaTrasInterrupcion(continua: false, motivo: 0, telefono: false), "una llamada normal sigue como antes")
+revisa(C.esperaInterrupcion >= 5 && C.esperaInterrupcion <= 20, "la espera es de unos segundos (de fábrica 10)")
+revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 400, reabiertas: 0, sinCreditos: false, interrumpida: true) == .reabrir, "conferencia: si la conexión se cayó durante la interrupción y el audio volvió, se reabre")
+revisa(C.trasCorte(claudio: false, calle: true, conferencia: false, conectada: 400, reabiertas: 0, sinCreditos: false, interrumpida: true) == .reabrir, "Modo calle: igual")
+revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 400, reabiertas: 2, sinCreditos: false, interrumpida: true) == .fallar, "tras la interrupción, como mucho dos veces")
+revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 400, reabiertas: 0, sinCreditos: false) == .colgar, "sin interrupción ni pedido, la conferencia cuelga como antes")
+revisa(C.pedidoTrasInterrupcion.contains("no digas nada y sigue escuchando"), "al reabrir tras la interrupción, si Juan estaba en pausa Alma se queda callada")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")
