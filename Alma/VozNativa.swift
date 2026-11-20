@@ -825,7 +825,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             if self.estado == .hablando, LlamadaContinua.esperaTrasInterrupcion(continua: self.tiemposCierre != nil, motivo: motivoN, telefono: telefono) {
                 self.esperarInterrupcion(); return
             }
-            if self.tiemposCierre != nil { self.paso("Otra app o una llamada tomó el audio"); self.pedirTiempoFondo(); self.colgarCalle(.corte) } else { self.fallo("Otra app o una llamada tomó el audio.") }
+            let porQue = LlamadaContinua.porQueNoEspera(hablando: self.estado == .hablando, continua: self.tiemposCierre != nil, motivo: motivoN, telefono: telefono)
+            if self.tiemposCierre != nil { self.paso("Otra app o una llamada tomó el audio" + (porQue.isEmpty ? "" : " (no espero: " + porQue + ")")); self.pedirTiempoFondo(); self.colgarCalle(.corte) } else { self.fallo("Otra app o una llamada tomó el audio.") }
         }
         // Al abrir la app (o al volver a ella) el micrófono queda listo otra vez.
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -2146,6 +2147,9 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
         asegurarSalida(String(format: "Volvió el audio a los %.0f s", Date().timeIntervalSince(desde)))
         soltarTiempoFondo(tras: 0)
         if let m = caido { corte(m, trasInterrupcion: true) } else { paso("La llamada sigue donde iba") }
+        // Voz local (voz de respaldo, Maricarmen, Claudio local): lo que dijo mientras iOS tenía el audio no sonó; lo repite
+        // y vuelve a escuchar con un dictado nuevo (guardia 20-nov-2026, Maricarmen).
+        local?.trasInterrupcion(desde: desde)
     }
 
     private func pedirTiempoFondo() {
