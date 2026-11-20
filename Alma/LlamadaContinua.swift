@@ -179,6 +179,33 @@ enum LlamadaContinua {
     /// último no era para ella (conferencia), se queda callada.
     static let pedidoTrasCorteEsperando = "(Se cortó la llamada justo después de lo último que dije y no alcanzaste a responder. Si era un pedido o una pregunta para ti, dime en una frase corta que se cortó y atiéndelo ahora, sin preguntarme de nuevo: lo último que se dijo está en tu ficha. Si no era para ti, no digas nada y sigue escuchando.)"
 
+    // MARK: - Juan le contestó a Alma y ella no responde (guardia 20-nov-2026)
+
+    /// conv_1601…: Alma preguntó «¿qué le digo?», Juan contestó a los 8 s y ElevenLabs nunca respondió a ese turno; a los
+    /// 60 s la app cerró por tope y el pedido se perdió. Ahora, si Juan le contesta a Alma (su turno llegó escrito hasta
+    /// `arranqueRespuesta` s después de que ella habló o de que se abrió la llamada) y ella no responde ni usa una herramienta:
+    ///   · la app no cierra por tope ni por silencio (`esperar`);
+    ///   · a los `recordarTras` s le manda a Alma un recordatorio por la misma conversación (`recordar`, una sola vez);
+    ///   · a los `reabrirTras` s reabre la conversación con lo último que se dijo (`reabrir`, como un corte con Juan esperando),
+    ///     si aún se puede reabrir (`maxReabrir`).
+    /// Pasados `esperaMaxima` s del turno, todo vuelve a lo de siempre: sin bucle y sin gastar créditos de más. En una reunión,
+    /// la charla que no sigue a lo que dijo Alma no cuenta (no es una respuesta para ella).
+    static let arranqueRespuesta: TimeInterval = 25
+    static let recordarTras: TimeInterval = 10
+    static let reabrirTras: TimeInterval = 20
+    enum SinRespuesta: Equatable { case esperar, recordar, reabrir }
+    /// `juan`: cuándo llegó el último turno de Juan. `respondio`: lo último que hizo Alma después (su respuesta o una
+    /// herramienta). `alma`: cuándo terminó de hablar Alma (o se abrió la conversación). nil: no aplica, las reglas de siempre.
+    static func sinRespuesta(juan: Date?, respondio: Date?, alma: Date, palabras: Int, ahora: Date, recordado: Bool, puedeReabrir: Bool) -> SinRespuesta? {
+        guard palabras >= 1, let j = juan, alma != .distantPast, j.timeIntervalSince(alma) <= arranqueRespuesta,
+              let e = esperaSinRespuesta(juan: j, voz: respondio, ahora: ahora), e < esperaMaxima else { return nil }
+        if e >= reabrirTras && puedeReabrir { return .reabrir }
+        if e >= recordarTras && !recordado { return .recordar }
+        return .esperar
+    }
+    /// Lo que la app le manda a Alma (como si lo dijera Juan) a los `recordarTras` s sin respuesta.
+    static let recordatorio = "(No me respondiste a lo último que te dije. Si era para ti, respóndelo ahora en corto, sin preguntarme de nuevo; si no era para ti, no digas nada y sigue escuchando.)"
+
     static let pedidoTrasCorteBuscando = "(Se cortó la llamada mientras buscabas lo que te pedí. Dime en una frase corta que se cortó y búscalo otra vez ahora, sin preguntarme de nuevo: lo último que se dijo está en tu ficha.)"
 
     /// Lo que se suma al paso de un corte para saber la causa (guardia 19-nov-2026: el 1006 no dejaba ver nada): qué

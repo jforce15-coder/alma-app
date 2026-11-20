@@ -264,5 +264,34 @@ revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 4
 revisa(C.trasCorte(claudio: false, calle: false, conferencia: true, conectada: 400, reabiertas: 0, sinCreditos: false) == .colgar, "sin interrupción ni pedido, la conferencia cuelga como antes")
 revisa(C.pedidoTrasInterrupcion.contains("no digas nada y sigue escuchando"), "al reabrir tras la interrupción, si Juan estaba en pausa Alma se queda callada")
 
+// MARK: - Juan le contestó a Alma y ella no responde (guardia 20-nov-2026, conv_1601…: «tope» a los 60 s y el pedido se perdió)
+// Alma terminó de preguntar «¿qué le digo?» a los 5 s; el turno de Juan llegó a los 13 s y ElevenLabs nunca le respondió.
+let tS = Date(timeIntervalSince1970: 3_000_000)
+func sinResp(a s: TimeInterval, juan: TimeInterval? = 13, respondio: TimeInterval? = nil, alma: TimeInterval = 5, palabras: Int = 4,
+             recordado: Bool = false, puede: Bool = true) -> C.SinRespuesta? {
+    C.sinRespuesta(juan: juan.map { tS.addingTimeInterval($0) }, respondio: respondio.map { tS.addingTimeInterval($0) }, alma: tS.addingTimeInterval(alma),
+                   palabras: palabras, ahora: tS.addingTimeInterval(s), recordado: recordado, puedeReabrir: puede)
+}
+revisa(sinResp(a: 15) == .esperar, "Juan le contestó a Alma hace 2 s: se espera su respuesta")
+revisa(sinResp(a: 23) == .recordar, "10 s sin respuesta: la app le recuerda a Alma")
+revisa(sinResp(a: 25, recordado: true) == .esperar, "el recordatorio va una sola vez")
+revisa(sinResp(a: 33, recordado: true) == .reabrir, "20 s sin respuesta: se reabre la conversación con lo último dicho")
+revisa(sinResp(a: 33, recordado: true, puede: false) == .esperar, "si ya no se puede reabrir (o Alma usó skip_turn), solo se espera")
+revisa(sinResp(a: 13 + C.esperaMaxima) == nil, "pasados 45 s del turno vuelven las reglas de siempre (sin bucle ni créditos de más)")
+revisa(sinResp(a: 23, respondio: 18) == nil, "Alma respondió (o usó una herramienta): nada que hacer")
+revisa(sinResp(a: 23, alma: -30) == nil, "charla que no sigue a lo que dijo Alma (una reunión): no es una respuesta para ella")
+revisa(sinResp(a: 23, juan: nil) == nil, "sin turno de Juan: nada")
+revisa(sinResp(a: 23, palabras: 1) == .recordar, "una respuesta de una palabra («sí», «Flor») también cuenta")
+revisa(sinResp(a: 23, palabras: 0) == nil, "un turno vacío no cuenta")
+// Con Alma debiéndole la respuesta, ni el tope (60 s) ni el silencio cuelgan; sin eso, colgaba a los 60 s (lo de 9:18).
+let callado13 = momentos(alma: 5, juan: 13, sonido: 13)
+revisa(decideConf(callado13, a: 66, conDictado: false) == .tope, "antes: a los 60 s sin que Alma hable cerraba por tope aunque Juan esperaba")
+revisa(SuenoCalle.decidir(callado13, ahora: t0.addingTimeInterval(66), silencio: conf.silencio, tope: conf.tope, ruido: conf.ruido, pausa: conf.pausa,
+                          duro: duro, dictado: C.ruidoDictado, juanEspera: true) == nil, "ahora: con Juan esperando respuesta no cierra")
+revisa(SuenoCalle.decidir(callado13, ahora: t0.addingTimeInterval(200), silencio: conf.silencio, tope: conf.tope, ruido: conf.ruido, pausa: conf.pausa,
+                          duro: duro, dictado: C.ruidoDictado, juanEspera: true) == nil, "tampoco el tope duro")
+revisa(C.recordatorio.contains("si no era para ti, no digas nada"), "el recordatorio deja callada a Alma si no era para ella")
+revisa(C.recordarTras < C.reabrirTras && C.reabrirTras < C.esperaMaxima, "recuerda, luego reabre, y todo antes de que venza la espera")
+
 if fallos > 0 { print("\(fallos) fallaron"); exit(1) }
 print("Todo bien")

@@ -48,10 +48,13 @@ enum SuenoCalle {
     static let pausaDura: TimeInterval = 3
     /// `dictado` (solo conferencia; guardia 20-nov-2026): mientras Juan le dicta a Alma una instrucción larga (`dictando`),
     /// la voz sin nada escrito cuenta como alguien hablando hasta `dictado` s (no `ruido`) y no se usa el tope duro.
+    /// `juanEspera` (guardia 20-nov-2026, LlamadaContinua.sinRespuesta): Juan le contestó a Alma y ella no le ha respondido;
+    /// no se cierra ni por tope ni por silencio (la app le recuerda o reabre). El que llama lo limita a unos segundos.
     static func decidir(_ m: Momentos, ahora: Date, silencio: TimeInterval, tope: TimeInterval,
                         ruido: TimeInterval = soloRuido, pausa: TimeInterval = oyendo, duro: TimeInterval? = nil,
-                        dictado: TimeInterval? = nil) -> Motivo? {
+                        dictado: TimeInterval? = nil, juanEspera: Bool = false) -> Motivo? {
         if let h = m.herramientaDesde { return ahora.timeIntervalSince(h) > topeHerramienta ? .tope : nil }
+        if juanEspera { return nil }   // Alma le debe una respuesta a Juan: colgar aquí perdería su pedido
         let alma = max(m.conectada, m.finVozAlma, m.finHerramienta)
         let dicta = dictado != nil && dictando(m, ahora: ahora)
         if !dicta, let d = duro, ahora.timeIntervalSince(alma) >= d, ahora.timeIntervalSince(m.sonido) >= pausaDura { return .tope }
