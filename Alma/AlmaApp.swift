@@ -13,6 +13,9 @@ struct AlmaApp: App {
         PushAlma.shared.arrancar()
         // «Alma con el anillo»: la app queda lista para que dos toques del anillo enciendan o apaguen el modo conferencia, también con el teléfono bloqueado.
         VozNativa.shared.arrancarSiHaceFalta()
+        // El porqué de un cierre (guardia 21-nov-2026, FalloApp.swift): el informe de fallo de iOS y la excepción que tumbó la
+        // app llegan al registro de la voz y al Hub apenas se vuelve a abrir.
+        FalloApp.shared.empezar()
         // Voz de respaldo (Hub #657, Senal.swift): la señal de internet se vigila desde el inicio; lo guardado sin internet se manda.
         Senal.shared.empezar()
         // Modo compañero con sonido (Hub #727, Retransmision.swift): si está encendido en este dispositivo, busca la llamada del otro.
