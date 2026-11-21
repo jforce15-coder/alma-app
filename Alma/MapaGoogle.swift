@@ -53,7 +53,11 @@ struct MapaGoogleVista: UIViewRepresentable {
     var modo: String
     /// Lo que tapan las tarjetas (arriba el giro, abajo la llegada): la cámara centra en lo que queda libre.
     var margen: UIEdgeInsets
+    /// «Ver ruta»: la ruta entera en 2D (hasta «Centrar» o unos segundos sin tocar).
+    var verRuta = false
     @Binding var siguiendo: Bool
+    /// Cada vez que mueves el mapa con el dedo (MapaCaminoVista cuenta los segundos para volver a seguirte).
+    var tocaste: () -> Void = {}
 
     final class Coordinador: NSObject, GMSMapViewDelegate {
         var linea: GMSPolyline?
@@ -62,6 +66,7 @@ struct MapaGoogleVista: UIViewRepresentable {
         var encuadre = ""
         var rumbo: CLLocationDirection = 0
         var tu: CLLocationCoordinate2D?
+        var enRuta = false
         var soltar: () -> Void = {}
         func mapView(_ mapView: GMSMapView, willMove gesture: Bool) { if gesture { soltar() } }
         func mapView(_ mapView: GMSMapView, didChange position: GMSCameraPosition) { avisar(mapView) }
@@ -90,9 +95,10 @@ struct MapaGoogleVista: UIViewRepresentable {
 
     func updateUIView(_ m: GMSMapView, context: Context) {
         let c = context.coordinator, azul = UIColor(GuiaColor.azul), tinta = UIColor(GuiaColor.tinta)
-        if m.padding != margen { m.padding = margen }
+        if !verRuta, m.padding != margen { m.padding = margen }
         c.tu = posicion?.coordinate
-        c.soltar = { DispatchQueue.main.async { if siguiendo { siguiendo = false } } }
+        let avisarToque = tocaste
+        c.soltar = { DispatchQueue.main.async { if siguiendo { siguiendo = false }; avisarToque() } }
         if puntos.count >= 2 {
             let ruta = GMSMutablePath()
             puntos.forEach { ruta.add($0) }
@@ -113,6 +119,33 @@ struct MapaGoogleVista: UIViewRepresentable {
         } else {
             c.meta?.map = nil
             c.meta = nil
+        }
+        // «Ver ruta»: una vez, la cámara encuadra toda la ruta (y tu punto) en 2D, con margen.
+        if verRuta {
+            if !c.enRuta {
+                c.enRuta = true
+                var todos = puntos.map { GuiaPunto(lat: $0.latitude, lng: $0.longitude) }
+                if let f = fin { todos.append(GuiaPunto(lat: f.latitude, lng: f.longitude)) }
+                if let p = posicion { todos.append(GuiaPunto(lat: p.coordinate.latitude, lng: p.coordinate.longitude)) }
+                if let k = GuiaPantalla.cajaRuta(todos) {
+                    let caja = GMSCoordinateBounds(coordinate: CLLocationCoordinate2D(latitude: k.sur, longitude: k.oeste),
+                                                   coordinate: CLLocationCoordinate2D(latitude: k.norte, longitude: k.este))
+                    // Con el margen de la roca (arriba más grande) la ruta quedaría baja: para la vista general, bordes parejos.
+                    let ruta = UIEdgeInsets(top: 16, left: 16, bottom: margen.bottom > 0 ? 96 : 16, right: 16)
+                    DispatchQueue.main.async {
+                        m.padding = ruta
+                        if let cam = m.camera(for: caja, insets: .zero) {
+                            m.animate(to: GMSCameraPosition(target: cam.target, zoom: cam.zoom, bearing: 0, viewingAngle: 0))
+                        }
+                    }
+                }
+            }
+            c.avisar(m)
+            return
+        }
+        if c.enRuta {
+            c.enRuta = false
+            m.padding = margen
         }
         // Siguiendo: el mapa va contigo, girado hacia donde te mueves (la brújula del iPhone no: brinca en la mano).
         if siguiendo, let p = posicion {

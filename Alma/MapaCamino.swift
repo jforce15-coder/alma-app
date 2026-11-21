@@ -4,8 +4,10 @@ import SwiftUI
 
 /// La pantalla de la Guía de camino (GuiaCamino.swift) con dos paneles, como la de un Tesla (Juan, 20-nov-2026: «A
 /// teléfono, A iPad y B teléfono girado»):
-///   · A (vertical, iPhone y iPad): arriba el panel del medio (GuiaPanelMedio: selector, escena, velocidad), abajo el
-///     mapa y, sobre la unión de los dos, la tarjeta del giro con su punto de referencia y el «Luego».
+///   · A (vertical, iPhone y iPad), sin hueco (Juan, 21-nov-2026: «demasiado espacio muerto arriba»): arriba, pegada al
+///     área segura, la tarjeta del giro con su punto de referencia y el «Luego»; debajo el panel del medio (GuiaPanelMedio:
+///     selector compacto, escena animada, velocidad; ~40 %) y el mapa hasta abajo (~60 %) con la llegada encima
+///     (GuiaPantalla.cortesA).
 ///   · B (pantalla acostada): lado a lado, el panel del medio a la izquierda (~40 %) con la frase de Alma abajo y el
 ///     mapa a la derecha con la tarjeta del giro arriba.
 ///   · En el mapa, tu punto es la roca de Alma (RocaAlma, con su halo y su pulso) y de ella sale la luz de rumbo: un cono
@@ -13,6 +15,8 @@ import SwiftUI
 ///     dónde ve el usuario, pero hay que incrementar el ángulo»). Con «Reducir movimiento» la roca no late, pero la luz
 ///     sigue el rumbo: es información.
 ///   · Abajo, la llegada: hora, minutos, distancia y «Terminar».
+///   · La roca va al centro (a lo ancho) de lo que se ve del mapa y un poco abajo, para ver las calles que siguen
+///     (GuiaPantalla.margenMapa). «Ver ruta» muestra la ruta entera en 2D; «Centrar», o 10 s sin tocar, vuelve a seguirte.
 /// El mapa es de Google Maps (MapaGoogle.swift); sin su llave, el de Apple con la misma pantalla. Al girar el teléfono
 /// los paneles se acomodan con una transición suave (el mapa es el mismo, no se vuelve a crear).
 struct MapaCaminoVista: View {
@@ -21,6 +25,12 @@ struct MapaCaminoVista: View {
     @Environment(\.accessibilityReduceMotion) private var quieto
     @State private var camara: MapCameraPosition = .userLocation(followsHeading: true, fallback: .automatic)
     @State private var siguiendo = true
+    /// «Ver ruta»: la ruta entera en el mapa (2D) hasta «Centrar» o unos segundos sin tocar.
+    @State private var verRuta = false
+    /// Cuenta cada vez que tocas el mapa o pides «Ver ruta»: desde el último, a los 10 s vuelve a seguir a la roca.
+    @State private var toque = 0
+    /// El alto de la tarjeta del giro en A (para que el panel empiece justo debajo).
+    @State private var altoGiro: CGFloat = 104
 
     private var puntos: [CLLocationCoordinate2D] { guia.linea.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) } }
     private var fin: CLLocationCoordinate2D? { guia.fin.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lng) } }
@@ -28,7 +38,7 @@ struct MapaCaminoVista: View {
     var body: some View {
         GeometryReader { geo in
             let d = GuiaPantalla.distribucion(ancho: Double(geo.size.width), alto: Double(geo.size.height))
-            let m = Medidas(d, geo.size, geo.safeAreaInsets)
+            let m = Medidas(d, geo.size, geo.safeAreaInsets, altoGiro: altoGiro)
             ZStack(alignment: .topLeading) {
                 mapa(m)
                     .overlay { if MapaGoogle.listo { RocaSobreMapa() } }
@@ -40,16 +50,19 @@ struct MapaCaminoVista: View {
                     .frame(width: m.panel.width, height: m.panel.height)
                     .offset(x: m.panel.minX, y: m.panel.minY)
 
+                // Con offset y no con una guía de alineación: la guía (centro de la tarjeta = unión de los paneles) se
+                // pasaba al ZStack y bajaba el panel y el mapa (el hueco de arriba de build 379).
                 tarjetaGiro(d, luego: d == .dividido || m.amplio)
                     .frame(width: m.giroAncho)
-                    .alignmentGuide(.top) { v in d == .dividido ? v[VerticalAlignment.center] : v[.top] }
-                    .frame(width: geo.size.width, height: geo.size.height, alignment: d == .dividido ? .top : .topLeading)
-                    .padding(.top, m.giroArriba).padding(.leading, d == .dividido ? 0 : m.mapa.minX + 12)
+                    .background {
+                        GeometryReader { g in Color.clear.preference(key: AltoGiroClave.self, value: g.size.height) }
+                    }
+                    .offset(x: d == .dividido ? ((geo.size.width - m.giroAncho) / 2).rounded() : m.mapa.minX + 12, y: m.giroArriba)
 
                 HStack(alignment: .bottom, spacing: 0) {
                     Spacer(minLength: 0)
                     VStack(alignment: .trailing, spacing: 10) {
-                        if d == .dividido { brujula }
+                        if d == .dividido { botonesMapa }
                         llegadaVista.frame(maxWidth: m.llegadaAncho)
                     }
                 }
@@ -58,7 +71,7 @@ struct MapaCaminoVista: View {
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .bottomTrailing)
 
                 if d == .ladoALado {
-                    brujula
+                    botonesMapa
                         .padding(.top, 12).padding(.trailing, m.derecha)
                         .frame(width: geo.size.width, height: geo.size.height, alignment: .topTrailing)
                 }
@@ -66,6 +79,9 @@ struct MapaCaminoVista: View {
             .animation(quieto ? nil : .smooth(duration: 0.4), value: d)
             .onAppear { orientar() }
             .onChange(of: d) { _, _ in orientar() }
+            .onPreferenceChange(AltoGiroClave.self) { h in
+                if d == .dividido, h > 20, abs(h - altoGiro) > 0.5 { altoGiro = h }
+            }
         }
         .ignoresSafeArea()
         .background(GuiaColor.fondo)
@@ -73,6 +89,12 @@ struct MapaCaminoVista: View {
         .onAppear { guia.rumbo(true) }
         .onDisappear { guia.rumbo(false); RumboGuia.shared.apagar() }
         .onChange(of: guia.activa) { _, a in if !a { cerrar() } }
+        .task(id: toque) {
+            // Tras «Ver ruta» o mover el mapa con el dedo: unos segundos sin tocar y vuelve a seguir a la roca.
+            guard toque > 0, !siguiendo else { return }
+            try? await Task.sleep(nanoseconds: UInt64(GuiaPantalla.volverASeguir * 1_000_000_000))
+            if !Task.isCancelled, !siguiendo { centrar() }
+        }
     }
 
     private func orientar() {
@@ -91,17 +113,22 @@ struct MapaCaminoVista: View {
         /// Lo que tapan las tarjetas sobre el mapa (Google centra la cámara en lo que queda libre).
         var margen: UIEdgeInsets
 
-        init(_ d: GuiaPantalla.Distribucion, _ s: CGSize, _ i: EdgeInsets) {
+        init(_ d: GuiaPantalla.Distribucion, _ s: CGSize, _ i: EdgeInsets, altoGiro: CGFloat) {
             amplio = s.height >= 600
             switch d {
             case .dividido:
-                let alto = min(max(s.height * 0.4, 300), 470)
-                panel = CGRect(x: 0, y: 0, width: s.width, height: alto)
-                mapa = CGRect(x: 0, y: alto, width: s.width, height: s.height - alto)
-                bordesPanel = EdgeInsets(top: i.top, leading: i.leading, bottom: 0, trailing: i.trailing)
-                giroAncho = min(s.width - 32, 560); giroArriba = alto
-                llegadaAncho = min(s.width - 32, 560); derecha = 16 + i.trailing; abajo = max(i.bottom, 12) + 4
-                margen = UIEdgeInsets(top: 72, left: 0, bottom: 104 + i.bottom, right: 0)
+                // Sin hueco: tarjeta pegada al área segura, panel ~40 % y mapa ~60 % de lo que queda.
+                let c = GuiaPantalla.cortesA(alto: Double(s.height), arriba: Double(i.top), tarjeta: Double(altoGiro))
+                panel = CGRect(x: 0, y: c.panelY, width: s.width, height: c.panelAlto)
+                mapa = CGRect(x: 0, y: c.mapaY, width: s.width, height: c.mapaAlto)
+                bordesPanel = EdgeInsets(top: 0, leading: i.leading, bottom: 0, trailing: i.trailing)
+                giroAncho = min(s.width - 32, 560); giroArriba = c.tarjetaY
+                let bajo = max(i.bottom, 12) + 4
+                llegadaAncho = min(s.width - 32, 560); derecha = 16 + i.trailing; abajo = bajo
+                // La roca al centro a lo ancho y un poco abajo de lo que se ve (encima de la llegada, ~76 de alto).
+                let b = GuiaPantalla.margenMapa(ancho: Double(s.width), alto: c.mapaAlto, tapaArriba: 0, tapaAbajo: 76 + Double(bajo),
+                                                derecha: Double(i.trailing), izquierda: Double(i.leading))
+                margen = UIEdgeInsets(top: b.arriba, left: b.izquierda, bottom: b.abajo, right: b.derecha)
             case .ladoALado:
                 let ancho = (s.width * CGFloat(GuiaPantalla.partePanel)).rounded()
                 panel = CGRect(x: 0, y: 0, width: ancho, height: s.height)
@@ -118,7 +145,8 @@ struct MapaCaminoVista: View {
 
     @ViewBuilder private func mapa(_ m: Medidas) -> some View {
         if MapaGoogle.listo {
-            MapaGoogleVista(puntos: puntos, fin: fin, destino: guia.destino, posicion: guia.posicion, modo: guia.modo, margen: m.margen, siguiendo: $siguiendo)
+            MapaGoogleVista(puntos: puntos, fin: fin, destino: guia.destino, posicion: guia.posicion, modo: guia.modo, margen: m.margen,
+                            verRuta: verRuta, siguiendo: $siguiendo, tocaste: { verRuta = false; toque += 1 })
         } else {
             Map(position: $camara) {
                 if puntos.count >= 2 {
@@ -133,17 +161,38 @@ struct MapaCaminoVista: View {
                 }
             }
             .mapStyle(.standard(elevation: .realistic, emphasis: .muted))
-            .safeAreaPadding(EdgeInsets(top: m.margen.top, leading: 0, bottom: m.margen.bottom, trailing: 0))
+            .safeAreaPadding(EdgeInsets(top: m.margen.top, leading: m.margen.left, bottom: m.margen.bottom, trailing: m.margen.right))
             .onMapCameraChange(frequency: .continuous) { ctx in
                 RumboGuia.shared.mapa(giro: ctx.camera.heading)
-                if !camara.followsUserLocation { siguiendo = false }
+                if !camara.followsUserLocation, !verRuta {
+                    siguiendo = false
+                    toque += 1
+                }
             }
         }
     }
 
     private func centrar() {
+        verRuta = false
         siguiendo = true
         camara = .userLocation(followsHeading: true, fallback: .automatic)
+    }
+
+    /// «Ver ruta»: la ruta entera (y tu punto) en 2D, con margen. Google lo hace en MapaGoogleVista; Apple aquí.
+    private func mostrarRuta() {
+        var todos = guia.linea
+        if let f = guia.fin { todos.append(f) }
+        if let p = guia.posicion { todos.append(GuiaPunto(lat: p.coordinate.latitude, lng: p.coordinate.longitude)) }
+        guard let k = GuiaPantalla.cajaRuta(todos) else { return }
+        siguiendo = false
+        verRuta = true
+        toque += 1
+        if !MapaGoogle.listo {
+            let a = MKMapPoint(CLLocationCoordinate2D(latitude: k.norte, longitude: k.oeste))
+            let b = MKMapPoint(CLLocationCoordinate2D(latitude: k.sur, longitude: k.este))
+            let r = MKMapRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
+            withAnimation(quieto ? nil : .smooth(duration: 0.6)) { camara = .rect(r) }
+        }
     }
 
     // MARK: - La tarjeta del giro
@@ -189,6 +238,28 @@ struct MapaCaminoVista: View {
         BrujulaGuia(siguiendo: siguiendo, centrar: centrar)
     }
 
+    /// «Ver ruta» y la brújula (que dice «Centrar» si el mapa no te sigue).
+    private var botonesMapa: some View {
+        HStack(spacing: 8) {
+            if !verRuta && guia.linea.count >= 2 {
+                Button(action: mostrarRuta) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "point.topleft.down.to.point.bottomright.curvepath").font(.system(size: 15, weight: .medium)).foregroundStyle(GuiaColor.azul)
+                        Text("Ver ruta").font(.custom("Montserrat", size: 13).weight(.semibold)).foregroundStyle(GuiaColor.tinta2)
+                    }
+                    .padding(.leading, 10).padding(.trailing, 13).frame(height: 40)
+                    .background(GuiaColor.tarjeta, in: Capsule())
+                    .shadow(color: Color(red: 60 / 255, green: 45 / 255, blue: 35 / 255).opacity(0.2), radius: 10, y: 4)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Ver toda la ruta en el mapa")
+                .transition(.opacity)
+            }
+            brujula
+        }
+        .animation(quieto ? nil : .easeOut(duration: 0.2), value: verRuta)
+    }
+
     // MARK: - La llegada
 
     private var llegadaVista: some View {
@@ -221,6 +292,12 @@ struct MapaCaminoVista: View {
             Text(chico).font(.custom("Montserrat", size: 11).weight(.medium)).foregroundStyle(GuiaColor.tinta3).lineLimit(1)
         }
     }
+}
+
+/// El alto de la tarjeta del giro (A pone el panel justo debajo).
+private struct AltoGiroClave: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 // MARK: - La brújula

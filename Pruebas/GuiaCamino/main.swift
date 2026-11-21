@@ -102,6 +102,60 @@ do {
     revisa(P.medioVisto(hub: "bus", elegido: "metro") == "metro" && P.medioVisto(hub: "bus", elegido: "") == "bus" && P.medioVisto(hub: "x", elegido: "") == "caminando", "el medio del selector (metro va como transporte público)")
 }
 
+// A sin hueco, la escena animada y el mapa con la roca al centro (Juan, 21-nov-2026, build 379).
+do {
+    typealias P = GuiaPantalla
+    // iPhone 15 Pro Max vertical: 932 de alto, área segura arriba 59, tarjeta del giro ~100.
+    let c = P.cortesA(alto: 932, arriba: 59, tarjeta: 100)
+    revisa(c.tarjetaY <= 59 + 8, "A: la tarjeta del giro va pegada al área segura (y = \(Int(c.tarjetaY)))")
+    revisa(c.panelY - (c.tarjetaY + 100) <= 12, "A: el panel del medio empieza justo debajo de la tarjeta, sin hueco")
+    revisa(abs(c.mapaY - (c.panelY + c.panelAlto)) < 0.5 && abs(c.mapaY + c.mapaAlto - 932) < 0.5, "A: el mapa sigue al panel y llega hasta abajo")
+    revisa(c.mapaAlto >= c.panelAlto * 1.4 && c.mapaAlto >= 932 * 0.45, "A: el mapa es la parte grande (\(Int(c.mapaAlto)) contra \(Int(c.panelAlto)))")
+    let chico = P.cortesA(alto: 667, arriba: 20, tarjeta: 96)
+    revisa(chico.panelY < 140 && chico.panelAlto > 180 && chico.mapaAlto > 270, "A en un iPhone SE: sin hueco y los dos paneles caben")
+
+    revisa(P.paso(medio: "caminando", kmh: 0) == .quieto && P.cadencia(medio: "caminando", kmh: 0) == 0, "a 0 km/h la figura está quieta")
+    revisa(P.paso(medio: "caminando", kmh: 5) == .camina && P.paso(medio: "caminando", kmh: 9) == .corre, "a pie: camina por debajo de 7 km/h, corre más rápido")
+    revisa(P.cadencia(medio: "caminando", kmh: 9) > P.cadencia(medio: "caminando", kmh: 5), "correr mueve las piernas más rápido que caminar")
+    revisa(P.paso(medio: "bici", kmh: 15) == .pedalea && P.cadencia(medio: "bici", kmh: 25) > P.cadencia(medio: "bici", kmh: 10), "en bici pedalea, más rápido con la velocidad")
+    revisa(P.paso(medio: "carro", kmh: 40) == .rueda && P.paso(medio: "metro", kmh: 30) == .rueda && P.paso(medio: "bus", kmh: 0.3) == .quieto, "carro, bus y metro: el camino avanza; parados, quietos")
+    var an = P.Andar()
+    for _ in 0..<30 { an.avanzar(dt: 1.0 / 30, medio: "carro", kmh: 36, suave: false) }
+    revisa(abs(an.recorrido - 10) < 0.01 && an.fase == 0, "en carro a 36 km/h el camino avanza 10 m por segundo, sin piernas")
+    var pie = P.Andar()
+    for _ in 0..<15 { pie.avanzar(dt: 1.0 / 30, medio: "caminando", kmh: 5, suave: false) }
+    revisa(pie.fase > 0.4 && pie.fase < 0.6, "caminando, las piernas van a medio ciclo en medio segundo (\(pie.fase))")
+    var suave = P.Andar()
+    for _ in 0..<30 { suave.avanzar(dt: 1.0 / 30, medio: "caminando", kmh: 5, suave: true) }
+    revisa(suave.fase == 0 && suave.recorrido > 0 && suave.recorrido < 0.5, "con Reducir movimiento: sin piernas, solo un avance suave")
+    var parado = P.Andar()
+    parado.avanzar(dt: 1, medio: "bici", kmh: 0, suave: false)
+    revisa(parado.recorrido == 0 && parado.fase == 0, "parado no se mueve nada")
+    var salto = P.Andar()
+    salto.avanzar(dt: 30, medio: "carro", kmh: 36, suave: false)
+    revisa(salto.recorrido <= 2.6, "si la pantalla estuvo pausada, el camino no salta de golpe")
+    revisa(P.escenaPausada(activa: false, kmh: 30) && P.escenaPausada(activa: true, kmh: 0) && !P.escenaPausada(activa: true, kmh: 5), "la escena se pausa si no se ve o si todo está quieto (batería)")
+    revisa(P.vuelta(-1, 30) == 29 && P.vuelta(31, 30) == 1, "lo que pasa de largo vuelve a aparecer adelante")
+
+    // El mapa de A en ese iPhone: 932 − mapaY de alto; abajo lo tapa la llegada (~140 con el área segura).
+    let mw = 430.0, mh = c.mapaAlto
+    let b = P.margenMapa(ancho: mw, alto: mh, tapaArriba: 0, tapaAbajo: 140)
+    let roca = P.centroCamara(ancho: mw, alto: mh, b)
+    revisa(abs(roca.x - mw / 2) < 0.5, "la roca cae en el centro horizontal del mapa (\(roca.x) de \(mw))")
+    revisa(roca.y > (mh - 140) / 2 && roca.y < mh - 140 - 40, "la roca va un poco abajo del centro de lo visible, encima de la llegada (\(Int(roca.y)) de \(Int(mh)))")
+    revisa(b.arriba >= 0 && b.abajo >= 140, "el margen nunca es negativo y respeta la llegada")
+    let bB = P.margenMapa(ancho: 500, alto: 390, tapaArriba: 110, tapaAbajo: 96, derecha: 44)
+    let rB = P.centroCamara(ancho: 500, alto: 390, bB)
+    revisa(abs(rB.x - 250) < 0.5 && rB.y > 110 && rB.y < 390 - 96, "con muesca a un lado, la roca sigue en el centro del mapa")
+
+    let ruta = [en(14.0), en(14.002, -90.503), en(14.004, -90.499), en(14.001, -90.51)]
+    if let k = P.cajaRuta(ruta) {
+        revisa(ruta.allSatisfy { $0.lat > k.sur && $0.lat < k.norte && $0.lng > k.oeste && $0.lng < k.este }, "Ver ruta: la caja contiene todos los puntos de la ruta, con margen")
+    } else { revisa(false, "Ver ruta: hay caja") }
+    revisa(P.cajaRuta([]) == nil, "sin ruta no hay caja")
+    revisa(P.volverASeguir >= 5 && P.volverASeguir <= 20, "tras unos segundos sin tocar, vuelve a seguir a la roca")
+}
+
 // Lo que sabe Alma en la llamada (Hub #946): «ya llegaste» solo con el GPS, y el próximo paso real.
 do {
     let R = GuiaCaminoReglas.self

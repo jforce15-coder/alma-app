@@ -29,6 +29,145 @@ enum GuiaPantalla {
     /// Qué parte del ancho lleva el panel del medio en B.
     static let partePanel: Double = 0.4
 
+    // MARK: - A sin hueco (Juan, 21-nov-2026: «demasiado espacio muerto arriba»)
+
+    /// Los cortes de A, de arriba abajo, sin hueco: la tarjeta del giro pegada al área segura, debajo el panel del medio
+    /// (~40 % de lo que queda) y el mapa hasta abajo (~60 %), con la llegada encima del mapa.
+    struct CortesA: Equatable {
+        var tarjetaY: Double     // arriba de la tarjeta del giro
+        var panelY: Double, panelAlto: Double
+        var mapaY: Double, mapaAlto: Double
+    }
+
+    /// Qué parte de lo que queda (debajo de la tarjeta) lleva el panel del medio en A; el resto es del mapa.
+    static let partePanelA: Double = 0.4
+    /// Separación entre la tarjeta y el panel.
+    static let separacionA: Double = 8
+
+    static func cortesA(alto: Double, arriba: Double, tarjeta: Double) -> CortesA {
+        let y = max(0, arriba) + 6
+        let panelY = y + max(0, tarjeta) + separacionA
+        let resto = max(0, alto - panelY)
+        let panelAlto = (resto * partePanelA).rounded()
+        return CortesA(tarjetaY: y, panelY: panelY, panelAlto: panelAlto, mapaY: panelY + panelAlto, mapaAlto: max(0, alto - panelY - panelAlto))
+    }
+
+    // MARK: - El mapa: la roca al centro del área visible, mirando adelante
+
+    /// Los bordes del mapa (lo que lo tapa o lo que se deja libre a propósito), en puntos del mapa.
+    struct Bordes: Equatable {
+        var arriba: Double, izquierda: Double, abajo: Double, derecha: Double
+    }
+
+    /// Qué tan abajo va la roca en lo que se ve del mapa (0 = arriba, 0,5 = al centro, 1 = abajo): un poco abajo del
+    /// centro para que se vean las calles que siguen (el mapa va girado hacia donde vas).
+    static let adelante: Double = 0.64
+
+    /// El margen que se le pone al mapa (Google: `padding`; Apple: `safeAreaPadding`) para que el centro de la cámara —
+    /// donde va la roca— quede centrado a lo ancho y un poco abajo a lo alto, dentro de lo que se ve: entre lo que tapa
+    /// arriba (`tapaArriba`) y lo que tapa abajo (la llegada, `tapaAbajo`). La cámara centra en el centro del margen.
+    static func margenMapa(ancho: Double, alto: Double, tapaArriba: Double, tapaAbajo: Double, derecha: Double = 0, izquierda: Double = 0, adelante f: Double = adelante) -> Bordes {
+        let libre = max(0, alto - tapaArriba - tapaAbajo)
+        let y = tapaArriba + libre * min(max(f, 0), 1)     // donde queremos la roca
+        // El centro del margen es (arriba + alto - abajo) / 2 = y. Se sube el borde de arriba o el de abajo, nunca negativo.
+        var arriba = tapaArriba, abajo = tapaAbajo
+        let centro = (arriba + alto - abajo) / 2
+        if y > centro { arriba += 2 * (y - centro) } else { abajo += 2 * (centro - y) }
+        // A lo ancho, los dos lados iguales: la roca cae en el centro horizontal del mapa.
+        let lado = max(derecha, izquierda)
+        return Bordes(arriba: arriba, izquierda: lado, abajo: abajo, derecha: lado)
+    }
+
+    /// Dónde queda el centro de la cámara (la roca) en el mapa con esos bordes.
+    static func centroCamara(ancho: Double, alto: Double, _ b: Bordes) -> (x: Double, y: Double) {
+        ((b.izquierda + ancho - b.derecha) / 2, (b.arriba + alto - b.abajo) / 2)
+    }
+
+    // MARK: - Ver ruta
+
+    /// La caja de la ruta entera (y tu punto) con un margen de `margen` (fracción del tamaño, mínimo ~30 m) para la vista
+    /// general en 2D. nil si no hay puntos.
+    struct Caja: Equatable { var sur: Double, oeste: Double, norte: Double, este: Double }
+
+    static func cajaRuta(_ puntos: [GuiaPunto], margen: Double = 0.12) -> Caja? {
+        guard let a = puntos.first else { return nil }
+        var s = a.lat, n = a.lat, o = a.lng, e = a.lng
+        for p in puntos.dropFirst() { s = min(s, p.lat); n = max(n, p.lat); o = min(o, p.lng); e = max(e, p.lng) }
+        let dLat = max((n - s) * margen, 0.0003), dLng = max((e - o) * margen, 0.0003)
+        return Caja(sur: s - dLat, oeste: o - dLng, norte: n + dLat, este: e + dLng)
+    }
+
+    /// Tras cuántos segundos sin tocar el mapa vuelve a seguir a la roca (después de «Ver ruta» o de moverlo con el dedo).
+    static let volverASeguir: Double = 10
+
+    // MARK: - La escena animada del panel del medio (Juan, 21-nov-2026)
+
+    /// Cómo se mueve tu figura en la escena según el medio y la velocidad.
+    enum Paso: Equatable {
+        case quieto     // 0 km/h
+        case camina     // a pie, menos de ~7 km/h
+        case corre      // a pie, más rápido
+        case pedalea    // en bici
+        case rueda      // carro, bus, metro: el camino avanza
+    }
+
+    /// Por debajo de esto (km/h) la figura está quieta (el GPS brinca un poco aunque no te muevas).
+    static let quietoKmh: Double = 0.8
+    static let correKmh: Double = 7
+
+    static func paso(medio: String, kmh: Double) -> Paso {
+        guard kmh.isFinite, kmh >= quietoKmh else { return .quieto }
+        switch medio {
+        case "caminando": return kmh < correKmh ? .camina : .corre
+        case "bici": return .pedalea
+        default: return .rueda
+        }
+    }
+
+    /// Ciclos de piernas por segundo (un ciclo = las dos piernas): caminar ~1 por segundo, correr más rápido, pedalear
+    /// según la velocidad. 0 si está quieto o va en carro, bus o metro.
+    static func cadencia(medio: String, kmh: Double) -> Double {
+        switch paso(medio: medio, kmh: kmh) {
+        case .quieto, .rueda: return 0
+        case .camina: return min(max(kmh / 5, 0.55), 1.25)
+        case .corre: return min(1.35 + (kmh - correKmh) * 0.05, 1.8)
+        case .pedalea: return min(max(kmh / 15 * 1.2, 0.5), 2)
+        }
+    }
+
+    /// Lo que se mueve en la escena: cuánto avanzó el camino (metros de la escena) y en qué punto del ciclo van las
+    /// piernas (0…1). Se integra cuadro a cuadro: si cambia la velocidad, nada brinca.
+    struct Andar: Equatable {
+        var recorrido: Double = 0
+        var fase: Double = 0
+        var tiempo: Double = 0
+
+        /// Avanza `dt` segundos a `kmh`. Con «Reducir movimiento» (`suave`), sin ciclo de piernas y el camino despacio.
+        mutating func avanzar(dt: Double, medio: String, kmh: Double, suave: Bool) {
+            guard dt.isFinite, dt > 0 else { return }
+            let d = min(dt, 0.25)   // si la pantalla se pausó, no salta de golpe
+            tiempo += d
+            let k = GuiaPantalla.paso(medio: medio, kmh: kmh) == .quieto ? 0 : kmh / 3.6
+            recorrido += d * (suave ? min(k, 1.2) * 0.3 : k)
+            if recorrido > 1_000_000 { recorrido = recorrido.truncatingRemainder(dividingBy: 1200) }
+            if !suave {
+                fase = (fase + d * GuiaPantalla.cadencia(medio: medio, kmh: kmh)).truncatingRemainder(dividingBy: 1)
+            }
+        }
+    }
+
+    /// La escena se pausa (batería) si no se ve o si todo está quieto.
+    static func escenaPausada(activa: Bool, kmh: Double) -> Bool {
+        !activa || paso(medio: "", kmh: kmh) == .quieto
+    }
+
+    /// Un número dentro de 0..<largo (para que lo que pasa de largo vuelva a aparecer adelante).
+    static func vuelta(_ x: Double, _ largo: Double) -> Double {
+        guard largo > 0, x.isFinite else { return 0 }
+        let r = x.truncatingRemainder(dividingBy: largo)
+        return r < 0 ? r + largo : r
+    }
+
     // MARK: - Luz de rumbo
 
     /// Apertura total del cono (grados). El prototipo tenía 64°; Juan lo pidió más ancho.
