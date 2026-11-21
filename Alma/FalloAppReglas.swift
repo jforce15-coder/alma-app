@@ -53,14 +53,18 @@ enum FalloAppReglas {
         if let s = f.senal { partes.append(nombreSenal(s)) }
         if let c = f.codigo, c != 0 { partes.append("código \(c)") }
         if let e = f.excepcion, !e.isEmpty { partes.append(e) }
-        var l = ["Fallo de la app (" + origen + (f.build.map { ", build " + $0 } ?? "") + "): " + (partes.isEmpty ? "sin tipo" : partes.joined(separator: " · "))]
+        let build: String = f.build.map { ", build " + $0 } ?? ""
+        let que: String = partes.isEmpty ? "sin tipo" : partes.joined(separator: " · ")
+        let primero: String = "Fallo de la app (\(origen)\(build)): \(que)"
+        var l: [String] = [primero]
         if let m = f.motivo, !m.isEmpty { l.append("Motivo del fallo: " + m) }
         if let t = f.terminacion, !t.isEmpty { l.append("iOS terminó la app: " + t) }
         let pila = Array(f.pila.prefix(marcos))
         var tramo: [String] = [], n = 1
         func cerrar() { if !tramo.isEmpty { l.append("Pila del fallo \(n): " + tramo.joined(separator: " < ")); n += 1; tramo = [] } }
         for m in pila {
-            let candidato = "Pila del fallo \(n): " + (tramo + [m]).joined(separator: " < ")
+            let unidos: String = (tramo + [m]).joined(separator: " < ")
+            let candidato: String = "Pila del fallo \(n): \(unidos)"
             if candidato.count > largo && !tramo.isEmpty { cerrar() }
             tramo.append(m)
         }
@@ -79,7 +83,8 @@ enum FalloAppReglas {
         while let m = marco, l.count < marcos {
             let nombre = (m["binaryName"] as? String).map { String($0.prefix(28)) } ?? "?"
             let off = (m["offsetIntoBinaryTextSegment"] as? NSNumber)?.int64Value
-            l.append(nombre + (off.map { " +0x" + String($0, radix: 16) } ?? ""))
+            let hex: String = off.map { " +0x" + String($0, radix: 16) } ?? ""
+            l.append(nombre + hex)
             marco = (m["subFrames"] as? [[String: Any]])?.first
         }
         return l
