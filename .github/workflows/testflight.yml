@@ -358,6 +358,14 @@ jobs:
           xcrun swiftc Alma/AnilloVuelve.swift Pruebas/AnilloVuelve/main.swift -o /tmp/anillo-vuelve
           /tmp/anillo-vuelve
 
+      # El porqué de un cierre (guardia 21-nov-2026): el informe de fallo de iOS y la excepción que tumbó la app, en pasos
+      # cortos para el registro del Hub (la pila del hilo que falló, el motivo, las salidas raras por memoria).
+      - name: Probar el informe de fallo
+        if: env.SUBIR != 'true'
+        run: |
+          xcrun swiftc Alma/FalloAppReglas.swift Pruebas/FalloApp/main.swift -o /tmp/fallo-app
+          /tmp/fallo-app
+
       # Conversación continua (Juan, 16-nov-2026: «se corta en automático»): en el Modo calle y en conferencia Alma no cuelga;
       # la app cierra sola tras un silencio, la llamada normal se reabre si su conexión se cae y, si Claudio no conecta,
       # vuelve Alma. Lógica pura.

@@ -354,6 +354,8 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
             d.set("Alma se cerró sola en el paso: " + (d.string(forKey: "voz_paso") ?? "?"), forKey: "voz_ultimo_error"); d.set(false, forKey: "voz_abierta")
             // Guardia 19-nov-2026: también va al registro del Hub (antes solo quedaba en Ajustes y no se veía por qué se cortó).
             paso(LlamadaContinua.pasoAppCerrada(ultimoPaso: d.string(forKey: "voz_paso"), latido: d.string(forKey: "voz_latido")))
+            // Guardia 21-nov-2026: la marca llegaba al Hub con la primera vuelta de avisos (45 s o más); ahora se manda ya.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.mandarPasosYa() }
         }
         prepararMandos()
         UNUserNotificationCenter.current().delegate = Notificaciones.shared; Notificaciones.shared.registrarCategorias()
@@ -2243,6 +2245,14 @@ final class VozNativa: NSObject, ObservableObject, URLSessionWebSocketDelegate {
                 self.buscarAvisos(duerme: true) { if tarea != .invalid { UIApplication.shared.endBackgroundTask(tarea); tarea = .invalid } }
             }
         }
+    }
+
+    /// Los pasos nuevos van al Hub ya (la marca «se cerró», el informe de fallo de FalloApp), sin esperar la vuelta de 45 s.
+    /// Como mucho una vez cada 5 s, para no cruzarse con la vuelta normal.
+    private var pasosYa = Date.distantPast
+    func mandarPasosYa() {
+        guard Date().timeIntervalSince(pasosYa) > 5 else { return }
+        pasosYa = Date(); buscarAvisos()
     }
 
     private func buscarAvisos(duerme: Bool = false, listo: (() -> Void)? = nil) {
